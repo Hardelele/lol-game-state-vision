@@ -1,0 +1,20 @@
+{
+  "video_id": "58w57eJ5Qks",
+  "url": "https://www.youtube.com/watch?v=58w57eJ5Qks",
+  "title": "Volibear Top vs Irelia - KR Master Patch 26.19",
+  "channel": "Volibear Challenger Replays",
+  "channel_url": "https://www.youtube.com/channel/UCwSUcco3NaKhsPPPLuBh0Xg",
+  "upload_date": "20261006",
+  "duration_sec": 1404.634,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399+251",
+  "sampling": {
+    "every_sec": 15,
+    "first_sec": 0,
+    "count": 94,
+    "seek": "ffmpeg -ss before -i (exact)",
+    "jpeg_q": 3
+  }
+}

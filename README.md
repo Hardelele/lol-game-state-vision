@@ -64,8 +64,8 @@ pyLoL, LeagueAI, and lol-vision remain secondary references for future game-stat
 
 ## Repository status and conventions
 
-This repository currently contains the project plan and basic repository configuration. Video ingestion, annotation tools, datasets, models, and inference are not implemented yet.
+The first video is in the dataset: 94 frames sampled every 15 seconds from one spectator replay, labeled `top` / `not_top` / `unknown` (see [dataset/README.md](dataset/README.md)). Frame extraction (`tools/extract_frames.py`) and HUD/minimap masking (`tools/mask_frames.py`) are implemented; splits, models, and inference are not yet.
 
-- Keep local videos, frames, and datasets in `data/` or `datasets/`.
+- Keep source videos and other bulky local data in `data/` or `datasets/` (ignored). Sampled frames and labels live in `dataset/` and are committed.
 - Keep generated artifacts, model weights, and experiment outputs outside Git; common paths and formats are covered by `.gitignore`.
 - Commit source code, configuration, and documentation as the implementation is added.
