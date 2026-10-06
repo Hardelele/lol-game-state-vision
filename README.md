@@ -1,62 +1,71 @@
 # LoL Game State Vision
 
-Recognize the player's position and, eventually, other visible game state in League of Legends from screenshots.
+Analyze League of Legends gameplay videos, starting with recognizing top lane from the main game view.
 
-## Starting approach
+## Current priority: video and scene recognition
 
-Build this repository as an independent project. Use [DeeperLeague](https://github.com/davidweatherall/DeeperLeague) as the starting reference for synthetic minimap data and as a possible detection baseline or teacher.
+Use YouTube gameplay videos as the initial data source. The first task is to recognize when the main game view shows **top lane**, using the visible terrain and game scene.
 
-The first experiment is:
+The model input must exclude the minimap. Mask or crop the HUD and identifying overlays as part of preprocessing so that the experiment focuses on the game scene.
 
-1. Generate labelled minimap images using the DeeperLeague approach.
-2. Adapt the labels into a dataset for locating a target player.
-3. Train a small, task-specific CNN from scratch.
-4. Measure localization quality, end-to-end latency, parameter count, FLOPs, and memory/VRAM usage.
-5. Compare a spiking neural network against that baseline under the same evaluation conditions.
+The first prediction describes the **area shown by the camera**. It does not yet establish the controlled player's location when the camera is elsewhere.
 
-The first model consumes a **cropped minimap**, with the intended output being the target player's **position on that minimap**. Converting that position to game-world coordinates is a separate step. Full-screen capture and minimap cropping can be added around the model later.
+## First milestone: a small annotated video dataset
 
-## First implementation milestone: the dataset
+Build a video-to-dataset pipeline before training the first model:
 
-Inspect and adapt the generator before selecting the final model architecture.
+1. Record the source URL/video ID and obtain a local video for processing.
+2. Extract frames or short clips with their timestamps preserved.
+3. Apply and visually inspect the gameplay crop and UI masks for each video layout.
+4. Annotate time intervals, then associate sampled frames/clips with those labels.
+5. Create reproducible training, validation, and test splits by match/source video. Keep excerpts from the same match in the same split.
 
-Useful upstream files:
+The proposed initial labels are:
 
-- [`generateTestingData.py`](https://github.com/davidweatherall/DeeperLeague/blob/main/generateTestingData.py): synthetic images and annotations.
-- [`champMap.json`](https://github.com/davidweatherall/DeeperLeague/blob/main/champMap.json): mapping between annotation classes and champions.
-- [`assets/`](https://github.com/davidweatherall/DeeperLeague/tree/main/assets) and [`champions/`](https://github.com/davidweatherall/DeeperLeague/tree/main/champions): minimap backgrounds, effects, and champion icons.
+| Label | Meaning |
+| --- | --- |
+| `top` | Top lane is clearly recognizable in the main game scene. |
+| `not_top` | The main game scene clearly shows another area. |
+| `unknown` | The area cannot be determined reliably, including ambiguous transitions, obstructed views, loading screens, and non-gameplay footage. |
 
-The existing generator produces multiple champion annotations per minimap in YOLO format: `class_id center_x center_y width height`, with normalized coordinates. It does not directly provide a single target-player label. The dataset adapter must make target selection explicit and define how missing or occluded targets are represented.
+The first dataset should include top-lane footage, other lanes, jungle, river, and base scenes, along with camera movement and boundary cases. Include variation in champions, camera positions, recording quality, and layouts where available.
 
-Start with a small, inspectable sample. The upstream script defaults to 300,000 images and uses all available CPU cores; expose sample count and worker count before running it as part of this project.
+Keep source IDs, timestamps, preprocessing settings, and annotation provenance alongside the samples. Inspect a small sample with its labels before scaling collection.
 
-Before training:
+## First model and video output
 
-- Define the target-player selection rule and the dataset input/output contract.
-- Inspect generated images and their labels together.
-- Keep a separate set of real minimap screenshots to assess transfer from synthetic data.
-- Make generation and dataset splits reproducible.
+Start with a compact scene classifier as a baseline. A small CNN remains the initial model direction; its architecture and framework are not selected yet.
 
-## Model direction and evaluation
+The initial model predicts scene labels for sampled frames. Combine those predictions into a timestamped video timeline; temporal smoothing and short-clip models can be evaluated as subsequent improvements.
 
-Use a compact CNN as the first custom model. DeeperLeague's YOLOv8 pipeline can serve as a reference, baseline, or teacher; the project's own architecture is still to be implemented.
+The intended user-facing result is a sequence of intervals indicating where the footage shows top lane, another area, or an uncertain scene. Target-player coordinates and champion identification are later tasks.
 
-Evaluate SNNs after the CNN baseline is measurable. Compare both localization quality and latency on the same target hardware; faster inference is a hypothesis to test.
+## Evaluation
+
+- Evaluate on held-out matches/videos, with the same input masking used during training.
+- Measure top-lane precision/recall and inspect errors at area transitions and ambiguous scenes.
+- Report uncertainty/abstention coverage so that rejecting difficult frames cannot hide recognition failures.
+- Measure both model inference time and end-to-end video processing throughput, including decoding and preprocessing.
+- Record parameter count and memory/VRAM usage on the target hardware.
+
+After the CNN baseline works on real gameplay, compare an SNN on the same task and evaluation data. Faster inference is a hypothesis to test.
 
 ## Later scope
 
-Expand incrementally toward champion identity, HP/mana, bushes, other objects, and state across frames. Each capability may use its own small model and appropriate screenshot region.
+Extend scene recognition to additional map regions, then work toward locating the target player, identifying champions and objects, reading HP/mana, and tracking state across frames.
 
-pyLoL is a reference for the eventual structured game-state output, including position, champion identity, and timestamp. LeagueAI and lol-vision are secondary references for individual ideas.
+## Previous references
 
-## Upstream status
+The earlier plan started from synthetic minimaps generated by [DeeperLeague](https://github.com/davidweatherall/DeeperLeague). That plan is deferred: its minimap generator does not supply the main-game-view video data required by the current milestone.
 
-The DeeperLeague README, generator, dependency list, and license notice were inspected on 2026-10-06 (UTC). Its license notice offers GPL-3.0 or a separately obtained closed-source license; see [the upstream notice](https://github.com/davidweatherall/DeeperLeague/blob/main/LICENSE.md). No upstream source code, assets, or model weights have been imported into this repository yet.
+DeeperLeague remains a reference for a possible future minimap module. Its README, generator, dependency list, and license notice were inspected on 2026-10-06 (UTC). The notice offers GPL-3.0 or a separately obtained closed-source license; see [the upstream notice](https://github.com/davidweatherall/DeeperLeague/blob/main/LICENSE.md). No upstream source code, assets, or model weights have been imported here.
+
+pyLoL, LeagueAI, and lol-vision remain secondary references for future game-state extraction work.
 
 ## Repository status and conventions
 
-This repository currently contains the project plan and basic repository configuration. The dataset adapter, model, and inference pipeline are not implemented yet.
+This repository currently contains the project plan and basic repository configuration. Video ingestion, annotation tools, datasets, models, and inference are not implemented yet.
 
-- Keep local screenshots, recordings, and datasets in `data/` or `datasets/`.
+- Keep local videos, frames, and datasets in `data/` or `datasets/`.
 - Keep generated artifacts, model weights, and experiment outputs outside Git; common paths and formats are covered by `.gitignore`.
 - Commit source code, configuration, and documentation as the implementation is added.
