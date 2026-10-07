@@ -68,4 +68,20 @@ The first video is in the dataset: 94 frames sampled every 15 seconds from one s
 
 - Keep source videos and other bulky local data in `data/` or `datasets/` (ignored). Sampled frames and labels live in `dataset/` and are committed.
 - Keep generated artifacts, model weights, and experiment outputs outside Git; common paths and formats are covered by `.gitignore`.
+- Directory layout is defined once in `tools/paths.py`; tool defaults resolve from the repository root.
+
+### `runs/` layout
+
+Everything the tools produce goes to `runs/` (ignored), grouped by purpose:
+
+| Path | Contents | Written by |
+| --- | --- | --- |
+| `runs/scene/<run>/` | Scene classifier run: `model.pt`, `report.json`, `train.log`, OOF and holdout predictions | `train_scene.py`, `eval_scene.py` |
+| `runs/coords/<run>/` | Camera-coordinate model run: `model.pt`, `report.json`, `train.log`, per-video predictions and heatmaps | `train_coords.py`, `eval_coords.py` |
+| `runs/inspect/` | Self-contained HTML viewers with a shared `index.html` | `inspect_*.py` |
+| `runs/sheets/<video>/` | Contact sheets for labelling | `label_sheets.py` |
+| `runs/minimap/` | Camera position read from the minimap for dataset frames | `minimap_camera.py` |
+| `runs/checks/<topic>/` | One-off visual checks: masks, model input, minimap box | `mask_frames.py`, `scene_data.py --preview`, ad hoc |
+
+A run directory is self-contained: training writes its own `train.log` next to the checkpoint, and evaluation writes into the checkpoint's directory by default. Name runs by what distinguishes them (`cnn-dense`, `heatmap`, `smoke`) and pass `--out` for a new variant instead of overwriting an existing run.
 - Commit source code, configuration, and documentation as the implementation is added.

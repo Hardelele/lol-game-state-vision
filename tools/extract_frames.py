@@ -16,7 +16,8 @@ import json
 import subprocess
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from paths import DATASET, ROOT
+
 FIELDS = ["frame", "video_id", "t_sec", "timecode", "label", "note"]
 
 
@@ -47,7 +48,7 @@ def main() -> None:
     ap.add_argument("--info", type=Path, help="info.json от yt-dlp — источник метаданных")
     ap.add_argument("--every", type=int, default=15, help="шаг в секундах")
     ap.add_argument("--quality", type=int, default=3, help="ffmpeg -q:v для JPEG (2 — лучше)")
-    ap.add_argument("--out", type=Path, default=ROOT / "dataset")
+    ap.add_argument("--out", type=Path, default=DATASET)
     args = ap.parse_args()
 
     video_id = args.video.stem

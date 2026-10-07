@@ -2,7 +2,7 @@
 
 Пример:
     python tools/mask_frames.py dataset/layouts/spectator-volibear-challenger.json \
-        dataset/videos/58w57eJ5Qks/frames/58w57eJ5Qks_t00300.jpg --out runs/mask-preview
+        dataset/videos/58w57eJ5Qks/frames/58w57eJ5Qks_t00300.jpg --out runs/checks/masks/58w57eJ5Qks
 """
 
 from __future__ import annotations
