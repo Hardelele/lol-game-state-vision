@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Смотрелка координат камеры</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%233a5bd9%27/%3E%3Ccircle cx=%278%27 cy=%278%27 r=%273%27 fill=%27%23fff%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="pick">
+    <label>прогон <select id="run"></select></label>
+    <label>ролик <select id="video"></select></label>
+    <span id="holdout" class="badge"></span>
+  </div>
+  <div class="stats" id="stats"></div>
+  <button class="ghost" id="helpBtn" title="клавиши">? клавиши</button>
+</header>
+
+<section class="timeline">
+  <canvas id="tl" height="46"></canvas>
+  <div class="tlinfo">
+    <span id="tlhover">наведите на полосу — кадр, время, промах</span>
+    <span class="grow"></span>
+    <label class="chk"><input type="checkbox" id="fErr"> только промахи</label>
+    <label class="chk"><input type="checkbox" id="fUns"> только сомнения</label>
+    <label class="chk"><input type="checkbox" id="fLab"> только с ручной меткой</label>
+  </div>
+</section>
+
+<main>
+  <div class="panel scenebox">
+    <div class="phead">
+      <span>вход модели</span>
+      <span class="grow"></span>
+      <label class="chk"><input type="checkbox" id="grid" checked> сетка</label>
+      <select id="cells">
+        <option value="8x5">8×5</option>
+        <option value="12x7">12×7</option>
+        <option value="16x9">16×9</option>
+        <option value="24x13">24×13</option>
+      </select>
+    </div>
+    <div class="holder">
+      <img id="scene" alt="сцена">
+      <svg id="sceneGrid" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="cap">то, что видит сеть: HUD и миникарта вырезаны</div>
+  </div>
+
+  <div class="panel mapbox">
+    <div class="phead">
+      <span>карта</span>
+      <span class="grow"></span>
+      <label class="chk"><input type="checkbox" id="heat" checked> распределение</label>
+      <label class="chk"><input type="checkbox" id="trail"> след камеры</label>
+    </div>
+    <div class="holder">
+      <img id="mini" alt="миникарта">
+      <img id="heatimg" alt="">
+      <svg id="mapSvg" viewBox="0 0 1 1"></svg>
+    </div>
+    <div class="cap">белая трапеция — видимая область, зелёная — ответ модели</div>
+  </div>
+
+  <div class="panel side">
+    <div class="nav">
+      <button id="prev" title="←">◀</button>
+      <button id="play" title="пробел">▶ играть</button>
+      <button id="next" title="→">▶</button>
+      <input id="jump" type="text" placeholder="кадр или 12:30" size="9">
+    </div>
+    <table class="num">
+      <tr class="hl-true"><td>истина</td><td id="vTrue"></td></tr>
+      <tr class="hl-pred"><td>модель</td><td id="vPred"></td></tr>
+      <tr class="hl-link"><td>промах</td><td id="vErr"></td></tr>
+      <tr><td>в единицах</td><td id="vUnits"></td></tr>
+      <tr><td>разброс ответа</td><td id="vSpread"></td></tr>
+      <tr><td>качество метки</td><td id="vQ"></td></tr>
+      <tr><td>ручная метка</td><td id="vLabel"></td></tr>
+      <tr><td>ячейка</td><td id="vCell">—</td></tr>
+    </table>
+    <a id="yt" class="yt" target="_blank" rel="noopener">▶ открыть момент на YouTube</a>
+    <div class="cap">наведите на строку — подсветится отметка на карте;
+      на ячейку — её место на карте</div>
+  </div>
+</main>
+
+<section class="strip">
+  <div id="film" class="film"></div>
+</section>
+
+<div id="help" class="help hidden">
+  <h3>Клавиши</h3>
+  <table>
+    <tr><td>← →</td><td>предыдущий / следующий кадр</td></tr>
+    <tr><td>Shift + ← →</td><td>на 10 кадров</td></tr>
+    <tr><td>N / P</td><td>следующий / предыдущий крупный промах</td></tr>
+    <tr><td>пробел</td><td>проигрывание</td></tr>
+    <tr><td>G</td><td>сетка ячеек</td></tr>
+    <tr><td>H</td><td>распределение вероятности</td></tr>
+    <tr><td>T</td><td>след камеры</td></tr>
+    <tr><td>Home / End</td><td>первый / последний кадр</td></tr>
+  </table>
+  <button class="ghost" id="helpClose">закрыть</button>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

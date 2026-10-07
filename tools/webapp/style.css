@@ -1,0 +1,152 @@
+:root {
+  color-scheme: dark;
+  --bg: #14161a;
+  --panel: #1a1d23;
+  --line: #2a2e36;
+  --dim: #9aa0aa;
+  --faint: #767d89;
+  --true: #ffffff;
+  --pred: #5aff8c;
+  --cell: #ffd166;
+  --ok: #3fa863;
+  --mid: #c9922f;
+  --bad: #d6483c;
+  --accent: #3a5bd9;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: #e8e8ea;
+  font: 14px/1.45 system-ui, "Segoe UI", sans-serif;
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+
+.bar {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 8px 14px; border-bottom: 1px solid var(--line); background: #171a1f;
+}
+.pick { display: flex; gap: 14px; align-items: center; }
+.pick label { color: var(--dim); }
+select, input[type=text] {
+  background: #222730; color: #e8e8ea; border: 1px solid #39404c;
+  border-radius: 6px; padding: 4px 8px; font: inherit;
+}
+.badge {
+  font-size: 12px; padding: 2px 8px; border-radius: 10px;
+  border: 1px solid #39404c; color: var(--dim);
+}
+.badge.train { border-color: #7a5a2a; color: #e3b35e; }
+.stats { color: var(--dim); margin-left: auto; font-variant-numeric: tabular-nums; }
+.stats b { color: #e8e8ea; }
+.stats b.ok { color: #6cd08a; } .stats b.bad { color: #ff7b6e; }
+button {
+  background: #222730; color: #e8e8ea; border: 1px solid #39404c;
+  border-radius: 6px; padding: 5px 11px; cursor: pointer; font: inherit;
+}
+button:hover { border-color: #566070; }
+button.on { background: var(--accent); border-color: var(--accent); }
+.ghost { background: transparent; }
+
+.timeline { padding: 6px 14px 4px; border-bottom: 1px solid var(--line); }
+#tl { width: 100%; display: block; cursor: crosshair; border-radius: 4px; }
+.tlinfo {
+  display: flex; gap: 16px; align-items: center; color: var(--faint);
+  font-size: 12px; padding-top: 4px; flex-wrap: wrap;
+}
+.grow { flex: 1; }
+.chk { display: inline-flex; gap: 5px; align-items: center; color: var(--dim); }
+
+main {
+  display: flex; gap: 12px; padding: 12px 14px; align-items: stretch;
+  flex: 1; min-height: 0; overflow: hidden;
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px; display: flex; flex-direction: column; gap: 8px;
+  min-height: 0; min-width: 0;
+}
+.scenebox { flex: 1.7 1 520px; min-width: 360px; }
+.mapbox { flex: 1 1 360px; min-width: 300px; }
+.side { flex: 0 0 268px; overflow-y: auto; }
+.phead {
+  display: flex; gap: 10px; align-items: center; color: var(--dim);
+  font-size: 12px;
+}
+/* Картинки вписываются в оставшуюся высоту, а не задают её сами: иначе
+   внизу остаётся пустая полоса, а на низком экране панель вылезает. */
+.holder { position: relative; flex: 1; min-height: 0; display: flex; }
+.holder > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.holder img { object-fit: contain; border-radius: 6px; }
+.side .holder { flex: none; }
+#heatimg { pointer-events: none; }
+.cap { color: var(--faint); font-size: 11px; }
+
+.cellrect, .cellpoly {
+  fill: transparent; stroke: #fff; stroke-width: .4; opacity: .3;
+  cursor: crosshair; vector-effect: non-scaling-stroke;
+}
+.cellrect.lit, .cellpoly.lit {
+  opacity: 1; stroke: var(--cell); stroke-width: 2;
+  fill: rgba(255, 209, 102, .22);
+}
+.hidden-grid .cellrect, .hidden-grid .cellpoly { opacity: 0; pointer-events: none; }
+.celllab { fill: #fff; font-size: 7px; opacity: .75; pointer-events: none;
+  paint-order: stroke; stroke: #000; stroke-width: 2px; }
+.hidden-grid .celllab { opacity: 0; }
+
+#mapSvg polygon.out { fill: none; stroke: var(--true); stroke-width: 2;
+  vector-effect: non-scaling-stroke; }
+#mapSvg polygon.pred { fill: none; stroke: var(--pred); stroke-width: 1.5;
+  stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+#mapSvg circle.t { fill: none; stroke: var(--true); stroke-width: 2.5;
+  vector-effect: non-scaling-stroke; }
+#mapSvg path.trail { fill: none; stroke: #8ab4ff; stroke-width: 1.5; opacity: .8;
+  vector-effect: non-scaling-stroke; }
+#mapSvg line.cross { stroke: var(--pred); stroke-width: 2.5;
+  vector-effect: non-scaling-stroke; }
+#mapSvg line.link { stroke: var(--cell); stroke-width: 2; opacity: 0;
+  vector-effect: non-scaling-stroke; }
+body.lit-true #mapSvg polygon.out { stroke-width: 4; }
+body.lit-true #scene { outline: 3px solid var(--true); outline-offset: -3px; }
+body.lit-pred #mapSvg polygon.pred { stroke-width: 3.5; stroke-dasharray: none; }
+body.lit-link #mapSvg line.link { opacity: 1; }
+
+.nav { display: flex; gap: 6px; align-items: center; }
+.nav button { padding: 5px 9px; }
+#jump { width: 86px; }
+table.num { width: 100%; border-collapse: collapse; }
+table.num td { padding: 3px 6px; }
+table.num td:first-child { color: var(--dim); }
+table.num td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+table.num tr { border-radius: 5px; }
+tr.hl-true:hover { background: #39404c; }
+tr.hl-pred:hover { background: #1d3b28; }
+tr.hl-link:hover { background: #3b3522; }
+.yt {
+  display: block; text-align: center; color: #8ab4ff; text-decoration: none;
+  border: 1px solid #33425e; border-radius: 6px; padding: 5px;
+}
+.yt:hover { background: #2a3a57; color: #fff; }
+
+.strip { border-top: 1px solid var(--line); background: #171a1f; padding: 6px 14px; }
+.film { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; }
+.film figure { margin: 0; flex: 0 0 auto; cursor: pointer; text-align: center; }
+.film img {
+  display: block; width: 112px; height: 58px; object-fit: cover;
+  border-radius: 4px; border: 2px solid transparent; background: #101215;
+}
+.film figcaption { font-size: 10px; color: var(--faint); }
+.film .cur img { border-color: var(--accent); }
+.film .e-ok img { border-bottom: 3px solid var(--ok); }
+.film .e-mid img { border-bottom: 3px solid var(--mid); }
+.film .e-bad img { border-bottom: 3px solid var(--bad); }
+
+.help {
+  position: fixed; inset: 0; margin: auto; width: 420px; height: max-content;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px; z-index: 20; box-shadow: 0 20px 60px rgba(0, 0, 0, .6);
+}
+.help h3 { margin: 0 0 10px; }
+.help table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+.help td { padding: 3px 6px; }
+.help td:first-child { color: var(--cell); white-space: nowrap; width: 120px; }
+.hidden { display: none; }
