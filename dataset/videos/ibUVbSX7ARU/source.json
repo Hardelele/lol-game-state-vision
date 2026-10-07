@@ -1,0 +1,23 @@
+{
+  "video_id": "ibUVbSX7ARU",
+  "layout": "spectator-volibear-challenger",
+  "role": "top",
+  "split": "holdout",
+  "url": "https://www.youtube.com/watch?v=ibUVbSX7ARU",
+  "title": "Ekko Top vs Zac - KR Master Patch 26.19",
+  "channel": "Ekko Challenger Replays",
+  "channel_url": "https://www.youtube.com/channel/UCqc9GqKK-sNwwcni3SVMsfg",
+  "upload_date": "20261003",
+  "duration_sec": 1861.521,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399+251",
+  "sampling": {
+    "every_sec": 15,
+    "first_sec": 0,
+    "count": 125,
+    "seek": "ffmpeg -ss before -i (exact)",
+    "jpeg_q": 3
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "video_id": "olmTXkkUv58",
+  "layout": "spectator-volibear-challenger",
+  "role": "jungle",
+  "split": "holdout",
+  "url": "https://www.youtube.com/watch?v=olmTXkkUv58",
+  "title": "Ekko Jungle vs Skarner - KR Master Patch 26.19",
+  "channel": "Ekko Challenger Replays",
+  "channel_url": "https://www.youtube.com/channel/UCqc9GqKK-sNwwcni3SVMsfg",
+  "upload_date": "20261004",
+  "duration_sec": 1404.681,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "303+251",
+  "sampling": {
+    "every_sec": 15,
+    "first_sec": 0,
+    "count": 94,
+    "seek": "ffmpeg -ss before -i (exact)",
+    "jpeg_q": 3
+  }
+}
