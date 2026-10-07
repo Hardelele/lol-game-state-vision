@@ -1,0 +1,1748 @@
+{
+  "about": "YouTube channels of the 'Challenger Replays' network: one channel per LoL champion, full-game POV replays of ranked matches.",
+  "collected": "2026-10-07",
+  "champion_list_source": "Riot Data Dragon 16.20.1 (en_US)",
+  "method": "handle probe https://www.youtube.com/@<handle>?hl=en (200 = exists, 404 = no), metadata from ytInitialData",
+  "handle_pattern": "@<ChampionId>ChallengerReplays, with exceptions listed in each entry",
+  "counts": {
+    "champions": 173,
+    "channels_found": 173
+  },
+  "caveats": [
+    "Video/subscriber counts are YouTube's rounded display values as of the collection date.",
+    "Channels also publish Shorts (vertical, highlight clips) - filter them out when harvesting full matches.",
+    "Only one channel (Volibear) has a verified HUD layout; the network looks template-based but every new channel still needs a visual layout check."
+  ],
+  "channels": [
+    {
+      "champion": "Aatrox",
+      "champion_id": "Aatrox",
+      "handle": "@AatroxChallengerReplays",
+      "url": "https://www.youtube.com/@AatroxChallengerReplays",
+      "channel_id": "UCuI1iHMINWieGCErmBn9QmQ",
+      "channel_title": "Aatrox Challenger Replays",
+      "videos": "4.1K videos",
+      "subscribers": "2.61K subscribers"
+    },
+    {
+      "champion": "Ahri",
+      "champion_id": "Ahri",
+      "handle": "@AhriChallengerReplays",
+      "url": "https://www.youtube.com/@AhriChallengerReplays",
+      "channel_id": "UCBT1vkFS4C7GlsjyNfglgrw",
+      "channel_title": "Ahri Challenger Replays",
+      "videos": "864 videos",
+      "subscribers": "573 subscribers"
+    },
+    {
+      "champion": "Akali",
+      "champion_id": "Akali",
+      "handle": "@AkaliChallengerReplays",
+      "url": "https://www.youtube.com/@AkaliChallengerReplays",
+      "channel_id": "UCf6wvX2WGZJraoAmi7pjnJA",
+      "channel_title": "Akali Challenger Replays",
+      "videos": "4.5K videos",
+      "subscribers": "4.16K subscribers"
+    },
+    {
+      "champion": "Akshan",
+      "champion_id": "Akshan",
+      "handle": "@AkshanChallengerReplays",
+      "url": "https://www.youtube.com/@AkshanChallengerReplays",
+      "channel_id": "UCPPFSfNlHWQB9smetFyyrAg",
+      "channel_title": "Akshan Challenger Replays",
+      "videos": "1.5K videos",
+      "subscribers": "377 subscribers"
+    },
+    {
+      "champion": "Alistar",
+      "champion_id": "Alistar",
+      "handle": "@AlistarChallengerReplays",
+      "url": "https://www.youtube.com/@AlistarChallengerReplays",
+      "channel_id": "UCHfjfLtOHzhgu1Iab64Lsiw",
+      "channel_title": "Alistar Challenger Replays",
+      "videos": "437 videos",
+      "subscribers": "109 subscribers"
+    },
+    {
+      "champion": "Ambessa",
+      "champion_id": "Ambessa",
+      "handle": "@AmbessaChallengerReplays",
+      "url": "https://www.youtube.com/@AmbessaChallengerReplays",
+      "channel_id": "UCizHMkMG2dG_XrfpeCOuFog",
+      "channel_title": "Ambessa Challenger Replays",
+      "videos": "1.7K videos",
+      "subscribers": "1.06K subscribers"
+    },
+    {
+      "champion": "Amumu",
+      "champion_id": "Amumu",
+      "handle": "@AmumuChallengerReplays",
+      "url": "https://www.youtube.com/@AmumuChallengerReplays",
+      "channel_id": "UCswax4ukU5Cd_vtkeNIW9SQ",
+      "channel_title": "Amumu Challenger Replays",
+      "videos": "470 videos",
+      "subscribers": "210 subscribers"
+    },
+    {
+      "champion": "Anivia",
+      "champion_id": "Anivia",
+      "handle": "@AniviaChallengerReplays",
+      "url": "https://www.youtube.com/@AniviaChallengerReplays",
+      "channel_id": "UCpVdafPZJaj67KVg9pvH9_A",
+      "channel_title": "Anivia Challenger Replays",
+      "videos": "468 videos",
+      "subscribers": "186 subscribers"
+    },
+    {
+      "champion": "Annie",
+      "champion_id": "Annie",
+      "handle": "@AnnieChallengerReplays",
+      "url": "https://www.youtube.com/@AnnieChallengerReplays",
+      "channel_id": "UCcZlztmU5AsXIERyHDAMrqg",
+      "channel_title": "Annie Challenger Replays",
+      "videos": "452 videos",
+      "subscribers": "147 subscribers"
+    },
+    {
+      "champion": "Aphelios",
+      "champion_id": "Aphelios",
+      "handle": "@ApheliosChallengerReplays",
+      "url": "https://www.youtube.com/@ApheliosChallengerReplays",
+      "channel_id": "UCA7Q5TezlsynU867BZlpgIg",
+      "channel_title": "Aphelios Challenger Replays",
+      "videos": "4.1K videos",
+      "subscribers": "2.67K subscribers"
+    },
+    {
+      "champion": "Ashe",
+      "champion_id": "Ashe",
+      "handle": "@AsheChallengerReplays",
+      "url": "https://www.youtube.com/@AsheChallengerReplays",
+      "channel_id": "UCp0bUr84Qw0zTxJFTbkZYjQ",
+      "channel_title": "Ashe Challenger Replays",
+      "videos": "4.5K videos",
+      "subscribers": "3.76K subscribers"
+    },
+    {
+      "champion": "Aurelion Sol",
+      "champion_id": "AurelionSol",
+      "handle": "@AurelionSolChallengerReplays",
+      "url": "https://www.youtube.com/@AurelionSolChallengerReplays",
+      "channel_id": "UCkF4GzNGcOSPhNmrJFIzUZw",
+      "channel_title": "Aurelion Sol Challenger Replays",
+      "videos": "1.1K videos",
+      "subscribers": "695 subscribers"
+    },
+    {
+      "champion": "Aurora",
+      "champion_id": "Aurora",
+      "handle": "@AuroraChallengerReplays",
+      "url": "https://www.youtube.com/@AuroraChallengerReplays",
+      "channel_id": "UCb7SL0KGuq3Q8m4L9AGbPJA",
+      "channel_title": "Aurora Challenger Replays",
+      "videos": "1.8K videos",
+      "subscribers": "1.01K subscribers"
+    },
+    {
+      "champion": "Azir",
+      "champion_id": "Azir",
+      "handle": "@AzirChallengerReplays",
+      "url": "https://www.youtube.com/@AzirChallengerReplays",
+      "channel_id": "UCfV9QLXCHQ1HnwZdUZs8NMw",
+      "channel_title": "Azir Challenger Replays",
+      "videos": "956 videos",
+      "subscribers": "524 subscribers"
+    },
+    {
+      "champion": "Bard",
+      "champion_id": "Bard",
+      "handle": "@BardChallengerReplays",
+      "url": "https://www.youtube.com/@BardChallengerReplays",
+      "channel_id": "UCSF98ZrWNDG7Zw3iMANbu8A",
+      "channel_title": "Bard Challenger Replays",
+      "videos": "818 videos",
+      "subscribers": "261 subscribers"
+    },
+    {
+      "champion": "Bel'Veth",
+      "champion_id": "Belveth",
+      "handle": "@BelvethChallengerReplays",
+      "url": "https://www.youtube.com/@BelvethChallengerReplays",
+      "channel_id": "UCp14H5kpZYUu0-dlxND-eBw",
+      "channel_title": "Bel'Veth Challenger Replays",
+      "videos": "1.6K videos",
+      "subscribers": "702 subscribers"
+    },
+    {
+      "champion": "Blitzcrank",
+      "champion_id": "Blitzcrank",
+      "handle": "@BlitzcrankChallengerReplays",
+      "url": "https://www.youtube.com/@BlitzcrankChallengerReplays",
+      "channel_id": "UC34O7-BT48ZZbpKexFGNqZw",
+      "channel_title": "Blitzcrank Challenger Replays",
+      "videos": "495 videos",
+      "subscribers": "91 subscribers"
+    },
+    {
+      "champion": "Brand",
+      "champion_id": "Brand",
+      "handle": "@BrandChallengerReplays",
+      "url": "https://www.youtube.com/@BrandChallengerReplays",
+      "channel_id": "UCQJYSCAdTxRCXj-T7hGv-IQ",
+      "channel_title": "Brand Challenger Replays",
+      "videos": "642 videos",
+      "subscribers": "259 subscribers"
+    },
+    {
+      "champion": "Braum",
+      "champion_id": "Braum",
+      "handle": "@BraumChallengerReplays",
+      "url": "https://www.youtube.com/@BraumChallengerReplays",
+      "channel_id": "UC3_6_yWIHinwCI1zVLnME0A",
+      "channel_title": "Braum Challenger Replays",
+      "videos": "763 videos",
+      "subscribers": "153 subscribers"
+    },
+    {
+      "champion": "Briar",
+      "champion_id": "Briar",
+      "handle": "@BriarChallengerReplays",
+      "url": "https://www.youtube.com/@BriarChallengerReplays",
+      "channel_id": "UCdK5ZtsIGK3vHMUc4XSGI0g",
+      "channel_title": "Briar Challenger Replays",
+      "videos": "2.7K videos",
+      "subscribers": "1.31K subscribers"
+    },
+    {
+      "champion": "Caitlyn",
+      "champion_id": "Caitlyn",
+      "handle": "@CaitlynChallengerReplays",
+      "url": "https://www.youtube.com/@CaitlynChallengerReplays",
+      "channel_id": "UCJ_ncjKAu0zA46rst7x_tiQ",
+      "channel_title": "Caitlyn Challenger Replays",
+      "videos": "4.2K videos",
+      "subscribers": "2.23K subscribers"
+    },
+    {
+      "champion": "Camille",
+      "champion_id": "Camille",
+      "handle": "@CamilleChallengerReplays",
+      "url": "https://www.youtube.com/@CamilleChallengerReplays",
+      "channel_id": "UCUVmTHAzRk4LpqiWjLTy5ew",
+      "channel_title": "Camille Challenger Replays",
+      "videos": "4.3K videos",
+      "subscribers": "3.79K subscribers"
+    },
+    {
+      "champion": "Cassiopeia",
+      "champion_id": "Cassiopeia",
+      "handle": "@CassiopeiaChallengerReplays",
+      "url": "https://www.youtube.com/@CassiopeiaChallengerReplays",
+      "channel_id": "UCzezAQD72nvsRe8u2ySeRzw",
+      "channel_title": "Cassiopeia Challenger Replays",
+      "videos": "623 videos",
+      "subscribers": "226 subscribers"
+    },
+    {
+      "champion": "Cho'Gath",
+      "champion_id": "Chogath",
+      "handle": "@ChogathChallengerReplays",
+      "url": "https://www.youtube.com/@ChogathChallengerReplays",
+      "channel_id": "UCubchLaOc4oSovCh8FZJPGg",
+      "channel_title": "Cho'Gath Challenger Replays",
+      "videos": "570 videos",
+      "subscribers": "355 subscribers"
+    },
+    {
+      "champion": "Corki",
+      "champion_id": "Corki",
+      "handle": "@CorkiChallengerReplays",
+      "url": "https://www.youtube.com/@CorkiChallengerReplays",
+      "channel_id": "UC-zZ_hT2UOtXBGcecxCgGKQ",
+      "channel_title": "Corki Challenger Replays",
+      "videos": "776 videos",
+      "subscribers": "89 subscribers"
+    },
+    {
+      "champion": "Darius",
+      "champion_id": "Darius",
+      "handle": "@DariusChallengerReplays",
+      "url": "https://www.youtube.com/@DariusChallengerReplays",
+      "channel_id": "UCFjFPz5HqZ2JDc9-dOYcIew",
+      "channel_title": "Darius Challenger Replays",
+      "videos": "4.2K videos",
+      "subscribers": "2.21K subscribers"
+    },
+    {
+      "champion": "Diana",
+      "champion_id": "Diana",
+      "handle": "@DianaChallengerReplays",
+      "url": "https://www.youtube.com/@DianaChallengerReplays",
+      "channel_id": "UCvQ67b7-JdnJ6r55KlU7YrQ",
+      "channel_title": "Diana Challenger Replays",
+      "videos": "968 videos",
+      "subscribers": "641 subscribers"
+    },
+    {
+      "champion": "Dr. Mundo",
+      "champion_id": "DrMundo",
+      "handle": "@DrMundoChallengerReplays",
+      "url": "https://www.youtube.com/@DrMundoChallengerReplays",
+      "channel_id": "UCDp02MaPviNal4eJllY0kEQ",
+      "channel_title": "Dr. Mundo Challenger Replays",
+      "videos": "511 videos",
+      "subscribers": "267 subscribers"
+    },
+    {
+      "champion": "Draven",
+      "champion_id": "Draven",
+      "handle": "@DravenChallengerReplays",
+      "url": "https://www.youtube.com/@DravenChallengerReplays",
+      "channel_id": "UCNCYKyAYhuWlCfz2oGXhHdA",
+      "channel_title": "Draven Challenger Replays",
+      "videos": "4.3K videos",
+      "subscribers": "1.81K subscribers"
+    },
+    {
+      "champion": "Ekko",
+      "champion_id": "Ekko",
+      "handle": "@EkkoChallengerReplays",
+      "url": "https://www.youtube.com/@EkkoChallengerReplays",
+      "channel_id": "UCqc9GqKK-sNwwcni3SVMsfg",
+      "channel_title": "Ekko Challenger Replays",
+      "videos": "4.7K videos",
+      "subscribers": "7.79K subscribers"
+    },
+    {
+      "champion": "Elise",
+      "champion_id": "Elise",
+      "handle": "@EliseChallengerReplays",
+      "url": "https://www.youtube.com/@EliseChallengerReplays",
+      "channel_id": "UCu7lj8TNZUuwZwoAWJKQE1A",
+      "channel_title": "Elise Challenger Replays",
+      "videos": "877 videos",
+      "subscribers": "447 subscribers"
+    },
+    {
+      "champion": "Evelynn",
+      "champion_id": "Evelynn",
+      "handle": "@EvelynnChallengerReplays",
+      "url": "https://www.youtube.com/@EvelynnChallengerReplays",
+      "channel_id": "UClnHriJ_2EtS_yea2U6FQxw",
+      "channel_title": "Evelynn Challenger Replays",
+      "videos": "542 videos",
+      "subscribers": "366 subscribers"
+    },
+    {
+      "champion": "Ezreal",
+      "champion_id": "Ezreal",
+      "handle": "@EzrealChallengerReplays",
+      "url": "https://www.youtube.com/@EzrealChallengerReplays",
+      "channel_id": "UC05bS4GBMVtsBZ-WW_5Mo1Q",
+      "channel_title": "Ezreal Challenger Replays",
+      "videos": "4.5K videos",
+      "subscribers": "2.13K subscribers"
+    },
+    {
+      "champion": "Fiddlesticks",
+      "champion_id": "Fiddlesticks",
+      "handle": "@FiddlesticksChallengerReplays",
+      "url": "https://www.youtube.com/@FiddlesticksChallengerReplays",
+      "channel_id": "UC5TdCbxjdoTpUbkuBp_Yqtg",
+      "channel_title": "Fiddlesticks Challenger Replays",
+      "videos": "576 videos",
+      "subscribers": "428 subscribers"
+    },
+    {
+      "champion": "Fiora",
+      "champion_id": "Fiora",
+      "handle": "@FioraChallengerReplays",
+      "url": "https://www.youtube.com/@FioraChallengerReplays",
+      "channel_id": "UClKYEEnFg1lwIan-vMooUmw",
+      "channel_title": "Fiora Challenger Replays",
+      "videos": "2.7K videos",
+      "subscribers": "1.21K subscribers"
+    },
+    {
+      "champion": "Fizz",
+      "champion_id": "Fizz",
+      "handle": "@FizzChallengerReplays",
+      "url": "https://www.youtube.com/@FizzChallengerReplays",
+      "channel_id": "UCM8AaMcgpWyomfGlW8tFfzQ",
+      "channel_title": "Fizz Challenger Replays",
+      "videos": "819 videos",
+      "subscribers": "451 subscribers"
+    },
+    {
+      "champion": "Galio",
+      "champion_id": "Galio",
+      "handle": "@GalioChallengerReplays",
+      "url": "https://www.youtube.com/@GalioChallengerReplays",
+      "channel_id": "UCoebjI4sfhuOmFZp4beA_Dg",
+      "channel_title": "Galio Challenger Replays",
+      "videos": "586 videos",
+      "subscribers": "255 subscribers"
+    },
+    {
+      "champion": "Gangplank",
+      "champion_id": "Gangplank",
+      "handle": "@GangplankChallengerReplays",
+      "url": "https://www.youtube.com/@GangplankChallengerReplays",
+      "channel_id": "UC7ZFnX1etGK_Q9ndJqoANbQ",
+      "channel_title": "Gangplank Challenger Replays",
+      "videos": "499 videos",
+      "subscribers": "141 subscribers"
+    },
+    {
+      "champion": "Garen",
+      "champion_id": "Garen",
+      "handle": "@GarenChallengerReplays",
+      "url": "https://www.youtube.com/@GarenChallengerReplays",
+      "channel_id": "UCJEKETO35H96hOlexh_6ZbQ",
+      "channel_title": "Garen Challenger Replays",
+      "videos": "4.4K videos",
+      "subscribers": "2.34K subscribers"
+    },
+    {
+      "champion": "Gnar",
+      "champion_id": "Gnar",
+      "handle": "@GnarChallengerReplays",
+      "url": "https://www.youtube.com/@GnarChallengerReplays",
+      "channel_id": "UC99BWOgYWp4LJjVZ-RMBC_g",
+      "channel_title": "Gnar Challenger Replays",
+      "videos": "948 videos",
+      "subscribers": "459 subscribers"
+    },
+    {
+      "champion": "Gragas",
+      "champion_id": "Gragas",
+      "handle": "@GragasChallengerReplays",
+      "url": "https://www.youtube.com/@GragasChallengerReplays",
+      "channel_id": "UCNkvjwrQhxMapsZGBEjpCGg",
+      "channel_title": "Gragas Challenger Replays",
+      "videos": "554 videos",
+      "subscribers": "160 subscribers"
+    },
+    {
+      "champion": "Graves",
+      "champion_id": "Graves",
+      "handle": "@GravesChallengerReplays",
+      "url": "https://www.youtube.com/@GravesChallengerReplays",
+      "channel_id": "UCRGeYMWS57TtE-Tn_QAv69Q",
+      "channel_title": "Graves Challenger Replays",
+      "videos": "996 videos",
+      "subscribers": "514 subscribers"
+    },
+    {
+      "champion": "Gwen",
+      "champion_id": "Gwen",
+      "handle": "@GwenChallengerReplays",
+      "url": "https://www.youtube.com/@GwenChallengerReplays",
+      "channel_id": "UCj2oaePBN5e-X97ou2xGupA",
+      "channel_title": "Gwen Challenger Replays",
+      "videos": "4.3K videos",
+      "subscribers": "3.19K subscribers"
+    },
+    {
+      "champion": "Hecarim",
+      "champion_id": "Hecarim",
+      "handle": "@HecarimChallengerReplays",
+      "url": "https://www.youtube.com/@HecarimChallengerReplays",
+      "channel_id": "UCDoi-GTpSf1J-BOGo-OJ2MQ",
+      "channel_title": "Hecarim Challenger Replays",
+      "videos": "876 videos",
+      "subscribers": "530 subscribers"
+    },
+    {
+      "champion": "Heimerdinger",
+      "champion_id": "Heimerdinger",
+      "handle": "@HeimerdingerChallengerReplays",
+      "url": "https://www.youtube.com/@HeimerdingerChallengerReplays",
+      "channel_id": "UCZLcJ4CTC5QQLE3MEw727BA",
+      "channel_title": "Heimerdinger Challenger Replays",
+      "videos": "524 videos",
+      "subscribers": "208 subscribers"
+    },
+    {
+      "champion": "Hwei",
+      "champion_id": "Hwei",
+      "handle": "@HweiChallenger",
+      "url": "https://www.youtube.com/@HweiChallenger",
+      "channel_id": "UC56-0GYvWu6tsdTppqdP3FA",
+      "channel_title": "Hwei Challenger Replays",
+      "videos": "2.5K videos",
+      "subscribers": "1.05K subscribers"
+    },
+    {
+      "champion": "Illaoi",
+      "champion_id": "Illaoi",
+      "handle": "@IllaoiChallengerReplays",
+      "url": "https://www.youtube.com/@IllaoiChallengerReplays",
+      "channel_id": "UCie3wgBcNKL6Y39tmM2SipA",
+      "channel_title": "Illaoi Challenger Replays",
+      "videos": "988 videos",
+      "subscribers": "416 subscribers"
+    },
+    {
+      "champion": "Irelia",
+      "champion_id": "Irelia",
+      "handle": "@IreliaChallenger",
+      "url": "https://www.youtube.com/@IreliaChallenger",
+      "channel_id": "UC5gpBMcFJfXtmkW708J_yxg",
+      "channel_title": "Irelia Challenger Replays",
+      "videos": "4.6K videos",
+      "subscribers": "6.74K subscribers"
+    },
+    {
+      "champion": "Ivern",
+      "champion_id": "Ivern",
+      "handle": "@IvernChallengerReplays",
+      "url": "https://www.youtube.com/@IvernChallengerReplays",
+      "channel_id": "UC7rrna3rG5uX9Sj0qOk5y_g",
+      "channel_title": "Ivern Challenger Replays",
+      "videos": "1K videos",
+      "subscribers": "429 subscribers"
+    },
+    {
+      "champion": "Janna",
+      "champion_id": "Janna",
+      "handle": "@JannaChallengerReplays",
+      "url": "https://www.youtube.com/@JannaChallengerReplays",
+      "channel_id": "UC3VyNNa9NZjGUTdQbb2u20w",
+      "channel_title": "Janna Challenger Replays",
+      "videos": "495 videos",
+      "subscribers": "229 subscribers"
+    },
+    {
+      "champion": "Jarvan IV",
+      "champion_id": "JarvanIV",
+      "handle": "@JarvanIVChallengerReplays",
+      "url": "https://www.youtube.com/@JarvanIVChallengerReplays",
+      "channel_id": "UCvFLuFU9YgYfav1BoR-bupA",
+      "channel_title": "Jarvan IV Challenger Replays",
+      "videos": "623 videos",
+      "subscribers": "221 subscribers"
+    },
+    {
+      "champion": "Jax",
+      "champion_id": "Jax",
+      "handle": "@JaxChallengerReplays",
+      "url": "https://www.youtube.com/@JaxChallengerReplays",
+      "channel_id": "UCYK7rzZP7Y86VZjP9MvKQuA",
+      "channel_title": "Jax Challenger",
+      "videos": "4.3K videos",
+      "subscribers": "2.08K subscribers"
+    },
+    {
+      "champion": "Jayce",
+      "champion_id": "Jayce",
+      "handle": "@JayceChallengerReplays",
+      "url": "https://www.youtube.com/@JayceChallengerReplays",
+      "channel_id": "UC103ZFpAwtmQRu58sx0ynVQ",
+      "channel_title": "Jayce Challenger Replays",
+      "videos": "903 videos",
+      "subscribers": "609 subscribers"
+    },
+    {
+      "champion": "Jhin",
+      "champion_id": "Jhin",
+      "handle": "@JhinChallenger",
+      "url": "https://www.youtube.com/@JhinChallenger",
+      "channel_id": "UCKpktDYq363b7C5mGfzrp3Q",
+      "channel_title": "Jhin Challenger Replays",
+      "videos": "987 videos",
+      "subscribers": "440 subscribers"
+    },
+    {
+      "champion": "Jinx",
+      "champion_id": "Jinx",
+      "handle": "@JinxChallengerReplays",
+      "url": "https://www.youtube.com/@JinxChallengerReplays",
+      "channel_id": "UCmKloVPOSuc4conaiOdc4Cg",
+      "channel_title": "Jinx Challenger Replays",
+      "videos": "924 videos",
+      "subscribers": "527 subscribers"
+    },
+    {
+      "champion": "K'Sante",
+      "champion_id": "KSante",
+      "handle": "@KSanteChallengerReplays",
+      "url": "https://www.youtube.com/@KSanteChallengerReplays",
+      "channel_id": "UCU-WxonRq3kviEiR2RhU_JA",
+      "channel_title": "K'Sante Challenger Replays",
+      "videos": "2K videos",
+      "subscribers": "1.04K subscribers"
+    },
+    {
+      "champion": "Kai'Sa",
+      "champion_id": "Kaisa",
+      "handle": "@KaisaChallengerReplays",
+      "url": "https://www.youtube.com/@KaisaChallengerReplays",
+      "channel_id": "UCkUYR67f9l4NeA4IMXG4HMg",
+      "channel_title": "Kai'Sa Challenger Replays",
+      "videos": "4.4K videos",
+      "subscribers": "2.19K subscribers"
+    },
+    {
+      "champion": "Kalista",
+      "champion_id": "Kalista",
+      "handle": "@KalistaChallengerReplays",
+      "url": "https://www.youtube.com/@KalistaChallengerReplays",
+      "channel_id": "UCSvoa-wqcBymvEpRe8tHcXQ",
+      "channel_title": "Kalista Challenger Replays",
+      "videos": "916 videos",
+      "subscribers": "336 subscribers"
+    },
+    {
+      "champion": "Karma",
+      "champion_id": "Karma",
+      "handle": "@KarmaChallengerReplays",
+      "url": "https://www.youtube.com/@KarmaChallengerReplays",
+      "channel_id": "UCAry2dKPlhYdG7kahletvUg",
+      "channel_title": "Karma Challenger Replays",
+      "videos": "624 videos",
+      "subscribers": "189 subscribers"
+    },
+    {
+      "champion": "Karthus",
+      "champion_id": "Karthus",
+      "handle": "@KarthusChallenger",
+      "url": "https://www.youtube.com/@KarthusChallenger",
+      "channel_id": "UCam1PPr_LBYSisNXBY2Xo6g",
+      "channel_title": "Karthus Challenger Replays",
+      "videos": "469 videos",
+      "subscribers": "143 subscribers"
+    },
+    {
+      "champion": "Kassadin",
+      "champion_id": "Kassadin",
+      "handle": "@KassadinChallenger",
+      "url": "https://www.youtube.com/@KassadinChallenger",
+      "channel_id": "UCOGZr13zxpE7FzrNjWgpuLw",
+      "channel_title": "Kassadin Challenger Replays",
+      "videos": "622 videos",
+      "subscribers": "405 subscribers"
+    },
+    {
+      "champion": "Katarina",
+      "champion_id": "Katarina",
+      "handle": "@KatarinaChallenger",
+      "url": "https://www.youtube.com/@KatarinaChallenger",
+      "channel_id": "UCtsKaLoQYGF9FjjDz1McbpA",
+      "channel_title": "Katarina Challenger Replays",
+      "videos": "610 videos",
+      "subscribers": "401 subscribers"
+    },
+    {
+      "champion": "Kayle",
+      "champion_id": "Kayle",
+      "handle": "@KayleChallengerReplays",
+      "url": "https://www.youtube.com/@KayleChallengerReplays",
+      "channel_id": "UCPx9lYTbz4-u8Yo0rwR2JfQ",
+      "channel_title": "Kayle Challenger Replays",
+      "videos": "467 videos",
+      "subscribers": "294 subscribers"
+    },
+    {
+      "champion": "Kayn",
+      "champion_id": "Kayn",
+      "handle": "@KaynChallengerReplays",
+      "url": "https://www.youtube.com/@KaynChallengerReplays",
+      "channel_id": "UCbuGTh6Yqyd9eqm46OznDrg",
+      "channel_title": "Kayn Challenger Replays",
+      "videos": "1.1K videos",
+      "subscribers": "750 subscribers"
+    },
+    {
+      "champion": "Kennen",
+      "champion_id": "Kennen",
+      "handle": "@KennenChallengerReplays",
+      "url": "https://www.youtube.com/@KennenChallengerReplays",
+      "channel_id": "UCc96_IxXfT5DDhGRkCnRj9w",
+      "channel_title": "Kennen Challenger Replays",
+      "videos": "686 videos",
+      "subscribers": "333 subscribers"
+    },
+    {
+      "champion": "Kha'Zix",
+      "champion_id": "Khazix",
+      "handle": "@KhazixChallengerReplays",
+      "url": "https://www.youtube.com/@KhazixChallengerReplays",
+      "channel_id": "UC-r5gWZKC9YBUgzXB25AZ7A",
+      "channel_title": "Kha'Zix Challenger Replays",
+      "videos": "776 videos",
+      "subscribers": "303 subscribers"
+    },
+    {
+      "champion": "Kindred",
+      "champion_id": "Kindred",
+      "handle": "@KindredChallengerReplays",
+      "url": "https://www.youtube.com/@KindredChallengerReplays",
+      "channel_id": "UCa_pEaRdz36BOEghYL_7NWg",
+      "channel_title": "Kindred Challenger Replays",
+      "videos": "1.1K videos",
+      "subscribers": "647 subscribers"
+    },
+    {
+      "champion": "Kled",
+      "champion_id": "Kled",
+      "handle": "@KledChallengerReplays",
+      "url": "https://www.youtube.com/@KledChallengerReplays",
+      "channel_id": "UCVkzGZxZR82WTt7fLJyTnRQ",
+      "channel_title": "Kled Challenger Replays",
+      "videos": "1K videos",
+      "subscribers": "563 subscribers"
+    },
+    {
+      "champion": "Kog'Maw",
+      "champion_id": "KogMaw",
+      "handle": "@KogMawChallengerReplays",
+      "url": "https://www.youtube.com/@KogMawChallengerReplays",
+      "channel_id": "UCKGFf1CfvZZDaYtp8ygQAqA",
+      "channel_title": "Kog'Maw Challenger Replays",
+      "videos": "582 videos",
+      "subscribers": "155 subscribers"
+    },
+    {
+      "champion": "LeBlanc",
+      "champion_id": "Leblanc",
+      "handle": "@LeblancChallengerReplays",
+      "url": "https://www.youtube.com/@LeblancChallengerReplays",
+      "channel_id": "UCMwfgQn1VWAZSvCg7cr2Gtg",
+      "channel_title": "LeBlanc Challenger Replays",
+      "videos": "3.4K videos",
+      "subscribers": "1.35K subscribers"
+    },
+    {
+      "champion": "Lee Sin",
+      "champion_id": "LeeSin",
+      "handle": "@LeeSinChallengerReplays",
+      "url": "https://www.youtube.com/@LeeSinChallengerReplays",
+      "channel_id": "UCY_lSP2_hsCT4ub1FmF7Yug",
+      "channel_title": "Lee Sin Challenger Replays",
+      "videos": "3.8K videos",
+      "subscribers": "1.66K subscribers"
+    },
+    {
+      "champion": "Leona",
+      "champion_id": "Leona",
+      "handle": "@LeonaChallengerReplays",
+      "url": "https://www.youtube.com/@LeonaChallengerReplays",
+      "channel_id": "UChSi3R4KAXgCF52KgwJGxoQ",
+      "channel_title": "Leona Challenger Replays",
+      "videos": "726 videos",
+      "subscribers": "304 subscribers"
+    },
+    {
+      "champion": "Lillia",
+      "champion_id": "Lillia",
+      "handle": "@LilliaChallengerReplays",
+      "url": "https://www.youtube.com/@LilliaChallengerReplays",
+      "channel_id": "UCdq_VO-gjXrmYVhEeHnWoMw",
+      "channel_title": "Lillia Challenger Replays",
+      "videos": "1.1K videos",
+      "subscribers": "372 subscribers"
+    },
+    {
+      "champion": "Lissandra",
+      "champion_id": "Lissandra",
+      "handle": "@LissandraChallengerReplays",
+      "url": "https://www.youtube.com/@LissandraChallengerReplays",
+      "channel_id": "UCUHgKiIvvIZA9Q1wnmFf24Q",
+      "channel_title": "Lissandra Challenger Replays",
+      "videos": "790 videos",
+      "subscribers": "265 subscribers"
+    },
+    {
+      "champion": "Locke",
+      "champion_id": "Locke",
+      "handle": "@LockeChallengerReplays",
+      "url": "https://www.youtube.com/@LockeChallengerReplays",
+      "channel_id": "UCKpnpMcKdqUxYojAGoAdwbA",
+      "channel_title": "Locke Challenger Replays",
+      "videos": "238 videos",
+      "subscribers": "356 subscribers"
+    },
+    {
+      "champion": "Lucian",
+      "champion_id": "Lucian",
+      "handle": "@LucianChallengerReplays",
+      "url": "https://www.youtube.com/@LucianChallengerReplays",
+      "channel_id": "UCrh-yco2yoM9Ya1IZyhs_Pg",
+      "channel_title": "Lucian Challenger Replays",
+      "videos": "764 videos",
+      "subscribers": "158 subscribers"
+    },
+    {
+      "champion": "Lulu",
+      "champion_id": "Lulu",
+      "handle": "@LuluChallengerReplays",
+      "url": "https://www.youtube.com/@LuluChallengerReplays",
+      "channel_id": "UCKyKPAEJygliTzVKSzujb_g",
+      "channel_title": "Lulu Challenger Replays",
+      "videos": "2.3K videos",
+      "subscribers": "680 subscribers"
+    },
+    {
+      "champion": "Lux",
+      "champion_id": "Lux",
+      "handle": "@LuxChallengerReplays",
+      "url": "https://www.youtube.com/@LuxChallengerReplays",
+      "channel_id": "UCPA1uimhJsYwEiuilX_uMdw",
+      "channel_title": "Lux Challenger Replays",
+      "videos": "2.7K videos",
+      "subscribers": "895 subscribers"
+    },
+    {
+      "champion": "Malphite",
+      "champion_id": "Malphite",
+      "handle": "@MalphiteChallengerReplays",
+      "url": "https://www.youtube.com/@MalphiteChallengerReplays",
+      "channel_id": "UCgWynoQekd9iAE0a3wbJTIQ",
+      "channel_title": "Malphite Challenger Replays",
+      "videos": "526 videos",
+      "subscribers": "186 subscribers"
+    },
+    {
+      "champion": "Malzahar",
+      "champion_id": "Malzahar",
+      "handle": "@MalzaharChallengerReplays",
+      "url": "https://www.youtube.com/@MalzaharChallengerReplays",
+      "channel_id": "UCvhJK0RfguAwon7U8E_wikQ",
+      "channel_title": "Malzahar Challenger Replays",
+      "videos": "674 videos",
+      "subscribers": "336 subscribers"
+    },
+    {
+      "champion": "Maokai",
+      "champion_id": "Maokai",
+      "handle": "@MaokaiChallengerReplays",
+      "url": "https://www.youtube.com/@MaokaiChallengerReplays",
+      "channel_id": "UCTvHreugfj_Hi542sodU38Q",
+      "channel_title": "Maokai Challenger Replays",
+      "videos": "700 videos",
+      "subscribers": "303 subscribers"
+    },
+    {
+      "champion": "Master Yi",
+      "champion_id": "MasterYi",
+      "handle": "@MasterYiChallengerReplays",
+      "url": "https://www.youtube.com/@MasterYiChallengerReplays",
+      "channel_id": "UCvBs62VQN5xcB0FiCxa5rQw",
+      "channel_title": "Master Yi Challenger Replays",
+      "videos": "4.3K videos",
+      "subscribers": "1.88K subscribers"
+    },
+    {
+      "champion": "Mel",
+      "champion_id": "Mel",
+      "handle": "@MelChallengerReplays",
+      "url": "https://www.youtube.com/@MelChallengerReplays",
+      "channel_id": "UCLMqlW5qh_RnfpjfkZ4A77A",
+      "channel_title": "Mel Challenger",
+      "videos": "1K videos",
+      "subscribers": "298 subscribers"
+    },
+    {
+      "champion": "Milio",
+      "champion_id": "Milio",
+      "handle": "@MilioChallengerReplays",
+      "url": "https://www.youtube.com/@MilioChallengerReplays",
+      "channel_id": "UCkv38Et8s8gvk5G_MIIMTCA",
+      "channel_title": "Milio Challenger Replays",
+      "videos": "2.1K videos",
+      "subscribers": "852 subscribers"
+    },
+    {
+      "champion": "Miss Fortune",
+      "champion_id": "MissFortune",
+      "handle": "@MissFortuneChallengerReplays",
+      "url": "https://www.youtube.com/@MissFortuneChallengerReplays",
+      "channel_id": "UCafLoAzTTLAy57JbyqehccQ",
+      "channel_title": "Miss Fortune Challenger Replays",
+      "videos": "703 videos",
+      "subscribers": "405 subscribers"
+    },
+    {
+      "champion": "Mordekaiser",
+      "champion_id": "Mordekaiser",
+      "handle": "@MordekaiserChallengerReplays",
+      "url": "https://www.youtube.com/@MordekaiserChallengerReplays",
+      "channel_id": "UC078hIV5e3vQllTIRTSG7fw",
+      "channel_title": "Mordekaiser Challenger Replays",
+      "videos": "665 videos",
+      "subscribers": "365 subscribers"
+    },
+    {
+      "champion": "Morgana",
+      "champion_id": "Morgana",
+      "handle": "@MorganaChallengerReplays",
+      "url": "https://www.youtube.com/@MorganaChallengerReplays",
+      "channel_id": "UCe0ks6XeKI8OY_mzVaqaJqw",
+      "channel_title": "Morgana Challenger Replays",
+      "videos": "410 videos",
+      "subscribers": "126 subscribers"
+    },
+    {
+      "champion": "Naafiri",
+      "champion_id": "Naafiri",
+      "handle": "@NaafiriChallengerReplays",
+      "url": "https://www.youtube.com/@NaafiriChallengerReplays",
+      "channel_id": "UCjv9rXfURYR9qKAnnKJtXtA",
+      "channel_title": "Naafiri Challenger Replays",
+      "videos": "1.9K videos",
+      "subscribers": "822 subscribers"
+    },
+    {
+      "champion": "Nami",
+      "champion_id": "Nami",
+      "handle": "@NamiChallengerReplays",
+      "url": "https://www.youtube.com/@NamiChallengerReplays",
+      "channel_id": "UCXKYMxT1tW4wWb0SsssKY_Q",
+      "channel_title": "Nami Challenger Replays",
+      "videos": "736 videos",
+      "subscribers": "181 subscribers"
+    },
+    {
+      "champion": "Nasus",
+      "champion_id": "Nasus",
+      "handle": "@NasusChallengerReplays",
+      "url": "https://www.youtube.com/@NasusChallengerReplays",
+      "channel_id": "UCVk9mNzyyQgwvOu_ce7Wggg",
+      "channel_title": "Nasus Challenger Replays",
+      "videos": "3.3K videos",
+      "subscribers": "1.25K subscribers"
+    },
+    {
+      "champion": "Nautilus",
+      "champion_id": "Nautilus",
+      "handle": "@NautilusChallengerReplays",
+      "url": "https://www.youtube.com/@NautilusChallengerReplays",
+      "channel_id": "UCv_tC0wIWB_RImSBQ-tmggA",
+      "channel_title": "Nautilus Challenger Replays",
+      "videos": "803 videos",
+      "subscribers": "333 subscribers"
+    },
+    {
+      "champion": "Neeko",
+      "champion_id": "Neeko",
+      "handle": "@NeekoChallengerReplays",
+      "url": "https://www.youtube.com/@NeekoChallengerReplays",
+      "channel_id": "UCa6aPBSGxNd2veyOBAhG5BA",
+      "channel_title": "Neeko Challenger Replays",
+      "videos": "1K videos",
+      "subscribers": "349 subscribers"
+    },
+    {
+      "champion": "Nidalee",
+      "champion_id": "Nidalee",
+      "handle": "@NidaleeChallengerReplays",
+      "url": "https://www.youtube.com/@NidaleeChallengerReplays",
+      "channel_id": "UCvFecF2RLkuW4GeJUcHwuNw",
+      "channel_title": "Nidalee Challenger Replays",
+      "videos": "632 videos",
+      "subscribers": "359 subscribers"
+    },
+    {
+      "champion": "Nilah",
+      "champion_id": "Nilah",
+      "handle": "@NilahChallengerReplays",
+      "url": "https://www.youtube.com/@NilahChallengerReplays",
+      "channel_id": "UCdMUTTFq12q2bUtUYm0d3PA",
+      "channel_title": "Nilah Challenger Replays",
+      "videos": "1.6K videos",
+      "subscribers": "604 subscribers"
+    },
+    {
+      "champion": "Nocturne",
+      "champion_id": "Nocturne",
+      "handle": "@NocturneChallengerReplays",
+      "url": "https://www.youtube.com/@NocturneChallengerReplays",
+      "channel_id": "UCsKniRapVrdjBbXDAjjcR6A",
+      "channel_title": "Nocturne Challenger Replays",
+      "videos": "537 videos",
+      "subscribers": "347 subscribers"
+    },
+    {
+      "champion": "Nunu & Willump",
+      "champion_id": "Nunu",
+      "handle": "@NunuWillumpChallengerReplays",
+      "url": "https://www.youtube.com/@NunuWillumpChallengerReplays",
+      "channel_id": "UCgHwJv08A51oTqFdIrocxkg",
+      "channel_title": "Nunu & Willump Challenger Replays",
+      "videos": "366 videos",
+      "subscribers": "198 subscribers"
+    },
+    {
+      "champion": "Olaf",
+      "champion_id": "Olaf",
+      "handle": "@OlafChallengerReplays",
+      "url": "https://www.youtube.com/@OlafChallengerReplays",
+      "channel_id": "UCZAksh3713dLts7_cEIiDVw",
+      "channel_title": "Olaf Challenger Replays",
+      "videos": "599 videos",
+      "subscribers": "265 subscribers"
+    },
+    {
+      "champion": "Orianna",
+      "champion_id": "Orianna",
+      "handle": "@OriannaChallengerReplays",
+      "url": "https://www.youtube.com/@OriannaChallengerReplays",
+      "channel_id": "UC13M26KtEtXOygcVmf05SLw",
+      "channel_title": "Orianna Challenger Replays",
+      "videos": "652 videos",
+      "subscribers": "234 subscribers"
+    },
+    {
+      "champion": "Ornn",
+      "champion_id": "Ornn",
+      "handle": "@OrnnChallengerReplays",
+      "url": "https://www.youtube.com/@OrnnChallengerReplays",
+      "channel_id": "UCt2DU_nbVIsmHGUjw8oB3rA",
+      "channel_title": "Ornn Challenger Replays",
+      "videos": "938 videos",
+      "subscribers": "279 subscribers"
+    },
+    {
+      "champion": "Pantheon",
+      "champion_id": "Pantheon",
+      "handle": "@PantheonChallengerReplays",
+      "url": "https://www.youtube.com/@PantheonChallengerReplays",
+      "channel_id": "UCcuTF-GK27lvtvAdC8-c5Pg",
+      "channel_title": "Pantheon Challenger Replays",
+      "videos": "821 videos",
+      "subscribers": "715 subscribers"
+    },
+    {
+      "champion": "Poppy",
+      "champion_id": "Poppy",
+      "handle": "@PoppyChallengerReplays",
+      "url": "https://www.youtube.com/@PoppyChallengerReplays",
+      "channel_id": "UChGzaNKIWsxizAA9f9GIS4w",
+      "channel_title": "Poppy Challenger Replays",
+      "videos": "688 videos",
+      "subscribers": "372 subscribers"
+    },
+    {
+      "champion": "Pyke",
+      "champion_id": "Pyke",
+      "handle": "@PykeChallengerReplays",
+      "url": "https://www.youtube.com/@PykeChallengerReplays",
+      "channel_id": "UC547R6CaUzw0rK6sGnA3qFQ",
+      "channel_title": "Pyke Challenger Replays",
+      "videos": "1K videos",
+      "subscribers": "410 subscribers"
+    },
+    {
+      "champion": "Qiyana",
+      "champion_id": "Qiyana",
+      "handle": "@QiyanaChallengerReplays",
+      "url": "https://www.youtube.com/@QiyanaChallengerReplays",
+      "channel_id": "UC8e1kvn5xR9TKTdOwaxwo-w",
+      "channel_title": "Qiyana Challenger Replays",
+      "videos": "3.5K videos",
+      "subscribers": "2.15K subscribers"
+    },
+    {
+      "champion": "Quinn",
+      "champion_id": "Quinn",
+      "handle": "@QuinnChallengerReplays",
+      "url": "https://www.youtube.com/@QuinnChallengerReplays",
+      "channel_id": "UCN65ju4d1OSDnoPrOD___mQ",
+      "channel_title": "Quinn Challenger Replays",
+      "videos": "1K videos",
+      "subscribers": "641 subscribers"
+    },
+    {
+      "champion": "Rakan",
+      "champion_id": "Rakan",
+      "handle": "@RakanChallengerReplays",
+      "url": "https://www.youtube.com/@RakanChallengerReplays",
+      "channel_id": "UC8CqtB4Y6g2i20kndLy2Eyg",
+      "channel_title": "Rakan Challenger Replays",
+      "videos": "1K videos",
+      "subscribers": "407 subscribers"
+    },
+    {
+      "champion": "Rammus",
+      "champion_id": "Rammus",
+      "handle": "@RammusChallengerReplays",
+      "url": "https://www.youtube.com/@RammusChallengerReplays",
+      "channel_id": "UCrkmCJaqt7yYqKokZAoUhSQ",
+      "channel_title": "Rammus Challenger Replays",
+      "videos": "470 videos",
+      "subscribers": "168 subscribers"
+    },
+    {
+      "champion": "Rek'Sai",
+      "champion_id": "RekSai",
+      "handle": "@RekSaiChallengerReplays",
+      "url": "https://www.youtube.com/@RekSaiChallengerReplays",
+      "channel_id": "UComxYFZb6QtqFzujUWrl2xQ",
+      "channel_title": "Rek'Sai Challenger Replays",
+      "videos": "947 videos",
+      "subscribers": "430 subscribers"
+    },
+    {
+      "champion": "Rell",
+      "champion_id": "Rell",
+      "handle": "@RellChallengerReplays",
+      "url": "https://www.youtube.com/@RellChallengerReplays",
+      "channel_id": "UCF3rXP92tGV3_tHQiDO8Hpg",
+      "channel_title": "Rell Challenger Replays",
+      "videos": "1.4K videos",
+      "subscribers": "384 subscribers"
+    },
+    {
+      "champion": "Renata Glasc",
+      "champion_id": "Renata",
+      "handle": "@RenataGlascChallengerReplays",
+      "url": "https://www.youtube.com/@RenataGlascChallengerReplays",
+      "channel_id": "UCHDKBMmcYdJSNcHVKn6x1kA",
+      "channel_title": "Renata Glasc Challenger Replays",
+      "videos": "1.9K videos",
+      "subscribers": "552 subscribers"
+    },
+    {
+      "champion": "Renekton",
+      "champion_id": "Renekton",
+      "handle": "@RenektonChallengerReplays",
+      "url": "https://www.youtube.com/@RenektonChallengerReplays",
+      "channel_id": "UCd9ltB9PYOjvvEvRbuoW2gQ",
+      "channel_title": "Renekton Challenger Replays",
+      "videos": "820 videos",
+      "subscribers": "576 subscribers"
+    },
+    {
+      "champion": "Rengar",
+      "champion_id": "Rengar",
+      "handle": "@RengarChallengerReplays",
+      "url": "https://www.youtube.com/@RengarChallengerReplays",
+      "channel_id": "UCH266LA_8qrkPK2Fsv3uhpg",
+      "channel_title": "Rengar Challenger Replays",
+      "videos": "865 videos",
+      "subscribers": "522 subscribers"
+    },
+    {
+      "champion": "Riven",
+      "champion_id": "Riven",
+      "handle": "@RivenChallengerReplays",
+      "url": "https://www.youtube.com/@RivenChallengerReplays",
+      "channel_id": "UCVP8PuJ-hdWa3qAsrlgZEGw",
+      "channel_title": "Riven Challenger Replays",
+      "videos": "2.7K videos",
+      "subscribers": "1.18K subscribers"
+    },
+    {
+      "champion": "Rumble",
+      "champion_id": "Rumble",
+      "handle": "@RumbleChallengerReplays",
+      "url": "https://www.youtube.com/@RumbleChallengerReplays",
+      "channel_id": "UCQ7T8N2XtLz0GwbDjAF3s4g",
+      "channel_title": "Rumble Challenger Replays",
+      "videos": "723 videos",
+      "subscribers": "306 subscribers"
+    },
+    {
+      "champion": "Ryze",
+      "champion_id": "Ryze",
+      "handle": "@RyzeChallengerReplays",
+      "url": "https://www.youtube.com/@RyzeChallengerReplays",
+      "channel_id": "UCexNvDmp0O5R4pBOZlNBawg",
+      "channel_title": "Ryze Challenger",
+      "videos": "438 videos",
+      "subscribers": "186 subscribers"
+    },
+    {
+      "champion": "Samira",
+      "champion_id": "Samira",
+      "handle": "@SamiraChallengerReplays",
+      "url": "https://www.youtube.com/@SamiraChallengerReplays",
+      "channel_id": "UCcfFzFVa0jsFnTciausgn1w",
+      "channel_title": "Samira Challenger Replays",
+      "videos": "1.2K videos",
+      "subscribers": "379 subscribers"
+    },
+    {
+      "champion": "Sejuani",
+      "champion_id": "Sejuani",
+      "handle": "@SejuaniChallengerReplays",
+      "url": "https://www.youtube.com/@SejuaniChallengerReplays",
+      "channel_id": "UC2j_eu6anhWgmZJOqeOOpcg",
+      "channel_title": "Sejuani Challenger Replays",
+      "videos": "711 videos",
+      "subscribers": "282 subscribers"
+    },
+    {
+      "champion": "Senna",
+      "champion_id": "Senna",
+      "handle": "@SennaChallengerReplays",
+      "url": "https://www.youtube.com/@SennaChallengerReplays",
+      "channel_id": "UCAIiZhz6YmSde3gEvHx0RTQ",
+      "channel_title": "Senna Challenger Replays",
+      "videos": "1.2K videos",
+      "subscribers": "613 subscribers"
+    },
+    {
+      "champion": "Seraphine",
+      "champion_id": "Seraphine",
+      "handle": "@SeraphineChallengerReplays",
+      "url": "https://www.youtube.com/@SeraphineChallengerReplays",
+      "channel_id": "UCE68YAEjGJAFFmwTKgY4ukg",
+      "channel_title": "Seraphine Challenger Replays",
+      "videos": "1.4K videos",
+      "subscribers": "550 subscribers"
+    },
+    {
+      "champion": "Sett",
+      "champion_id": "Sett",
+      "handle": "@SettChallengerReplays",
+      "url": "https://www.youtube.com/@SettChallengerReplays",
+      "channel_id": "UCabVDx3hvAX1jU4pHjrp5mA",
+      "channel_title": "Sett Challenger Replays",
+      "videos": "4.3K videos",
+      "subscribers": "2.74K subscribers"
+    },
+    {
+      "champion": "Shaco",
+      "champion_id": "Shaco",
+      "handle": "@ShacoChallengerReplays",
+      "url": "https://www.youtube.com/@ShacoChallengerReplays",
+      "channel_id": "UC3hMgqBaNejEjiDcMjJrE8g",
+      "channel_title": "Shaco Challenger Replays",
+      "videos": "615 videos",
+      "subscribers": "337 subscribers"
+    },
+    {
+      "champion": "Shen",
+      "champion_id": "Shen",
+      "handle": "@ShenChallengerReplays",
+      "url": "https://www.youtube.com/@ShenChallengerReplays",
+      "channel_id": "UCEX7NIQDIX9hCzjOx7fZmvQ",
+      "channel_title": "Shen Challenger Replays",
+      "videos": "724 videos",
+      "subscribers": "407 subscribers"
+    },
+    {
+      "champion": "Shyvana",
+      "champion_id": "Shyvana",
+      "handle": "@ShyvanaChallengerReplays",
+      "url": "https://www.youtube.com/@ShyvanaChallengerReplays",
+      "channel_id": "UCcnMCROobu-66UVnZr_MTXA",
+      "channel_title": "Shyvana Challenger Replays",
+      "videos": "981 videos",
+      "subscribers": "873 subscribers"
+    },
+    {
+      "champion": "Singed",
+      "champion_id": "Singed",
+      "handle": "@SingedChallengerReplays",
+      "url": "https://www.youtube.com/@SingedChallengerReplays",
+      "channel_id": "UCdBvtyNhYSDniYbQjm4YvxQ",
+      "channel_title": "Singed Challenger Replays",
+      "videos": "508 videos",
+      "subscribers": "323 subscribers"
+    },
+    {
+      "champion": "Sion",
+      "champion_id": "Sion",
+      "handle": "@SionChallengerReplays",
+      "url": "https://www.youtube.com/@SionChallengerReplays",
+      "channel_id": "UC27kShvz6d26KBsMRvEZtRg",
+      "channel_title": "Sion Challenger Replays",
+      "videos": "450 videos",
+      "subscribers": "262 subscribers"
+    },
+    {
+      "champion": "Sivir",
+      "champion_id": "Sivir",
+      "handle": "@SivirChallengerReplays",
+      "url": "https://www.youtube.com/@SivirChallengerReplays",
+      "channel_id": "UC10j1tEpyTj7TsYQuv23SHQ",
+      "channel_title": "Sivir Challenger Replays",
+      "videos": "424 videos",
+      "subscribers": "95 subscribers"
+    },
+    {
+      "champion": "Skarner",
+      "champion_id": "Skarner",
+      "handle": "@SkarnerChallengerReplays",
+      "url": "https://www.youtube.com/@SkarnerChallengerReplays",
+      "channel_id": "UCCqLAo5NPVBj2kbg_tGfq-w",
+      "channel_title": "Skarner Challenger Replays",
+      "videos": "817 videos",
+      "subscribers": "415 subscribers"
+    },
+    {
+      "champion": "Smolder",
+      "champion_id": "Smolder",
+      "handle": "@SmolderChallengerReplays",
+      "url": "https://www.youtube.com/@SmolderChallengerReplays",
+      "channel_id": "UCSg_ibdf5Ogc3ze-XjPrG_g",
+      "channel_title": "Smolder Challenger Replays",
+      "videos": "1.9K videos",
+      "subscribers": "663 subscribers"
+    },
+    {
+      "champion": "Sona",
+      "champion_id": "Sona",
+      "handle": "@SonaChallengerReplays",
+      "url": "https://www.youtube.com/@SonaChallengerReplays",
+      "channel_id": "UClDcc6Hw2Le1hNB4Pi91dfQ",
+      "channel_title": "Sona Challenger Replays",
+      "videos": "424 videos",
+      "subscribers": "172 subscribers"
+    },
+    {
+      "champion": "Soraka",
+      "champion_id": "Soraka",
+      "handle": "@SorakaChallengerReplays",
+      "url": "https://www.youtube.com/@SorakaChallengerReplays",
+      "channel_id": "UCWbZIEUy2lTP7H6IuaGgnXw",
+      "channel_title": "Soraka Challenger Replays",
+      "videos": "411 videos",
+      "subscribers": "233 subscribers"
+    },
+    {
+      "champion": "Swain",
+      "champion_id": "Swain",
+      "handle": "@SwainChallengerReplays",
+      "url": "https://www.youtube.com/@SwainChallengerReplays",
+      "channel_id": "UCo0mtOgs74VSB_BZp3Cb1_A",
+      "channel_title": "Swain Challenger Replays",
+      "videos": "744 videos",
+      "subscribers": "347 subscribers"
+    },
+    {
+      "champion": "Sylas",
+      "champion_id": "Sylas",
+      "handle": "@SylasChallengerReplays",
+      "url": "https://www.youtube.com/@SylasChallengerReplays",
+      "channel_id": "UCad6Vj-CJpz7KwE-cFdNkIg",
+      "channel_title": "Sylas Challenger Replays",
+      "videos": "4.6K videos",
+      "subscribers": "9.49K subscribers"
+    },
+    {
+      "champion": "Syndra",
+      "champion_id": "Syndra",
+      "handle": "@SyndraChallengerReplays",
+      "url": "https://www.youtube.com/@SyndraChallengerReplays",
+      "channel_id": "UCw2IUqRmw2k7W7V1kXTwlaw",
+      "channel_title": "Syndra Challenger Replays",
+      "videos": "850 videos",
+      "subscribers": "351 subscribers"
+    },
+    {
+      "champion": "Tahm Kench",
+      "champion_id": "TahmKench",
+      "handle": "@TahmKenchChallengerReplays",
+      "url": "https://www.youtube.com/@TahmKenchChallengerReplays",
+      "channel_id": "UCl5PHmIblX5LXnETpFgxiNg",
+      "channel_title": "Tahm Kench Challenger Replays",
+      "videos": "805 videos",
+      "subscribers": "217 subscribers"
+    },
+    {
+      "champion": "Taliyah",
+      "champion_id": "Taliyah",
+      "handle": "@TaliyahChallengerReplays",
+      "url": "https://www.youtube.com/@TaliyahChallengerReplays",
+      "channel_id": "UCFPBPihMK5KwErDvwmE_WYQ",
+      "channel_title": "Taliyah Challenger Replays",
+      "videos": "847 videos",
+      "subscribers": "227 subscribers"
+    },
+    {
+      "champion": "Talon",
+      "champion_id": "Talon",
+      "handle": "@TalonChallengerReplays",
+      "url": "https://www.youtube.com/@TalonChallengerReplays",
+      "channel_id": "UCyjSqJw_2R4rekVxzC6Rnyw",
+      "channel_title": "Talon Challenger Replays",
+      "videos": "1.2K videos",
+      "subscribers": "949 subscribers"
+    },
+    {
+      "champion": "Taric",
+      "champion_id": "Taric",
+      "handle": "@TaricChallengerReplays",
+      "url": "https://www.youtube.com/@TaricChallengerReplays",
+      "channel_id": "UCQx4OyyR7U-DOnV9VqusFzA",
+      "channel_title": "Taric Challenger Replays",
+      "videos": "499 videos",
+      "subscribers": "166 subscribers"
+    },
+    {
+      "champion": "Teemo",
+      "champion_id": "Teemo",
+      "handle": "@TeemoChallengerReplays",
+      "url": "https://www.youtube.com/@TeemoChallengerReplays",
+      "channel_id": "UCcefTvvmkPKW0VXIH9mKlpw",
+      "channel_title": "Teemo Challenger Replays",
+      "videos": "411 videos",
+      "subscribers": "134 subscribers"
+    },
+    {
+      "champion": "Thresh",
+      "champion_id": "Thresh",
+      "handle": "@ThreshChallengerReplays",
+      "url": "https://www.youtube.com/@ThreshChallengerReplays",
+      "channel_id": "UCk5or9bsTVUh9wIpwWi8ARg",
+      "channel_title": "Thresh Challenger Replays",
+      "videos": "4.4K videos",
+      "subscribers": "2.52K subscribers"
+    },
+    {
+      "champion": "Tristana",
+      "champion_id": "Tristana",
+      "handle": "@TristanaChallengerReplays",
+      "url": "https://www.youtube.com/@TristanaChallengerReplays",
+      "channel_id": "UCnWfjQCWpIlZYTFDs76_aSQ",
+      "channel_title": "Tristana Challenger Replays",
+      "videos": "411 videos",
+      "subscribers": "212 subscribers"
+    },
+    {
+      "champion": "Trundle",
+      "champion_id": "Trundle",
+      "handle": "@TrundleChallengerReplays",
+      "url": "https://www.youtube.com/@TrundleChallengerReplays",
+      "channel_id": "UCgQOjXcCYZXx6QQezeEW46w",
+      "channel_title": "Trundle Challenger Replays",
+      "videos": "622 videos",
+      "subscribers": "200 subscribers"
+    },
+    {
+      "champion": "Tryndamere",
+      "champion_id": "Tryndamere",
+      "handle": "@TryndamereChallengerReplays",
+      "url": "https://www.youtube.com/@TryndamereChallengerReplays",
+      "channel_id": "UCUcrbkJFydXRN9OnBvDoT_w",
+      "channel_title": "Tryndamere Challenger Replays",
+      "videos": "468 videos",
+      "subscribers": "266 subscribers"
+    },
+    {
+      "champion": "Twisted Fate",
+      "champion_id": "TwistedFate",
+      "handle": "@TwistedFateChallengerReplays",
+      "url": "https://www.youtube.com/@TwistedFateChallengerReplays",
+      "channel_id": "UCwhslZvQC8_v5r6Pq0dqs8w",
+      "channel_title": "Twisted Fate Challenger Replays",
+      "videos": "440 videos",
+      "subscribers": "259 subscribers"
+    },
+    {
+      "champion": "Twitch",
+      "champion_id": "Twitch",
+      "handle": "@TwitchChallengerReplays",
+      "url": "https://www.youtube.com/@TwitchChallengerReplays",
+      "channel_id": "UCUsYTcSq7_7l1qleESlEvYA",
+      "channel_title": "Twitch Challenger Replays",
+      "videos": "569 videos",
+      "subscribers": "402 subscribers"
+    },
+    {
+      "champion": "Udyr",
+      "champion_id": "Udyr",
+      "handle": "@UdyrChallengerReplays",
+      "url": "https://www.youtube.com/@UdyrChallengerReplays",
+      "channel_id": "UC_tA1Ta5fghPsZFr1ZY9hUw",
+      "channel_title": "Udyr Challenger Replays",
+      "videos": "668 videos",
+      "subscribers": "436 subscribers"
+    },
+    {
+      "champion": "Urgot",
+      "champion_id": "Urgot",
+      "handle": "@UrgotChallengerReplays",
+      "url": "https://www.youtube.com/@UrgotChallengerReplays",
+      "channel_id": "UCtH5Kd6QCD2-VMByNFV2rsA",
+      "channel_title": "Urgot Challenger Replays",
+      "videos": "582 videos",
+      "subscribers": "147 subscribers"
+    },
+    {
+      "champion": "Varus",
+      "champion_id": "Varus",
+      "handle": "@VarusChallengerReplays",
+      "url": "https://www.youtube.com/@VarusChallengerReplays",
+      "channel_id": "UCRKANh_mVdDt-h-UZZlizeA",
+      "channel_title": "Varus Challenger Replays",
+      "videos": "755 videos",
+      "subscribers": "286 subscribers"
+    },
+    {
+      "champion": "Vayne",
+      "champion_id": "Vayne",
+      "handle": "@VayneChallengerReplays",
+      "url": "https://www.youtube.com/@VayneChallengerReplays",
+      "channel_id": "UCOG4AWhp8_FaqG7KGtzdj6A",
+      "channel_title": "Vayne Challenger Replays",
+      "videos": "4.2K videos",
+      "subscribers": "2.01K subscribers"
+    },
+    {
+      "champion": "Veigar",
+      "champion_id": "Veigar",
+      "handle": "@VeigarChallengerReplays",
+      "url": "https://www.youtube.com/@VeigarChallengerReplays",
+      "channel_id": "UCBc1eoQnIzqmxQeDTWGcs5A",
+      "channel_title": "Veigar Challenger Replays",
+      "videos": "471 videos",
+      "subscribers": "159 subscribers"
+    },
+    {
+      "champion": "Vel'Koz",
+      "champion_id": "Velkoz",
+      "handle": "@VelkozChallengerReplays",
+      "url": "https://www.youtube.com/@VelkozChallengerReplays",
+      "channel_id": "UC8OWvW2Llw81f2lHDv_2Ijg",
+      "channel_title": "Vel'Koz Challenger Replays",
+      "videos": "763 videos",
+      "subscribers": "144 subscribers"
+    },
+    {
+      "champion": "Vex",
+      "champion_id": "Vex",
+      "handle": "@VexChallengerReplays",
+      "url": "https://www.youtube.com/@VexChallengerReplays",
+      "channel_id": "UC6hNK4SICcyz2xN31tvnBRA",
+      "channel_title": "Vex Challenger",
+      "videos": "1.9K videos",
+      "subscribers": "654 subscribers"
+    },
+    {
+      "champion": "Vi",
+      "champion_id": "Vi",
+      "handle": "@ViChallengerReplays",
+      "url": "https://www.youtube.com/@ViChallengerReplays",
+      "channel_id": "UCS86K7szdicwzi8xbeycg1g",
+      "channel_title": "Vi Challenger",
+      "videos": "877 videos",
+      "subscribers": "383 subscribers"
+    },
+    {
+      "champion": "Viego",
+      "champion_id": "Viego",
+      "handle": "@ViegoChallengerReplays",
+      "url": "https://www.youtube.com/@ViegoChallengerReplays",
+      "channel_id": "UCcoW_DWWEuaMpGPn5z3MZYg",
+      "channel_title": "Viego Challenger Replays",
+      "videos": "4.2K videos",
+      "subscribers": "2.58K subscribers"
+    },
+    {
+      "champion": "Viktor",
+      "champion_id": "Viktor",
+      "handle": "@ViktorChallengerReplays",
+      "url": "https://www.youtube.com/@ViktorChallengerReplays",
+      "channel_id": "UCHQbIu4BId5UjXY_qHdD7TA",
+      "channel_title": "Viktor Challenger Replays",
+      "videos": "2.5K videos",
+      "subscribers": "917 subscribers"
+    },
+    {
+      "champion": "Vladimir",
+      "champion_id": "Vladimir",
+      "handle": "@VladimirChallengerReplays",
+      "url": "https://www.youtube.com/@VladimirChallengerReplays",
+      "channel_id": "UCpI6VY_oh0-m1ZCp26a9NFA",
+      "channel_title": "Vladimir Challenger Replays",
+      "videos": "607 videos",
+      "subscribers": "291 subscribers"
+    },
+    {
+      "champion": "Volibear",
+      "champion_id": "Volibear",
+      "handle": "@VolibearChallengerReplays",
+      "url": "https://www.youtube.com/@VolibearChallengerReplays",
+      "channel_id": "UCwSUcco3NaKhsPPPLuBh0Xg",
+      "channel_title": "Volibear Challenger Replays",
+      "videos": "819 videos",
+      "subscribers": "489 subscribers"
+    },
+    {
+      "champion": "Warwick",
+      "champion_id": "Warwick",
+      "handle": "@WarwickChallengerReplays",
+      "url": "https://www.youtube.com/@WarwickChallengerReplays",
+      "channel_id": "UC5rpXI3wn9pTXbz1H4k04Sw",
+      "channel_title": "Warwick Challenger Replays",
+      "videos": "553 videos",
+      "subscribers": "475 subscribers"
+    },
+    {
+      "champion": "Wukong",
+      "champion_id": "MonkeyKing",
+      "handle": "@WukongChallengerReplays",
+      "url": "https://www.youtube.com/@WukongChallengerReplays",
+      "channel_id": "UCjQBS-8H13hYsXqtUvEbwJQ",
+      "channel_title": "Wukong Challenger",
+      "videos": "491 videos",
+      "subscribers": "322 subscribers"
+    },
+    {
+      "champion": "Xayah",
+      "champion_id": "Xayah",
+      "handle": "@XayahChallengerReplays",
+      "url": "https://www.youtube.com/@XayahChallengerReplays",
+      "channel_id": "UC54j-j26FFjRbhJU0z6RlbQ",
+      "channel_title": "Xayah Challenger Replays",
+      "videos": "999 videos",
+      "subscribers": "352 subscribers"
+    },
+    {
+      "champion": "Xerath",
+      "champion_id": "Xerath",
+      "handle": "@XerathChallengerReplays",
+      "url": "https://www.youtube.com/@XerathChallengerReplays",
+      "channel_id": "UCKZvpJJ6peGEDAWbhELzWfw",
+      "channel_title": "Xerath Challenger Replays",
+      "videos": "425 videos",
+      "subscribers": "87 subscribers"
+    },
+    {
+      "champion": "Xin Zhao",
+      "champion_id": "XinZhao",
+      "handle": "@XinZhaoChallengerReplays",
+      "url": "https://www.youtube.com/@XinZhaoChallengerReplays",
+      "channel_id": "UCP_hldUPm-Sd7Hc2QIW07bA",
+      "channel_title": "Xin Zhao Challenger Replays",
+      "videos": "693 videos",
+      "subscribers": "353 subscribers"
+    },
+    {
+      "champion": "Yasuo",
+      "champion_id": "Yasuo",
+      "handle": "@YasuoChallengerReplays",
+      "url": "https://www.youtube.com/@YasuoChallengerReplays",
+      "channel_id": "UCdrF5mECFl8BbCAo6nUwX6w",
+      "channel_title": "Yasuo Challenger Replays",
+      "videos": "4.5K videos",
+      "subscribers": "1.73K subscribers"
+    },
+    {
+      "champion": "Yone",
+      "champion_id": "Yone",
+      "handle": "@YoneChallengerReplays",
+      "url": "https://www.youtube.com/@YoneChallengerReplays",
+      "channel_id": "UCET7ac7DJqtxgit-wwE-2Hg",
+      "channel_title": "Yone Challenger Replays",
+      "videos": "4.2K videos",
+      "subscribers": "3.61K subscribers"
+    },
+    {
+      "champion": "Yorick",
+      "champion_id": "Yorick",
+      "handle": "@YorickChallengerReplays",
+      "url": "https://www.youtube.com/@YorickChallengerReplays",
+      "channel_id": "UCbAkC4rht8OPhUgo1_wyBUw",
+      "channel_title": "Yorick Challenger Replays",
+      "videos": "815 videos",
+      "subscribers": "540 subscribers"
+    },
+    {
+      "champion": "Yunara",
+      "champion_id": "Yunara",
+      "handle": "@YunaraChallengerReplays",
+      "url": "https://www.youtube.com/@YunaraChallengerReplays",
+      "channel_id": "UCt9_trgha6JwMbDVaNDACiQ",
+      "channel_title": "Yunara Challenger Replays",
+      "videos": "678 videos",
+      "subscribers": "450 subscribers"
+    },
+    {
+      "champion": "Yuumi",
+      "champion_id": "Yuumi",
+      "handle": "@YuumiChallengerReplays",
+      "url": "https://www.youtube.com/@YuumiChallengerReplays",
+      "channel_id": "UCzljH7_9sab9kwIequxROSA",
+      "channel_title": "Yuumi Challenger Replays",
+      "videos": "803 videos",
+      "subscribers": "240 subscribers"
+    },
+    {
+      "champion": "Zaahen",
+      "champion_id": "Zaahen",
+      "handle": "@ZaahenChallengerReplays",
+      "url": "https://www.youtube.com/@ZaahenChallengerReplays",
+      "channel_id": "UCbSA9un-Sw7RAjo-TYqlR_g",
+      "channel_title": "Zaahen Challenger Replays",
+      "videos": "533 videos",
+      "subscribers": "510 subscribers"
+    },
+    {
+      "champion": "Zac",
+      "champion_id": "Zac",
+      "handle": "@ZacChallengerReplays",
+      "url": "https://www.youtube.com/@ZacChallengerReplays",
+      "channel_id": "UC7JSIwDKq1340D8gYXU5RrA",
+      "channel_title": "Zac Challenger Replays",
+      "videos": "1K videos",
+      "subscribers": "617 subscribers"
+    },
+    {
+      "champion": "Zed",
+      "champion_id": "Zed",
+      "handle": "@ZedChallengerReplays",
+      "url": "https://www.youtube.com/@ZedChallengerReplays",
+      "channel_id": "UCEflCDloIcofvi2GFQOHvPg",
+      "channel_title": "Zed Challenger",
+      "videos": "3.6K videos",
+      "subscribers": "1.34K subscribers"
+    },
+    {
+      "champion": "Zeri",
+      "champion_id": "Zeri",
+      "handle": "@ZeriChallengerReplays",
+      "url": "https://www.youtube.com/@ZeriChallengerReplays",
+      "channel_id": "UCpuHXcf1uZXybnuk6jDef5g",
+      "channel_title": "Zeri Challenger Replays",
+      "videos": "2.7K videos",
+      "subscribers": "1.24K subscribers"
+    },
+    {
+      "champion": "Ziggs",
+      "champion_id": "Ziggs",
+      "handle": "@ZiggsChallengerReplays",
+      "url": "https://www.youtube.com/@ZiggsChallengerReplays",
+      "channel_id": "UCUC7ahucrOhsn5Q1OJ--hbg",
+      "channel_title": "Ziggs Challenger Replays",
+      "videos": "671 videos",
+      "subscribers": "104 subscribers"
+    },
+    {
+      "champion": "Zilean",
+      "champion_id": "Zilean",
+      "handle": "@ZileanChallengerReplays",
+      "url": "https://www.youtube.com/@ZileanChallengerReplays",
+      "channel_id": "UChzifWNiM5U9fYP12u34GwA",
+      "channel_title": "Zilean Challenger Replays",
+      "videos": "459 videos",
+      "subscribers": "256 subscribers"
+    },
+    {
+      "champion": "Zoe",
+      "champion_id": "Zoe",
+      "handle": "@ZoeChallengerReplays",
+      "url": "https://www.youtube.com/@ZoeChallengerReplays",
+      "channel_id": "UCBJeUVelaeBalu6uAfoRlzA",
+      "channel_title": "Zoe Challenger Replays",
+      "videos": "3.7K videos",
+      "subscribers": "1.51K subscribers"
+    },
+    {
+      "champion": "Zyra",
+      "champion_id": "Zyra",
+      "handle": "@ZyraChallengerReplays",
+      "url": "https://www.youtube.com/@ZyraChallengerReplays",
+      "channel_id": "UCUx_AmUrc87tw4CE9OpLq-w",
+      "channel_title": "Zyra Challenger Replays",
+      "videos": "833 videos",
+      "subscribers": "382 subscribers"
+    }
+  ]
+}
