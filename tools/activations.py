@@ -89,6 +89,7 @@ def stage_plan(model: CoordNet) -> list[dict]:
                 "note": f"{conv.in_channels}→{conv.out_channels}, "
                         f"ядро {conv.kernel_size[0]}×{conv.kernel_size[1]}, "
                         f"шаг {conv.stride[0]}",
+                "stride": int(conv.stride[0]),
             })
             relu = idx + 2
             if relu < len(block) and isinstance(block[relu], nn.ReLU):

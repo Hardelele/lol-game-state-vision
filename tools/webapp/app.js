@@ -14,6 +14,10 @@ const S = {
   playing: null, trail: 40,
   mode: "end",        // "end" — сквозной режим, "net" — разбор по слоям
   stages: [], stage: 0, chan: 0,
+  // Счётчики запросов: ответ, пришедший после следующего переключения,
+  // отбрасывается. Иначе при быстром листании поздний ответ перерисовывает
+  // панель данными уже не того кадра или этапа.
+  netSeq: 0, chanSeq: 0,
 };
 
 // Пояснение к этапу: что именно здесь происходит и на что смотреть.
@@ -23,8 +27,7 @@ const WHY = {
     "на миникарте она не может.",
   conv: "Свёртка прикладывает набор небольших ядер к каждой точке предыдущего " +
     "этапа. Каждое ядро даёт свою карту признаков: одно отзывается на край, " +
-    "другое на пятно нужного цвета, третье на сочетание. Шаг 2 уменьшает " +
-    "картинку вдвое, поэтому дальше каждая точка охватывает больший кусок кадра.",
+    "другое на пятно нужного цвета, третье на сочетание.",
   act: "Нормировка выравнивает масштаб откликов, а ReLU обнуляет отрицательные. " +
     "Отсюда доля «живых» точек: если канал почти весь погас, он на этом кадре " +
     "ничего не нашёл.",
@@ -380,15 +383,20 @@ function setMode(m) {
 async function loadNet() {
   const f = S.frames[S.pos];
   if (!f) return;
+  const seq = ++S.netSeq;
   const r = await fetch(`/api/net/${S.run.id}/${S.video}/${f.i}`);
+  if (seq !== S.netSeq) return;
   if (!r.ok) { $("explain").textContent = "не удалось получить этапы сети"; return; }
-  S.stages = (await r.json()).stages;
+  const body = await r.json();
+  if (seq !== S.netSeq) return;
+  S.stages = body.stages;
   if (S.stage >= S.stages.length) S.stage = 0;
   drawPipe();
   showStage();
 }
 
 function drawPipe() {
+  $("stNum").textContent = `${S.stage + 1} / ${S.stages.length}`;
   $("pipe").innerHTML = S.stages.map((st, i) => {
     const sh = st.shape;
     return (i ? '<span class="arrow">→</span>' : "") +
@@ -398,6 +406,15 @@ function drawPipe() {
   $("pipe").querySelectorAll(".st").forEach((el) => {
     el.onclick = () => { S.stage = +el.dataset.i; S.chan = 0; drawPipe(); showStage(); };
   });
+  const cur = $("pipe").querySelector(".st.cur");
+  if (cur) cur.scrollIntoView({ block: "nearest", inline: "center" });
+}
+
+function gotoStage(d) {
+  S.stage = Math.max(0, Math.min(S.stages.length - 1, S.stage + d));
+  S.chan = 0;
+  drawPipe();
+  showStage();
 }
 
 function stageUrl(st, what) {
@@ -430,8 +447,18 @@ function showStage() {
     : stageUrl(st, "grid.png");
 
   const kind = st.id === "pool" ? "pool" : st.kind;
+  let extra = "";
+  if (st.kind === "conv") {
+    extra = st.stride > 1
+      ? ` Шаг ${st.stride} уменьшает картинку вдвое, поэтому дальше каждая ` +
+        "точка охватывает больший кусок кадра."
+      : " Шаг 1: размер не меняется, свёртка только пересобирает признаки.";
+    if (prev && prev.shape[0] !== st.shape[0]) {
+      extra += ` Каналов стало ${st.shape[0]} вместо ${prev.shape[0]}.`;
+    }
+  }
   $("explain").innerHTML =
-    `<b>${st.name}.</b> ${st.note}. ${WHY[kind] || ""} ` +
+    `<b>${st.name}.</b> ${st.note}.${extra} ${WHY[kind] || ""} ` +
     `Форма: <b>${st.shape[0]}</b> карт признаков по ` +
     `<b>${st.shape[1]}×${st.shape[2]}</b>; ` +
     `${st.kind === "act" ? "ненулевых" : "положительных"} значений ` +
@@ -451,9 +478,12 @@ async function showChan() {
   $("kernBox").classList.toggle("hidden", !isConv);
   if (isConv) $("kernImg").src = `/img/kernel/${S.run.id}/${st.id}/${S.chan}.png`;
 
+  const seq = ++S.chanSeq;
   const r = await fetch(`/api/chan/${S.run.id}/${S.video}/${f.i}/${st.id}`);
-  if (!r.ok) return;
-  const stats = (await r.json())[S.chan];
+  if (seq !== S.chanSeq || !r.ok) return;
+  const all = await r.json();
+  if (seq !== S.chanSeq) return;
+  const stats = all[S.chan];
   if (!stats) return;
   // До ReLU отрицательные значения осмысленны, после — обнулены, поэтому
   // одна и та же доля называется по-разному.
@@ -483,16 +513,16 @@ function wireNet() {
   $("mEnd").onclick = () => setMode("end");
   $("mNet").onclick = () => setMode("net");
   $("outGrid").onclick = pickChannel;
+  $("stPrev").onclick = () => gotoStage(-1);
+  $("stNext").onclick = () => gotoStage(1);
   $("chPrev").onclick = () => { S.chan--; showChan(); };
   $("chNext").onclick = () => { S.chan++; showChan(); };
   addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     if (e.key === "Tab") { setMode(S.mode === "end" ? "net" : "end"); e.preventDefault(); }
     if (S.mode !== "net") return;
-    if (e.key === "[") { S.stage = Math.max(0, S.stage - 1); drawPipe(); showStage(); }
-    if (e.key === "]") {
-      S.stage = Math.min(S.stages.length - 1, S.stage + 1); drawPipe(); showStage();
-    }
+    if (e.key === "[") gotoStage(-1);
+    if (e.key === "]") gotoStage(1);
   });
 }
 wireNet();
