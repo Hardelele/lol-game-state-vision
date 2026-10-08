@@ -28,6 +28,8 @@ const S = {
   // отбрасывается. Иначе при быстром листании поздний ответ перерисовывает
   // панель данными уже не того кадра или этапа.
   netSeq: 0, chanSeq: 0,
+  // Поток: кадры приходят по мере распаковки ролика, а не лежат готовыми.
+  live: null, follow: true,
 };
 
 // Пояснение к этапу: что именно здесь происходит и на что смотреть.
@@ -56,7 +58,17 @@ const KEYS = [
 ];
 
 const pad = (i) => String(i).padStart(6, "0");
-const sceneSrc = (f) => `/img/scene/${S.video}/${pad(f.i)}.jpg`;
+// В потоке кадры лежат в памяти сервера и отдаются по номеру без ведущих
+// нулей — на диске их нет вовсе.
+const sceneSrc = (f) => (S.live
+  ? `/img/live/${S.video}/scene/${f.i}.jpg`
+  : `/img/scene/${S.video}/${pad(f.i)}.jpg`);
+const miniSrc = (f) => (S.live
+  ? `/img/live/${S.video}/mini/${f.i}.jpg`
+  : `/img/mini/${S.video}/${pad(f.i)}.jpg`);
+const heatSrc = (f) => (S.live
+  ? `/img/live/${S.video}/heat/${f.i}.png`
+  : `/img/heat/${S.run.id}/${S.video}/${pad(f.i)}.png`);
 
 // ---------- загрузка ----------
 
@@ -95,6 +107,7 @@ async function selectRun(id) {
 }
 
 async function loadFrames(vid) {
+  if (S.live) await stopLive();
   S.video = vid;
   const d = await (await fetch(`/api/frames/${S.run.id}/${vid}`)).json();
   S.frames = d.frames;
@@ -174,8 +187,8 @@ function render() {
   const f = S.frames[S.pos];
   if (!f) return;
   $("scene").src = sceneSrc(f);
-  $("mini").src = `/img/mini/${S.video}/${pad(f.i)}.jpg`;
-  $("heatimg").src = `/img/heat/${S.run.id}/${S.video}/${pad(f.i)}.png`;
+  $("mini").src = miniSrc(f);
+  $("heatimg").src = heatSrc(f);
   $("heatimg").style.display = S.heat ? "" : "none";
 
   $("vErr").textContent = f.err.toFixed(3);
@@ -191,6 +204,7 @@ function render() {
     (f.label === "top" ? " top" : "");
   $("yt").href = `https://www.youtube.com/watch?v=${S.video}&t=${Math.round(f.t)}s`;
   $("why").href = `/explain/${S.run.id}/${S.video}/${f.i}.html`;
+  $("why").classList.toggle("hidden", !!S.live);
   if (document.activeElement !== $("jump")) $("jump").value = fmtTime(f.t);
   $("posNo").textContent = `#${f.i}`;
   drawMap(f);
@@ -282,21 +296,41 @@ function strip() {
   drawTimeline();
 }
 
+// Лента переиспользует уже созданные клетки, а не собирается заново: иначе
+// при каждом шаге картинки начинают грузиться с нуля и не успевают
+// появиться — особенно заметно в потоке, где лента сдвигается раз в секунду.
 function film() {
   const box = $("film"), K = (S.filmN - 1) / 2;
-  let s = "";
+  const old = new Map();
+  box.querySelectorAll(".th[data-i]").forEach((el) => old.set(el.dataset.i, el));
+  const frag = document.createDocumentFragment();
   for (let k = -K; k <= K; k++) {
     const j = S.pos + k, f = S.frames[j];
-    if (!f) { s += '<div class="th void"><div class="pic"></div><div class="eb"></div></div>'; continue; }
-    const op = k === 0 ? 1 : passes(f) ? 0.62 : 0.2;
-    s += `<div class="th${k === 0 ? " cur" : ""}" data-i="${j}" title="${fmtTime(f.t)}" ` +
-      `style="opacity:${op}"><div class="pic"><img loading="lazy" src="${sceneSrc(f)}"></div>` +
-      `<div class="eb" style="background:${BAR[errClass(f.err)]}"></div></div>`;
+    if (!f) {
+      const d = document.createElement("div");
+      d.className = "th void";
+      d.innerHTML = '<div class="pic"></div><div class="eb"></div>';
+      frag.appendChild(d);
+      continue;
+    }
+    let el = old.get(String(j));
+    if (el) {
+      old.delete(String(j));
+    } else {
+      el = document.createElement("div");
+      el.dataset.i = j;
+      el.innerHTML = '<div class="pic"><img loading="lazy"></div><div class="eb"></div>';
+      el.querySelector("img").src = sceneSrc(f);
+      el.querySelector(".eb").style.background = BAR[errClass(f.err)];
+      el.onclick = () => go(j);
+    }
+    el.className = "th" + (k === 0 ? " cur" : "");
+    el.title = fmtTime(f.t);
+    el.style.opacity = k === 0 ? 1 : passes(f) ? 0.62 : 0.2;
+    frag.appendChild(el);
   }
-  box.innerHTML = s;
-  box.querySelectorAll(".th[data-i]").forEach((el) => {
-    el.onclick = () => go(+el.dataset.i);
-  });
+  box.textContent = "";
+  box.appendChild(frag);
 }
 
 function fitFilm() {
@@ -819,8 +853,7 @@ function selectVideo(id) {
   // Ролик уже в датасете — кнопка не исчезает: кадры можно пересобрать с
   // другой частотой, но подпись должна предупреждать, что это перезапись.
   const taken = !!(h && h.frames);
-  $("pTake").textContent = taken ? "пересобрать кадры" : "взять в датасет потоком";
-  $("pTake").classList.toggle("go", !taken);
+  $("pTake").textContent = taken ? "пересобрать кадры" : "взять в датасет";
   $("pmeta").innerHTML =
     `<div class="pline"><b>${esc(v.title || id)}</b></div>` +
     `<div class="pline"><i>длительность</i> ${dur(v.duration)}` +
@@ -942,5 +975,109 @@ function wireChannels() {
   };
   $("vRefresh").onclick = () => CH.handle && openChannel(CH.handle, CH.url, true);
   $("pTake").onclick = take;
+  $("pLive").onclick = () => CH.sel && startLive(CH.sel, Number($("pFps").value));
   $("pOpen").onclick = () => CH.sel && openInViewer(CH.sel);
+}
+
+
+// ---------- поток: смотрелка по ролику, которого нет на диске ----------
+// Кадр распаковывается, с миникарты снимается истина, модель отвечает — и
+// кадр сразу появляется здесь. Ничего не скачивается и не сохраняется.
+// Скорость ограничена распаковкой: около 16x реального времени, то есть
+// получасовой матч проходит целиком примерно за две минуты, а первые кадры
+// видны через несколько секунд.
+
+async function startLive(id, fps) {
+  const r = await fetch("/api/live/start", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, run: S.run.id, fps: fps || 1 }),
+  });
+  const d = await r.json();
+  if (!r.ok) {
+    $("jobs").innerHTML = `<div class="msg bad">${esc(d.error)}</div>`;
+    return;
+  }
+  S.live = { id, since: 0, state: d.state, title: d.title || id, speed: null };
+  S.follow = true;
+  S.video = id;
+  S.frames = [];
+  S.pos = 0;
+  // Выпадающий список ролика показывает поток, пока он открыт.
+  $("video").innerHTML = `<option value="${id}">ПОТОК · ${esc(d.title || id)}</option>`;
+  $("holdout").className = "dot live";
+  $("holdout").title = "поток: ролик читается с YouTube прямо сейчас";
+  // Разбор по слоям требует кадра на диске, которого в потоке нет.
+  $("mNet").disabled = true;
+  $("mNet").title = "в потоке недоступно: слои читаются из сохранённого кадра";
+  setMode("end");
+  liveMeta();
+  pollLive();
+}
+
+async function stopLive() {
+  if (!S.live) return;
+  const id = S.live.id;
+  S.live = null;
+  clearTimeout(S.liveTimer);
+  $("mNet").disabled = false;
+  $("mNet").title = "Tab";
+  $("holdout").className = "dot";
+  await fetch("/api/live/stop", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).catch(() => {});
+}
+
+async function pollLive() {
+  if (!S.live) return;
+  const r = await fetch(`/api/live/${S.live.id}?since=${S.live.since}`);
+  if (!S.live) return;
+  if (!r.ok) { S.live.state = "сеанс потерян"; liveMeta(); return; }
+  const d = await r.json();
+  if (!S.live || d.id !== S.live.id) return;
+  S.live.state = d.state;
+  S.live.speed = d.speed;
+  S.live.note = d.note;
+  S.live.title = d.title || S.live.title;
+  S.live.duration = d.duration;
+  if (d.frames.length) {
+    const wasLast = S.pos >= S.frames.length - 1;
+    S.frames = S.frames.concat(d.frames);
+    S.live.since = d.count;
+    summary();
+    // Следуем за свежим кадром, только пока сами не ушли листать назад.
+    if (S.follow && wasLast) go(S.frames.length - 1);
+    else { render(); strip(); }
+  }
+  liveMeta();
+  const going = ["готовлюсь", "спрашиваю YouTube", "идёт"].includes(d.state);
+  clearTimeout(S.liveTimer);
+  if (going) S.liveTimer = setTimeout(pollLive, 1200);
+}
+
+// Строка под шапкой в режиме потока: что смотрим, какой моделью и как быстро
+// идёт распаковка. Без неё непонятно, почему кадров пока мало.
+function liveMeta() {
+  const L = S.live;
+  if (!L) return;
+  const train = (S.run.trained_on || []).includes(L.id);
+  const bits = [`<span class="live">ПОТОК · ${esc(L.state)}</span>`];
+  bits.push(`<b>${esc(L.title)}</b>`);
+  bits.push(`модель <code>${esc(S.run.id)}</code>`);
+  if (S.frames.length) {
+    const done = L.duration ? Math.min(100, Math.round(
+      S.frames[S.frames.length - 1].t / L.duration * 100)) : null;
+    bits.push(`${S.frames.length} кадров${done !== null ? ` · ${done}%` : ""}`);
+  }
+  if (L.speed) bits.push(`${L.speed}× реального времени`);
+  if (train) bits.push('<span class="warn">этот ролик был в обучении</span>');
+  bits.push('<button class="bare link" id="liveStop">остановить</button>');
+  $("vmeta").innerHTML = bits.join(" · ");
+  const b = $("liveStop");
+  if (b) b.onclick = () => { stopLive(); liveDone(); };
+}
+
+function liveDone() {
+  $("vmeta").innerHTML = '<span class="held">поток остановлен</span>' +
+    " · выберите ролик датасета в шапке или запустите поток снова";
 }

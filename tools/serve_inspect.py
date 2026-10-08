@@ -34,6 +34,7 @@ from PIL import Image
 import activations as act
 import channels
 import explain_miss
+import live
 import video_side
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -267,6 +268,14 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/channels/drop":
                 channels.drop_channel(body.get("handle", ""))
                 return self._json({"ok": True})
+            if p == "/api/live/start":
+                return self._json(live.start(
+                    body.get("id", ""), body.get("run") or "coords/full14",
+                    float(body.get("fps") or 1.0),
+                    float(body.get("start") or 0.0)))
+            if p == "/api/live/stop":
+                live.stop(body.get("id", ""))
+                return self._json({"ok": True})
             if p == "/api/ingest":
                 return self._json(channels.ingest(
                     body.get("id", ""), float(body.get("fps") or 1.0)))
@@ -301,6 +310,13 @@ class Handler(BaseHTTPRequestHandler):
                     handle, (q.get("url") or [None])[0],
                     int((q.get("limit") or ["60"])[0]),
                     (q.get("refresh") or [""])[0] == "1"))
+            m = re.fullmatch(r"/api/live/([\w-]+)", p)
+            if m:
+                ses = live.get(m.group(1))
+                if ses is None:
+                    return self.fail(404, "сеанс не открыт")
+                q = parse_qs(urlparse(self.path).query)
+                return self._json(ses.status(int((q.get("since") or ["0"])[0])))
             if p == "/api/jobs":
                 return self._json({"jobs": channels.jobs(),
                                    "have": channels.have_ids()})
@@ -345,6 +361,22 @@ class Handler(BaseHTTPRequestHandler):
                 with _lock:
                     a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
                 return self._json(act.channel_stats(a[sid]))
+
+            m = re.fullmatch(r"/img/live/([\w-]+)/(scene|mini)/(\d+)\.jpg", p)
+            if m:
+                ses = live.get(m.group(1))
+                store = (ses.scene if m.group(2) == "scene" else ses.mini) if ses else {}
+                body = store.get(int(m.group(3)))
+                if body is None:
+                    return self.fail(404, "кадра нет в сеансе")
+                return self._send(body, "image/jpeg", cache=3600)
+            m = re.fullmatch(r"/img/live/([\w-]+)/heat/(\d+)\.png", p)
+            if m:
+                ses = live.get(m.group(1))
+                h = ses.heat.get(int(m.group(2))) if ses else None
+                if h is None:
+                    return self.fail(404, "кадра нет в сеансе")
+                return self._send(live.heat_png(h), "image/png", cache=3600)
 
             m = re.fullmatch(r"/img/(scene|mini)/([\w-]+)/(\d+)\.jpg", p)
             if m:

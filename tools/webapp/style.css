@@ -368,3 +368,10 @@ kbd {
   .chcol.chans { flex: 1 1 220px; }
   .chcol.player { flex: 1 1 100%; }
 }
+
+/* ---------- поток ---------- */
+.dot.live { background: #8ab4ff; box-shadow: 0 0 0 3px rgba(138, 180, 255, .2); }
+.vmeta .live {
+  color: #0d0f12; background: #8ab4ff; font-weight: 700;
+  padding: 1px 8px; border-radius: 10px;
+}

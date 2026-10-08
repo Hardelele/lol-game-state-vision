@@ -167,7 +167,7 @@
       <div class="ytbox" id="ytbox"><div class="ytnone">ролик не выбран</div></div>
       <div class="pmeta" id="pmeta"></div>
       <div class="prow">
-        <button class="pill go" id="pTake"
+        <button class="pill" id="pTake"
           title="кадры с координатами собираются потоком, файл на диск не пишется">
           взять в датасет потоком</button>
         <select id="pFps" class="plain" title="кадров в секунду ролика">
@@ -175,6 +175,9 @@
           <option value="1" selected>1 кадр/с</option>
           <option value="2">2 кадр/с</option>
         </select>
+        <button class="pill go" id="pLive"
+          title="смотреть ответ модели по этому ролику прямо сейчас: кадры идут потоком, на диск ничего не пишется">
+          смотреть потоком ▶</button>
         <button class="pill" id="pOpen">открыть в смотрелке</button>
       </div>
       <div class="jobs" id="jobs"></div>
