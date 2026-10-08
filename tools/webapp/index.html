@@ -19,6 +19,7 @@
   <div class="seg">
     <button id="mEnd" class="on" title="Tab">Сквозной</button>
     <button id="mNet" title="Tab">По слоям</button>
+    <button id="mCh" title="Tab">Каналы</button>
   </div>
   <div class="stats">
     <span id="sMed"></span>
@@ -27,6 +28,8 @@
     <button class="round small" id="helpBtn" title="клавиши — ?">?</button>
   </div>
 </header>
+
+<div class="vmeta" id="vmeta"></div>
 
 <main class="frame" id="endview">
   <div class="panes">
@@ -116,7 +119,71 @@
   <p class="whytxt hidden" id="explain"></p>
 </section>
 
-<section class="frame strip">
+
+<section id="chview" class="frame chview hidden">
+  <div class="chcols">
+
+    <aside class="chcol chans">
+      <div class="chhead">
+        <b>Каналы</b> <i id="chCount"></i>
+        <span class="grow"></span>
+        <button class="bare" id="chOnlyMine" title="только те, с которых уже брали">наши</button>
+      </div>
+      <input id="chSearch" class="search" placeholder="чемпион или @канал"
+             autocomplete="off">
+      <div class="chlist" id="chList"></div>
+      <div class="addrow">
+        <input id="chAdd" class="search" placeholder="ссылка или @имя канала"
+               autocomplete="off">
+        <button class="pill" id="chAddBtn">добавить</button>
+      </div>
+      <div id="chMsg" class="msg"></div>
+    </aside>
+
+    <div class="chcol vids">
+      <div class="chhead">
+        <b id="vidsOf">выберите канал</b> <i id="vidsCount"></i>
+        <span class="grow"></span>
+        <select id="vLimit" class="plain" title="сколько последних роликов брать">
+          <option value="30">30</option>
+          <option value="60" selected>60</option>
+          <option value="120">120</option>
+          <option value="300">300</option>
+        </select>
+        <button class="bare" id="vRefresh" title="перечитать с YouTube">↻</button>
+      </div>
+      <input id="vSearch" class="search" placeholder="название, соперник, патч"
+             autocomplete="off">
+      <div class="rolerow" id="roleRow"></div>
+      <div class="vidlist" id="vidList"></div>
+    </div>
+
+    <div class="chcol player">
+      <div class="chhead">
+        <b>Просмотр</b> <i id="pId"></i>
+        <span class="grow"></span>
+        <a id="pYt" class="out" target="_blank" rel="noopener">YouTube ↗</a>
+      </div>
+      <div class="ytbox" id="ytbox"><div class="ytnone">ролик не выбран</div></div>
+      <div class="pmeta" id="pmeta"></div>
+      <div class="prow">
+        <button class="pill go" id="pTake"
+          title="кадры с координатами собираются потоком, файл на диск не пишется">
+          взять в датасет потоком</button>
+        <select id="pFps" class="plain" title="кадров в секунду ролика">
+          <option value="0.5">0.5 кадр/с</option>
+          <option value="1" selected>1 кадр/с</option>
+          <option value="2">2 кадр/с</option>
+        </select>
+        <button class="pill" id="pOpen">открыть в смотрелке</button>
+      </div>
+      <div class="jobs" id="jobs"></div>
+    </div>
+
+  </div>
+</section>
+
+<section class="frame strip" id="stripview">
   <div class="navrow">
     <button class="round" id="prev" title="← (Shift — 10 кадров)">◀</button>
     <button class="round play" id="play" title="пробел">▶</button>

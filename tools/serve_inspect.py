@@ -26,13 +26,15 @@ import threading
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, parse_qs
 
 import numpy as np
 from PIL import Image
 
 import activations as act
+import channels
 import explain_miss
+import video_side
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = Path(__file__).resolve().parent / "webapp"
@@ -156,6 +158,25 @@ def hand_labels() -> dict:
 
 
 @lru_cache(maxsize=1)
+def video_meta() -> dict:
+    """Название, роль и сторона по каждому ролику.
+
+    Без этого в интерфейсе виден только идентификатор вида 4AIX8QtRid4, и
+    невозможно понять ни что за матч, ни участвовал ли он в обучении.
+    """
+    out = {}
+    for p in sorted((ROOT / "data" / "videos").glob("*.info.json")):
+        vid = p.stem.replace(".info", "")
+        try:
+            a = video_side.analyse(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:                                     # noqa: BLE001
+            continue
+        out[vid] = {"title": a["title"], "role": a["role"],
+                    "side": a["side_ru"], "side_sure": a["confident"]}
+    return out
+
+
+@lru_cache(maxsize=1)
 def projection() -> dict:
     if not PROJ.exists():
         return {}
@@ -231,6 +252,31 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self._send(path.read_bytes(), ctype, cache)
 
+    def _body(self) -> dict:
+        n = int(self.headers.get("Content-Length") or 0)
+        if not n:
+            return {}
+        return json.loads(self.rfile.read(n).decode("utf-8"))
+
+    def do_POST(self) -> None:                                   # noqa: N802
+        p = unquote(urlparse(self.path).path)
+        try:
+            body = self._body()
+            if p == "/api/channels/add":
+                return self._json(channels.add_channel(body.get("url", "")))
+            if p == "/api/channels/drop":
+                channels.drop_channel(body.get("handle", ""))
+                return self._json({"ok": True})
+            if p == "/api/ingest":
+                return self._json(channels.ingest(
+                    body.get("id", ""), float(body.get("fps") or 1.0)))
+        except ValueError as exc:
+            return self.fail(400, str(exc))
+        except Exception as exc:                                 # noqa: BLE001
+            traceback.print_exc()
+            return self.fail(500, f"{type(exc).__name__}: {exc}")
+        self.fail(404, "нет такого адреса")
+
     def do_GET(self) -> None:                                    # noqa: N802
         p = unquote(urlparse(self.path).path)
         try:
@@ -242,10 +288,31 @@ class Handler(BaseHTTPRequestHandler):
                     return self.fail(403, "нельзя")
                 return self._file(WEB / name, cache=0)
 
+            if p == "/api/channels":
+                return self._json({"channels": channels.channels(),
+                                   "have": channels.have_ids(),
+                                   "jobs": channels.jobs()})
+            if p == "/api/channel":
+                q = parse_qs(urlparse(self.path).query)
+                handle = (q.get("handle") or [""])[0]
+                if not handle:
+                    return self.fail(400, "не указан канал")
+                return self._json(channels.videos(
+                    handle, (q.get("url") or [None])[0],
+                    int((q.get("limit") or ["60"])[0]),
+                    (q.get("refresh") or [""])[0] == "1"))
+            if p == "/api/jobs":
+                return self._json({"jobs": channels.jobs(),
+                                   "have": channels.have_ids()})
+            m = re.fullmatch(r"/api/video/([\w-]+)", p)
+            if m:
+                return self._json(channels.video_info(m.group(1)))
+
             if p == "/api/index":
                 with _lock:
                     return self._json({"runs": discover_runs(),
                                        "projection": projection(),
+                                       "videos": video_meta(),
                                        "map_units": MAP_UNITS})
             m = re.fullmatch(r"/api/frames/(.+)/([\w-]+)", p)
             if m:

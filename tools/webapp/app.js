@@ -50,7 +50,8 @@ const WHY = {
 const KEYS = [
   [["←", "→"], "кадр"], [["⇧", "←", "→"], "10 кадров"], [["N", "P"], "крупный промах"],
   [["Space"], "играть / пауза"], [["G"], "сетка"], [["H"], "тепло"], [["T"], "след"],
-  [["Home", "End"], "начало / конец"], [["Tab"], "режим"], [["[", "]"], "этап сети"],
+  [["Home", "End"], "начало / конец"], [["Tab"], "режим по кругу"],
+  [["[", "]"], "этап сети"],
   [["?"], "эта подсказка"],
 ];
 
@@ -72,6 +73,7 @@ async function boot() {
     `<span>${caps.map((c) => `<kbd>${c}</kbd>`).join("")}</span><span>${d}</span>`).join("");
   wire();
   wireNet();
+  wireChannels();
   await selectRun(S.runs[0].id);
 }
 
@@ -100,6 +102,7 @@ async function loadFrames(vid) {
   $("holdout").title = train ? "обучающий ролик — модель его видела"
     : "отложенный ролик — модель его не видела";
   $("holdout").className = "dot" + (train ? " train" : "");
+  showMeta(vid, train);
   await loadCells(S.cellSpec);
   summary();
   go(0);
@@ -443,7 +446,13 @@ function wire() {
     else if (l === "g" || l === "п") toggle("grid");
     else if (l === "h" || l === "р") toggle("heat");
     else if (l === "t" || l === "е") toggle("trail");
-    else if (k === "Tab") { setMode(S.mode === "end" ? "net" : "end"); e.preventDefault(); }
+    else if (k === "Tab") {
+      setMode(MODES[(MODES.indexOf(S.mode) + 1) % MODES.length]);
+      e.preventDefault();
+      return;
+    }
+    // В витрине каналов листать кадры нечем, а пробел и буквы только мешают.
+    else if (S.mode === "chan") { if (k === "?" || k === "Escape") help(); }
     else if (k === "?" || k === ",") help();
     else if (k === "Escape") help(false);
     else if (S.mode === "net" && (k === "[" || l === "х")) gotoStage(-1);
@@ -458,13 +467,23 @@ boot();
 
 // ---------- режим «по слоям» ----------
 
+const MODES = ["end", "net", "chan"];
+
 function setMode(m) {
   S.mode = m;
   $("mEnd").classList.toggle("on", m === "end");
   $("mNet").classList.toggle("on", m === "net");
+  $("mCh").classList.toggle("on", m === "chan");
   $("endview").classList.toggle("hidden", m !== "end");
   $("netview").classList.toggle("hidden", m !== "net");
+  $("chview").classList.toggle("hidden", m !== "chan");
+  // В витрине каналов лента кадров и строка про матч не о чём: там ещё не
+  // выбран ролик датасета.
+  $("stripview").classList.toggle("hidden", m === "chan");
+  $("vmeta").classList.toggle("hidden", m === "chan");
+  if (S.playing && m !== "end") play();
   if (m === "net") loadNet();
+  if (m === "chan") openChannels();
 }
 
 async function loadNet() {
@@ -606,6 +625,7 @@ function pickChannel(ev) {
 function wireNet() {
   $("mEnd").onclick = () => setMode("end");
   $("mNet").onclick = () => setMode("net");
+  $("mCh").onclick = () => setMode("chan");
   $("outGrid").onclick = pickChannel;
   $("stPrev").onclick = () => gotoStage(-1);
   $("stNext").onclick = () => gotoStage(1);
@@ -616,4 +636,309 @@ function wireNet() {
     $("explain").classList.toggle("hidden", !S.why);
     $("whyBtn").textContent = S.why ? "скрыть" : "подробнее";
   };
+}
+
+
+// Какой это матч и можно ли верить числам. Без этой строки в интерфейсе виден
+// только идентификатор вида 4AIX8QtRid4, и ошибка в 22 единицы выглядит
+// достижением, хотя означает лишь, что ролик был в обучении.
+function showMeta(vid, train) {
+  const m = (S.meta || {})[vid] || {};
+  const bits = [];
+  bits.push(train
+    ? '<span class="warn">ОБУЧАЮЩИЙ · модель эти кадры видела</span>'
+    : '<span class="held">ОТЛОЖЕННЫЙ · модель этих кадров не видела</span>');
+  if (m.title) bits.push(`<b>${m.title}</b>`);
+  if (m.role) bits.push(`роль ${m.role}`);
+  if (m.side && m.side !== "?") {
+    bits.push(`сторона ${m.side}${m.side_sure ? "" : " (вероятно)"}`);
+  }
+  bits.push(`<code>${vid}</code>`);
+  if (train) bits.push("числа ниже — это память, а не предсказание");
+  $("vmeta").innerHTML = bits.join(" · ");
+}
+
+
+// ---------- режим «Каналы»: витрина, поиск, плеер ----------
+// Выбирать следующий ролик по идентификатору было неудобно: не видно ни
+// канала, ни матча, ни того, брали мы его. Здесь каталог каналов (по одному
+// на чемпиона), поиск, список роликов канала и плеер YouTube — ролик при
+// этом никуда не скачивается.
+
+const CH = {
+  all: [], have: {}, handle: null, url: null, vids: [], sel: null,
+  q: "", vq: "", role: null, onlyMine: false, limit: 60, timer: null,
+  vseq: 0, src: "",
+};
+const VROLES = ["Top", "Jungle", "Mid", "ADC", "Support"];
+
+const dur = (s) => (s == null ? "" :
+  `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`);
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;");
+
+async function openChannels() {
+  if (!CH.all.length) {
+    const d = await (await fetch("/api/channels")).json();
+    CH.all = d.channels;
+    CH.have = d.have || {};
+    drawChannels();
+    drawJobs(d.jobs || []);
+  }
+  pollJobs();
+}
+
+function chanRows() {
+  const q = CH.q.trim().toLowerCase();
+  return CH.all.filter((c) => {
+    if (CH.onlyMine && !c.mine) return false;
+    if (!q) return true;
+    return (c.name || "").toLowerCase().includes(q) ||
+      (c.handle || "").toLowerCase().includes(q) ||
+      (c.title || "").toLowerCase().includes(q);
+  });
+}
+
+function drawChannels() {
+  const rows = chanRows();
+  $("chCount").textContent = rows.length === CH.all.length
+    ? `${CH.all.length}` : `${rows.length} из ${CH.all.length}`;
+  $("chList").innerHTML = rows.map((c) =>
+    `<button class="crow${c.handle === CH.handle ? " cur" : ""}" ` +
+    `data-h="${esc(c.handle)}" data-u="${esc(c.url)}" title="${esc(c.handle)}">` +
+    `<span class="cname">${esc(c.name)}</span>` +
+    (c.mine ? `<span class="badge mine" title="роликов этого канала в датасете">${c.mine}</span>` : "") +
+    (c.custom ? `<span class="badge own" title="добавлен вами">свой</span>` : "") +
+    `<span class="grow"></span><i>${esc(c.videos || c.subs || "")}</i>` +
+    (c.custom ? `<span class="x" data-drop="${esc(c.handle)}" title="убрать">×</span>` : "") +
+    `</button>`).join("");
+  $("chList").querySelectorAll(".crow").forEach((el) => {
+    el.onclick = (ev) => {
+      const drop = ev.target.closest("[data-drop]");
+      if (drop) { ev.stopPropagation(); return dropChannel(drop.dataset.drop); }
+      openChannel(el.dataset.h, el.dataset.u);
+    };
+  });
+}
+
+async function openChannel(handle, url, refresh) {
+  CH.handle = handle; CH.url = url;
+  drawChannels();
+  const c = CH.all.find((x) => x.handle === handle) || {};
+  $("vidsOf").textContent = c.name || handle;
+  $("vidsCount").textContent = "читаю…";
+  $("vidList").innerHTML = `<div class="msg">запрашиваю список у YouTube…</div>`;
+  const seq = ++CH.vseq;
+  const qs = new URLSearchParams({ handle, limit: String(CH.limit) });
+  if (url) qs.set("url", url);
+  if (refresh) qs.set("refresh", "1");
+  const r = await fetch(`/api/channel?${qs}`);
+  if (seq !== CH.vseq) return;
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    $("vidsCount").textContent = "";
+    $("vidList").innerHTML =
+      `<div class="msg bad">не вышло: ${esc(e.error || r.status)}</div>`;
+    return;
+  }
+  const d = await r.json();
+  if (seq !== CH.vseq) return;
+  CH.vids = d.items || [];
+  CH.src = d.source;
+  drawVids();
+}
+
+function vidRows() {
+  const q = CH.vq.trim().toLowerCase();
+  return CH.vids.filter((v) => {
+    if (CH.role && v.role !== CH.role) return false;
+    if (!q) return true;
+    return (v.title || "").toLowerCase().includes(q) ||
+      (v.vs || "").toLowerCase().includes(q) ||
+      (v.patch || "").includes(q) || (v.id || "").toLowerCase() === q;
+  });
+}
+
+function drawVids() {
+  const rows = vidRows();
+  $("vidsCount").textContent =
+    `${rows.length}${rows.length !== CH.vids.length ? ` из ${CH.vids.length}` : ""}` +
+    (CH.src ? ` · ${CH.src}` : "");
+  $("roleRow").innerHTML =
+    `<button class="pill${CH.role ? "" : " on"}" data-r="">все</button>` +
+    VROLES.map((r) => {
+      const n = CH.vids.filter((v) => v.role === r).length;
+      return `<button class="pill${CH.role === r ? " on" : ""}" data-r="${r}"` +
+        `${n ? "" : " disabled"}>${r}<i> ${n}</i></button>`;
+    }).join("");
+  $("roleRow").querySelectorAll(".pill").forEach((el) => {
+    el.onclick = () => { CH.role = el.dataset.r || null; drawVids(); };
+  });
+
+  $("vidList").innerHTML = rows.map((v) => {
+    const h = CH.have[v.id];
+    const tags = [
+      v.role ? `<span class="tag">${esc(v.role)}</span>` : "",
+      v.vs ? `<span class="tag dim">vs ${esc(v.vs)}</span>` : "",
+      v.patch ? `<span class="tag dim">${esc(v.patch)}</span>` : "",
+      v.region ? `<span class="tag dim">${esc(v.region)}</span>` : "",
+      h && h.frames ? `<span class="tag have">в датасете · ${h.frames} кадров</span>`
+        : h ? `<span class="tag dim">описание есть</span>` : "",
+    ].join("");
+    return `<button class="vrow${v.id === CH.sel ? " cur" : ""}" data-id="${v.id}">` +
+      `<img loading="lazy" src="${esc(v.thumb || "")}" alt="">` +
+      `<span class="vtxt"><span class="vt">${esc(v.title)}</span>` +
+      `<span class="vtags">${tags}</span></span>` +
+      `<span class="vdur">${dur(v.duration)}</span></button>`;
+  }).join("") || `<div class="msg">ничего не нашлось</div>`;
+  $("vidList").querySelectorAll(".vrow").forEach((el) => {
+    el.onclick = () => selectVideo(el.dataset.id);
+  });
+}
+
+// ---------- плеер и карточка ролика ----------
+
+function selectVideo(id) {
+  CH.sel = id;
+  drawVids();
+  const v = CH.vids.find((x) => x.id === id) || {};
+  $("pId").textContent = id;
+  $("pYt").href = `https://www.youtube.com/watch?v=${id}`;
+  // Плеер в iframe: ролик идёт с серверов YouTube, у нас он не оседает.
+  $("ytbox").innerHTML =
+    `<iframe src="https://www.youtube-nocookie.com/embed/${id}?rel=0" ` +
+    `title="ролик" allow="accelerometer; autoplay; clipboard-write; ` +
+    `encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>`;
+  const run = S.runs.find((r) => r.videos.includes(id));
+  $("pOpen").disabled = !run;
+  $("pOpen").title = run ? `прогон ${run.id}`
+    : "предсказаний для этого ролика пока нет: сначала возьмите его в датасет и обучите модель";
+  const h = CH.have[id];
+  // Ролик уже в датасете — кнопка не исчезает: кадры можно пересобрать с
+  // другой частотой, но подпись должна предупреждать, что это перезапись.
+  const taken = !!(h && h.frames);
+  $("pTake").textContent = taken ? "пересобрать кадры" : "взять в датасет потоком";
+  $("pTake").classList.toggle("go", !taken);
+  $("pmeta").innerHTML =
+    `<div class="pline"><b>${esc(v.title || id)}</b></div>` +
+    `<div class="pline"><i>длительность</i> ${dur(v.duration)}` +
+    (h && h.frames
+      ? ` · <span class="tag have">уже в датасете, ${h.frames} кадров</span>` : "") +
+    `</div><div class="pline" id="pSide"><i>сторона</i> узнаю по описанию…</div>`;
+  loadSide(id);
+}
+
+async function loadSide(id) {
+  const r = await fetch(`/api/video/${id}`);
+  if (CH.sel !== id) return;
+  const box = $("pSide");
+  if (!box) return;
+  if (!r.ok) { box.innerHTML = `<i>сторону определить не удалось</i>`; return; }
+  const a = await r.json();
+  const bits = [];
+  if (a.role) bits.push(`<i>роль</i> ${esc(a.role)}`);
+  bits.push(`<i>итог</i> ${esc(a.result)}`);
+  bits.push(`<i>сторона</i> <b>${esc(a.side_ru)}</b>` +
+    (a.confident ? "" : ` <span class="tag dim">вероятно</span>`));
+  if (a.size) bits.push(`<i>кадр</i> ${esc(a.size)}`);
+  box.innerHTML = bits.join(" · ") + `<div class="msg">${esc(a.why)}</div>`;
+}
+
+function openInViewer(id) {
+  const run = S.runs.find((r) => r.videos.includes(id));
+  if (!run) return;
+  setMode("end");
+  $("run").value = run.id;
+  selectRun(run.id).then(() => { $("video").value = id; loadFrames(id); });
+}
+
+// ---------- забор ролика и ход работ ----------
+
+async function take() {
+  if (!CH.sel) return;
+  const fps = Number($("pFps").value);
+  const r = await fetch("/api/ingest", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: CH.sel, fps }),
+  });
+  const d = await r.json();
+  if (!r.ok) {
+    $("jobs").innerHTML = `<div class="msg bad">${esc(d.error)}</div>`;
+    return;
+  }
+  pollJobs(true);
+}
+
+function drawJobs(jobs) {
+  if (!jobs.length) { $("jobs").innerHTML = ""; return; }
+  $("jobs").innerHTML = `<div class="jhead">сборка кадров</div>` + jobs.map((j) =>
+    `<div class="job ${j.state === "идёт" ? "run" : j.state === "готово" ? "ok" : "bad"}">` +
+    `<div class="jtop"><code>${esc(j.id)}</code><i>${esc(j.state)}</i>` +
+    `<span class="grow"></span><i>${j.fps} кадр/с</i></div>` +
+    `<pre>${esc(j.log)}</pre></div>`).join("");
+}
+
+async function pollJobs(force) {
+  const d = await (await fetch("/api/jobs")).json();
+  CH.have = d.have || CH.have;
+  drawJobs(d.jobs || []);
+  if (CH.vids.length) drawVids();
+  const running = (d.jobs || []).some((j) => j.state === "идёт");
+  clearTimeout(CH.timer);
+  // Опрашиваем, только пока что-то идёт и витрина открыта: греть сервер
+  // пустыми запросами незачем.
+  if (running && S.mode === "chan") CH.timer = setTimeout(pollJobs, 4000);
+  else if (force && S.mode === "chan") CH.timer = setTimeout(pollJobs, 2000);
+}
+
+// ---------- добавление канала ----------
+
+async function addChannel() {
+  const url = $("chAdd").value.trim();
+  if (!url) return;
+  $("chMsg").textContent = "спрашиваю YouTube…";
+  const r = await fetch("/api/channels/add", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const d = await r.json();
+  if (!r.ok) {
+    $("chMsg").innerHTML = `<span class="bad">${esc(d.error)}</span>`;
+    return;
+  }
+  $("chAdd").value = "";
+  $("chMsg").textContent = `добавлен ${d.name || d.handle}`;
+  CH.all = [];
+  await openChannels();
+  openChannel(d.handle, d.url);
+}
+
+async function dropChannel(handle) {
+  await fetch("/api/channels/drop", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ handle }),
+  });
+  CH.all = [];
+  if (CH.handle === handle) { CH.handle = null; CH.vids = []; drawVids(); }
+  await openChannels();
+}
+
+function wireChannels() {
+  $("chSearch").oninput = (e) => { CH.q = e.target.value; drawChannels(); };
+  $("vSearch").oninput = (e) => { CH.vq = e.target.value; drawVids(); };
+  $("chOnlyMine").onclick = () => {
+    CH.onlyMine = !CH.onlyMine;
+    $("chOnlyMine").classList.toggle("on", CH.onlyMine);
+    drawChannels();
+  };
+  $("chAddBtn").onclick = addChannel;
+  $("chAdd").onkeydown = (e) => { if (e.key === "Enter") addChannel(); };
+  $("vLimit").onchange = (e) => {
+    CH.limit = Number(e.target.value);
+    if (CH.handle) openChannel(CH.handle, CH.url);
+  };
+  $("vRefresh").onclick = () => CH.handle && openChannel(CH.handle, CH.url, true);
+  $("pTake").onclick = take;
+  $("pOpen").onclick = () => CH.sel && openInViewer(CH.sel);
 }
