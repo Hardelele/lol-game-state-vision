@@ -1,0 +1,20 @@
+{
+  "video_id": "0Jijr5p5gAg",
+  "url": "https://www.youtube.com/watch?v=0Jijr5p5gAg",
+  "title": "Jinx ADC vs Draven - KR Grandmaster Patch 26.19",
+  "channel": "Jinx Challenger Replays",
+  "channel_url": "https://www.youtube.com/channel/UCmKloVPOSuc4conaiOdc4Cg",
+  "upload_date": "20261007",
+  "duration_sec": 1398.834,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399+251",
+  "sampling": {
+    "every_sec": 15,
+    "first_sec": 0,
+    "count": 94,
+    "seek": "ffmpeg -ss before -i (exact)",
+    "jpeg_q": 3
+  }
+}
