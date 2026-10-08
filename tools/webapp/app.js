@@ -12,6 +12,26 @@ const S = {
   runs: [], run: null, video: null, frames: [], pos: 0,
   proj: null, mapUnits: 14800, cells: [], cellSpec: "8x5",
   playing: null, trail: 40,
+  mode: "end",        // "end" — сквозной режим, "net" — разбор по слоям
+  stages: [], stage: 0, chan: 0,
+};
+
+// Пояснение к этапу: что именно здесь происходит и на что смотреть.
+const WHY = {
+  input: "Кадр после маски и обрезки, сжатый до входного размера. Это всё, " +
+    "что сеть видит: HUD и миникарта вырезаны, поэтому подсмотреть ответ " +
+    "на миникарте она не может.",
+  conv: "Свёртка прикладывает набор небольших ядер к каждой точке предыдущего " +
+    "этапа. Каждое ядро даёт свою карту признаков: одно отзывается на край, " +
+    "другое на пятно нужного цвета, третье на сочетание. Шаг 2 уменьшает " +
+    "картинку вдвое, поэтому дальше каждая точка охватывает больший кусок кадра.",
+  act: "Нормировка выравнивает масштаб откликов, а ReLU обнуляет отрицательные. " +
+    "Отсюда доля «живых» точек: если канал почти весь погас, он на этом кадре " +
+    "ничего не нашёл.",
+  pool: "Усреднение до мелкой сетки. Сетка, а не одно число на канал: " +
+    "положение найденного в кадре — это и есть подсказка о месте на карте.",
+  heat: "Голова превращает признаки в распределение вероятности по карте. " +
+    "Два пятна означают, что сеть видит два подходящих места.",
 };
 
 // ---------- загрузка ----------
@@ -102,6 +122,7 @@ function go(i) {
   render();
   drawTimeline();
   film();
+  if (S.mode === "net") loadNet();
 }
 
 // ---------- отрисовка кадра ----------
@@ -342,3 +363,136 @@ function wire() {
 }
 
 boot();
+
+
+// ---------- режим «по слоям» ----------
+
+function setMode(m) {
+  S.mode = m;
+  $("mEnd").classList.toggle("on", m === "end");
+  $("mNet").classList.toggle("on", m === "net");
+  document.querySelector("main").classList.toggle("hidden", m !== "end");
+  $("stripbox").classList.toggle("hidden", m !== "end");
+  $("netview").classList.toggle("hidden", m !== "net");
+  if (m === "net") loadNet();
+}
+
+async function loadNet() {
+  const f = S.frames[S.pos];
+  if (!f) return;
+  const r = await fetch(`/api/net/${S.run.id}/${S.video}/${f.i}`);
+  if (!r.ok) { $("explain").textContent = "не удалось получить этапы сети"; return; }
+  S.stages = (await r.json()).stages;
+  if (S.stage >= S.stages.length) S.stage = 0;
+  drawPipe();
+  showStage();
+}
+
+function drawPipe() {
+  $("pipe").innerHTML = S.stages.map((st, i) => {
+    const sh = st.shape;
+    return (i ? '<span class="arrow">→</span>' : "") +
+      `<div class="st${i === S.stage ? " cur" : ""}" data-i="${i}">` +
+      `<b>${st.name}</b><span>${sh[0]}×${sh[1]}×${sh[2]}</span></div>`;
+  }).join("");
+  $("pipe").querySelectorAll(".st").forEach((el) => {
+    el.onclick = () => { S.stage = +el.dataset.i; S.chan = 0; drawPipe(); showStage(); };
+  });
+}
+
+function stageUrl(st, what) {
+  const f = S.frames[S.pos];
+  return `/img/net/${S.run.id}/${S.video}/${f.i}/${st.id}/${what}`;
+}
+
+function showStage() {
+  const st = S.stages[S.stage];
+  if (!st) return;
+  const prev = S.stage > 0 ? S.stages[S.stage - 1] : null;
+  const f = S.frames[S.pos];
+
+  if (prev) {
+    $("inTitle").textContent = `что пришло — ${prev.name}`;
+    $("inShape").textContent = prev.shape.join(" × ");
+    $("inGrid").src = prev.id === "input"
+      ? `/img/scenefull/${S.run.id}/${S.video}/${f.i}.png`
+      : stageUrl(prev, "grid.png");
+  } else {
+    $("inTitle").textContent = "что пришло — кадр";
+    $("inShape").textContent = st.shape.join(" × ");
+    $("inGrid").src = `/img/scenefull/${S.run.id}/${S.video}/${f.i}.png`;
+  }
+
+  $("outTitle").textContent = `что получилось — ${st.name}`;
+  $("outShape").textContent = st.shape.join(" × ");
+  $("outGrid").src = st.id === "input"
+    ? `/img/scenefull/${S.run.id}/${S.video}/${f.i}.png`
+    : stageUrl(st, "grid.png");
+
+  const kind = st.id === "pool" ? "pool" : st.kind;
+  $("explain").innerHTML =
+    `<b>${st.name}.</b> ${st.note}. ${WHY[kind] || ""} ` +
+    `Форма: <b>${st.shape[0]}</b> карт признаков по ` +
+    `<b>${st.shape[1]}×${st.shape[2]}</b>; ` +
+    `${st.kind === "act" ? "ненулевых" : "положительных"} значений ` +
+    `<b>${Math.round(st.alive * 100)}%</b>.`;
+  showChan();
+}
+
+async function showChan() {
+  const st = S.stages[S.stage];
+  if (!st) return;
+  S.chan = Math.max(0, Math.min(st.channels - 1, S.chan));
+  const f = S.frames[S.pos];
+  $("chNo").textContent = `${S.chan + 1} из ${st.channels}`;
+  $("chBig").src = stageUrl(st, `ch${S.chan}.png`);
+
+  const isConv = st.kind === "conv";
+  $("kernBox").classList.toggle("hidden", !isConv);
+  if (isConv) $("kernImg").src = `/img/kernel/${S.run.id}/${st.id}/${S.chan}.png`;
+
+  const r = await fetch(`/api/chan/${S.run.id}/${S.video}/${f.i}/${st.id}`);
+  if (!r.ok) return;
+  const stats = (await r.json())[S.chan];
+  if (!stats) return;
+  // До ReLU отрицательные значения осмысленны, после — обнулены, поэтому
+  // одна и та же доля называется по-разному.
+  const lbl = (st.kind === "act" || st.id === "pool")
+    ? "доля ненулевых" : "доля положительных";
+  const pc = stats.live * 100;
+  $("chStats").innerHTML =
+    `<tr><td>среднее</td><td>${stats.mean}</td></tr>` +
+    `<tr><td>максимум</td><td>${stats.max}</td></tr>` +
+    `<tr><td>${lbl}</td><td>${pc < 1 ? pc.toFixed(2) : pc.toFixed(0)}%</td></tr>`;
+}
+
+function pickChannel(ev) {
+  const st = S.stages[S.stage];
+  if (!st || !st.grid) return;
+  const img = $("outGrid"), r = img.getBoundingClientRect();
+  const k = img.naturalWidth / r.width;              // лист может быть сжат по ширине
+  const x = (ev.clientX - r.left) * k, y = (ev.clientY - r.top) * k;
+  const g = st.grid;
+  const c = Math.floor((x - g.pad) / (g.cw + g.pad));
+  const rr = Math.floor((y - g.pad) / (g.ch + g.pad));
+  const i = rr * g.cols + c;
+  if (i >= 0 && i < st.channels) { S.chan = i; showChan(); }
+}
+
+function wireNet() {
+  $("mEnd").onclick = () => setMode("end");
+  $("mNet").onclick = () => setMode("net");
+  $("outGrid").onclick = pickChannel;
+  $("chPrev").onclick = () => { S.chan--; showChan(); };
+  $("chNext").onclick = () => { S.chan++; showChan(); };
+  addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key === "Tab") { setMode(S.mode === "end" ? "net" : "end"); e.preventDefault(); }
+    if (S.mode !== "net") return;
+    if (e.key === "[") { S.stage = Math.max(0, S.stage - 1); drawPipe(); showStage(); }
+    if (e.key === "]") {
+      S.stage = Math.min(S.stages.length - 1, S.stage + 1); drawPipe(); showStage();
+    }
+  });
+}
+wireNet();

@@ -150,3 +150,34 @@ tr.hl-link:hover { background: #3b3522; }
 .help td { padding: 3px 6px; }
 .help td:first-child { color: var(--cell); white-space: nowrap; width: 120px; }
 .hidden { display: none; }
+
+/* ---------- режим «по слоям» ---------- */
+.modes { display: flex; gap: 6px; }
+.netview { display: flex; flex-direction: column; gap: 10px; padding: 10px 14px;
+  flex: 1; min-height: 0; overflow: auto; }
+.pipe { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.pipe .st {
+  flex: 0 0 auto; border: 1px solid var(--line); background: var(--panel);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; min-width: 112px;
+}
+.pipe .st:hover { border-color: #566070; }
+.pipe .st.cur { border-color: var(--accent); background: #1d2436; }
+.pipe .st b { display: block; font-size: 12px; font-weight: 600; }
+.pipe .st span { display: block; font-size: 11px; color: var(--faint);
+  font-variant-numeric: tabular-nums; }
+.pipe .arrow { flex: 0 0 auto; align-self: center; color: var(--faint); }
+.netrow { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.netcol { flex: 1 1 320px; min-width: 280px; }
+.netcol.zoom { flex: 0 0 330px; }
+.shape { color: var(--faint); font-variant-numeric: tabular-nums; font-size: 12px; }
+.sheet { background: #0e1014; border-radius: 6px; padding: 4px; overflow: auto;
+  max-height: 60vh; display: flex; justify-content: center; }
+.sheet img { display: block; image-rendering: pixelated; max-width: 100%; }
+.sheet img.clickable { cursor: crosshair; }
+#chBig { width: 100%; image-rendering: pixelated; border-radius: 6px;
+  background: #0e1014; }
+.kern img { width: 100%; image-rendering: pixelated; border-radius: 6px;
+  background: #0e1014; margin-top: 4px; }
+.explain { background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 14px; color: var(--dim); }
+.explain b { color: #e8e8ea; }

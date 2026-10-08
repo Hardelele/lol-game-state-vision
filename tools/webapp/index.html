@@ -15,6 +15,10 @@
     <label>ролик <select id="video"></select></label>
     <span id="holdout" class="badge"></span>
   </div>
+  <div class="modes">
+    <button id="mEnd" class="on">сквозной режим</button>
+    <button id="mNet">по слоям</button>
+  </div>
   <div class="stats" id="stats"></div>
   <button class="ghost" id="helpBtn" title="клавиши">? клавиши</button>
 </header>
@@ -88,7 +92,39 @@
   </div>
 </main>
 
-<section class="strip">
+<section id="netview" class="netview hidden">
+  <div class="pipe" id="pipe"></div>
+  <div class="netrow">
+    <div class="panel netcol">
+      <div class="phead"><span id="inTitle">что пришло</span>
+        <span class="grow"></span><span class="shape" id="inShape"></span></div>
+      <div class="sheet"><img id="inGrid" alt="вход этапа"></div>
+    </div>
+    <div class="panel netcol">
+      <div class="phead"><span id="outTitle">что получилось</span>
+        <span class="grow"></span><span class="shape" id="outShape"></span></div>
+      <div class="sheet"><img id="outGrid" alt="выход этапа" class="clickable"></div>
+      <div class="cap">каждая клетка — одна карта признаков; нажмите, чтобы
+        рассмотреть</div>
+    </div>
+    <div class="panel netcol zoom">
+      <div class="phead"><span>канал <b id="chNo">—</b></span>
+        <span class="grow"></span>
+        <button class="ghost" id="chPrev">◀</button>
+        <button class="ghost" id="chNext">▶</button></div>
+      <img id="chBig" alt="канал крупно">
+      <table class="num" id="chStats"></table>
+      <div class="kern hidden" id="kernBox">
+        <div class="cap">ядро свёртки для этого канала: по плитке на входной
+          канал, оранжевое — вклад со знаком плюс, синее — минус</div>
+        <img id="kernImg" alt="ядро">
+      </div>
+    </div>
+  </div>
+  <div class="explain" id="explain"></div>
+</section>
+
+<section class="strip" id="stripbox">
   <div id="film" class="film"></div>
 </section>
 

@@ -21,6 +21,7 @@ import io
 import json
 import mimetypes
 import re
+import traceback
 import threading
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +30,8 @@ from urllib.parse import urlparse, unquote
 
 import numpy as np
 from PIL import Image
+
+import activations as act
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = Path(__file__).resolve().parent / "webapp"
@@ -102,6 +105,43 @@ def heat_png(run: str, vid: str, idx: int, size: int = 320) -> bytes:
     return buf.getvalue()
 
 
+def scene_file(vid: str, idx: int) -> Path:
+    return DATA / vid / "scene" / f"{idx:06d}.jpg"
+
+
+def ckpt_of(run: str) -> str:
+    p = RUNS / run / "model.pt"
+    if not p.is_file():
+        raise FileNotFoundError(f"нет чекпоинта {p}")
+    return str(p)
+
+
+@lru_cache(maxsize=256)
+def net_stages(run: str, vid: str, idx: int) -> list[dict]:
+    """Этапы сети с формами и сводкой по каналам для конкретного кадра."""
+    model, _ = act.load_model(ckpt_of(run))
+    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+    out = []
+    prev = None
+    for st in act.stage_plan(model):
+        t = a.get(st["id"])
+        if t is None:
+            continue
+        c, h, w = (t.shape + (1, 1))[:3] if t.ndim == 3 else (t.shape[0], 1, 1)
+        alive = float((t.reshape(len(t), -1) > 0).mean()) if st["id"] != "input" else 1.0
+        # Раскладка контактного листа повторяет activations.grid_png, чтобы
+        # клик по клетке в интерфейсе попадал в тот же канал.
+        cols, cell = act.sheet_cell(int(c))
+        out.append({**st, "shape": [int(c), int(h), int(w)],
+                    "channels": int(c), "alive": round(alive, 3),
+                    "input_of": prev,
+                    "grid": {"cols": cols, "rows": int(np.ceil(c / cols)),
+                             "cw": cell, "ch": max(8, round(cell * h / w)),
+                             "pad": 2}})
+        prev = st["id"]
+    return out
+
+
 @lru_cache(maxsize=1)
 def hand_labels() -> dict:
     """Ручные метки top/not_top: показываются рядом с ответом модели."""
@@ -165,13 +205,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def fail(self, code: int, why: str) -> None:
+        """Причина — в теле: в строке статуса HTTP кириллица не кодируется."""
+        body = json.dumps({"error": why}, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _json(self, obj) -> None:
         self._send(json.dumps(obj, ensure_ascii=False).encode("utf-8"),
                    "application/json; charset=utf-8")
 
     def _file(self, path: Path, cache: int = 86400) -> None:
         if not path.is_file():
-            self.send_error(404, "нет файла")
+            self.fail(404, "нет файла")
             return
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype.endswith("javascript"):
@@ -186,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/static/"):
                 name = p[len("/static/"):]
                 if "/" in name or ".." in name:
-                    return self.send_error(403, "нельзя")
+                    return self.fail(403, "нельзя")
                 return self._file(WEB / name, cache=0)
 
             if p == "/api/index":
@@ -206,11 +255,54 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/api/cells/(\d+)x(\d+)", p)
             if m:
                 return self._json(cell_quads(int(m.group(1)), int(m.group(2))))
+            m = re.fullmatch(r"/api/net/(.+)/([\w-]+)/(\d+)", p)
+            if m:
+                run, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                with _lock:
+                    return self._json({"stages": net_stages(run, vid, idx)})
+            m = re.fullmatch(r"/api/chan/(.+)/([\w-]+)/(\d+)/([\w.]+)", p)
+            if m:
+                run, vid, idx, sid = (m.group(1), m.group(2), int(m.group(3)),
+                                      m.group(4))
+                with _lock:
+                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+                return self._json(act.channel_stats(a[sid]))
 
             m = re.fullmatch(r"/img/(scene|mini)/([\w-]+)/(\d+)\.jpg", p)
             if m:
                 kind, vid, idx = m.group(1), m.group(2), int(m.group(3))
                 return self._file(DATA / vid / kind / f"{idx:06d}.jpg")
+            m = re.fullmatch(r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/grid\.png", p)
+            if m:
+                run, vid, idx, sid = (m.group(1), m.group(2), int(m.group(3)),
+                                      m.group(4))
+                with _lock:
+                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+                    body = act.grid_png(a[sid])
+                return self._send(body, "image/png", cache=3600)
+            m = re.fullmatch(
+                r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/ch(\d+)\.png", p)
+            if m:
+                run, vid, idx, sid, ch = (m.group(1), m.group(2), int(m.group(3)),
+                                          m.group(4), int(m.group(5)))
+                with _lock:
+                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+                    body = (act.rgb_png(a[sid]) if sid == "input" and ch < 0
+                            else act.channel_png(a[sid], ch))
+                return self._send(body, "image/png", cache=3600)
+            m = re.fullmatch(r"/img/scenefull/(.+)/([\w-]+)/(\d+)\.png", p)
+            if m:
+                run, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                with _lock:
+                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+                    body = act.rgb_png(a["input"], width=560)
+                return self._send(body, "image/png", cache=3600)
+            m = re.fullmatch(r"/img/kernel/(.+)/([\w.]+)/(\d+)\.png", p)
+            if m:
+                run, sid, ch = m.group(1), m.group(2), int(m.group(3))
+                with _lock:
+                    body = act.kernel_png(ckpt_of(run), sid, ch)
+                return self._send(body, "image/png", cache=86400)
             m = re.fullmatch(r"/img/heat/(.+)/([\w-]+)/(\d+)\.png", p)
             if m:
                 run, vid, idx = m.group(1), m.group(2), int(m.group(3))
@@ -218,10 +310,11 @@ class Handler(BaseHTTPRequestHandler):
                     body = heat_png(run, vid, idx)
                 return self._send(body, "image/png", cache=86400)
         except FileNotFoundError:
-            return self.send_error(404, "нет данных")
+            return self.fail(404, "нет данных")
         except Exception as exc:                                 # noqa: BLE001
-            return self.send_error(500, str(exc))
-        self.send_error(404, "нет такого адреса")
+            traceback.print_exc()
+            return self.fail(500, f"{type(exc).__name__}: {exc}")
+        self.fail(404, "нет такого адреса")
 
 
 def main() -> None:
