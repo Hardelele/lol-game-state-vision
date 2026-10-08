@@ -57,7 +57,7 @@ button.on { background: var(--accent); border-color: var(--accent); }
 
 main {
   display: flex; gap: 12px; padding: 12px 14px; align-items: stretch;
-  flex: 1; min-height: 0; overflow: hidden;
+  flex: 1; min-height: 0; overflow: auto;
 }
 .panel {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -73,7 +73,7 @@ main {
 }
 /* Картинки вписываются в оставшуюся высоту, а не задают её сами: иначе
    внизу остаётся пустая полоса, а на низком экране панель вылезает. */
-.holder { position: relative; flex: 1; min-height: 0; display: flex; }
+.holder { position: relative; flex: 1; min-height: 210px; display: flex; }
 .holder > * { position: absolute; inset: 0; width: 100%; height: 100%; }
 .holder img { object-fit: contain; border-radius: 6px; }
 .side .holder { flex: none; }
@@ -149,7 +149,7 @@ tr.hl-link:hover { background: #3b3522; }
 .help table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
 .help td { padding: 3px 6px; }
 .help td:first-child { color: var(--cell); white-space: nowrap; width: 120px; }
-.hidden { display: none; }
+.hidden { display: none !important; }
 
 /* ---------- режим «по слоям» ---------- */
 .modes { display: flex; gap: 6px; }
