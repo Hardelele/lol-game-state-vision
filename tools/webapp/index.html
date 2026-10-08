@@ -11,144 +11,136 @@
 
 <header class="bar">
   <div class="pick">
-    <label>прогон <select id="run"></select></label>
-    <label>ролик <select id="video"></select></label>
-    <span id="holdout" class="badge"></span>
+    <span id="holdout" class="dot"></span>
+    <select id="video" class="plain strong" title="ролик"></select>
+    <span class="slash">/</span>
+    <select id="run" class="plain" title="прогон"></select>
   </div>
-  <div class="modes">
-    <button id="mEnd" class="on">сквозной режим</button>
-    <button id="mNet">по слоям</button>
+  <div class="seg">
+    <button id="mEnd" class="on" title="Tab">Сквозной</button>
+    <button id="mNet" title="Tab">По слоям</button>
   </div>
-  <div class="stats" id="stats"></div>
-  <button class="ghost" id="helpBtn" title="клавиши">? клавиши</button>
+  <div class="stats">
+    <span id="sMed"></span>
+    <span title="промах меньше 0.05"><b id="sGood" class="ok"></b> <i>точно</i></span>
+    <span title="промах больше половины кадра"><b id="sBad" class="bad"></b> <i>мимо</i></span>
+    <button class="round small" id="helpBtn" title="клавиши — ?">?</button>
+  </div>
 </header>
 
-<section class="timeline">
-  <canvas id="tl" height="46"></canvas>
-  <div class="tlinfo">
-    <span id="tlhover">наведите на полосу — кадр, время, промах</span>
+<main class="frame" id="endview">
+  <div class="panes">
+    <div class="pane scenebox">
+      <div class="phead">
+        <b>Кадр</b><i>вход модели</i>
+        <span class="grow"></span>
+        <button class="tog on" id="grid" title="сетка ячеек — G">сетка</button>
+        <button class="tog dim" id="cells" title="размер ячеек">8×5</button>
+      </div>
+      <div class="holder">
+        <img id="scene" alt="вход модели">
+        <svg id="sceneGrid" viewBox="0 0 100 100"></svg>
+        <div id="cellTip" class="celltip hidden"></div>
+      </div>
+    </div>
+    <div class="pane mapbox">
+      <div class="phead">
+        <b>Карта</b><i>истина и ответ</i>
+        <span class="grow"></span>
+        <button class="tog on" id="heat" title="распределение вероятности — H">тепло</button>
+        <button class="tog" id="trail" title="след камеры — T">след</button>
+      </div>
+      <div class="holder">
+        <img id="mini" alt="миникарта">
+        <img id="heatimg" alt="">
+        <svg id="mapSvg" viewBox="0 0 1 1"></svg>
+      </div>
+    </div>
+  </div>
+  <div class="facts">
+    <div class="fact hl" data-lit="link" title="промах — расстояние между истиной и ответом">
+      <i>промах</i><b id="vErr" class="big"></b><i id="vUnits"></i>
+    </div>
+    <div class="fact hl" data-lit="true" title="истина">
+      <span class="ring"></span><span id="vTrue"></span>
+    </div>
+    <div class="fact hl" data-lit="pred" title="ответ модели">
+      <span class="plus">+</span><span id="vPred"></span>
+    </div>
+    <div class="fact" title="разброс ответа"><i>разброс</i><span id="vSpread"></span></div>
+    <div class="fact" title="качество метки"><i>качество</i><span id="vQ"></span></div>
+    <span id="vLabel" class="chip hidden" title="ручная метка"></span>
     <span class="grow"></span>
-    <label class="chk"><input type="checkbox" id="fErr"> только промахи</label>
-    <label class="chk"><input type="checkbox" id="fUns"> только сомнения</label>
-    <label class="chk"><input type="checkbox" id="fLab"> только с ручной меткой</label>
-  </div>
-</section>
-
-<main>
-  <div class="panel scenebox">
-    <div class="phead">
-      <span>вход модели</span>
-      <span class="grow"></span>
-      <label class="chk"><input type="checkbox" id="grid" checked> сетка</label>
-      <select id="cells">
-        <option value="8x5">8×5</option>
-        <option value="12x7">12×7</option>
-        <option value="16x9">16×9</option>
-        <option value="24x13">24×13</option>
-      </select>
-    </div>
-    <div class="holder">
-      <img id="scene" alt="сцена">
-      <svg id="sceneGrid" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
-    </div>
-    <div class="cap">то, что видит сеть: HUD и миникарта вырезаны</div>
-  </div>
-
-  <div class="panel mapbox">
-    <div class="phead">
-      <span>карта</span>
-      <span class="grow"></span>
-      <label class="chk"><input type="checkbox" id="heat" checked> распределение</label>
-      <label class="chk"><input type="checkbox" id="trail"> след камеры</label>
-    </div>
-    <div class="holder">
-      <img id="mini" alt="миникарта">
-      <img id="heatimg" alt="">
-      <svg id="mapSvg" viewBox="0 0 1 1"></svg>
-    </div>
-    <div class="cap">белая трапеция — видимая область, зелёная — ответ модели</div>
-  </div>
-
-  <div class="panel side">
-    <div class="nav">
-      <button id="prev" title="←">◀</button>
-      <button id="play" title="пробел">▶ играть</button>
-      <button id="next" title="→">▶</button>
-      <input id="jump" type="text" placeholder="кадр или 12:30" size="9">
-    </div>
-    <table class="num">
-      <tr class="hl-true"><td>истина</td><td id="vTrue"></td></tr>
-      <tr class="hl-pred"><td>модель</td><td id="vPred"></td></tr>
-      <tr class="hl-link"><td>промах</td><td id="vErr"></td></tr>
-      <tr><td>в единицах</td><td id="vUnits"></td></tr>
-      <tr><td>разброс ответа</td><td id="vSpread"></td></tr>
-      <tr><td>качество метки</td><td id="vQ"></td></tr>
-      <tr><td>ручная метка</td><td id="vLabel"></td></tr>
-      <tr><td>ячейка</td><td id="vCell">—</td></tr>
-    </table>
-    <a id="yt" class="yt" target="_blank" rel="noopener">▶ открыть момент на YouTube</a>
-    <a id="why" class="yt why" target="_blank" rel="noopener">разобрать этот промах</a>
-    <div class="cap">наведите на строку — подсветится отметка на карте;
-      на ячейку — её место на карте</div>
+    <a id="why" class="out" target="_blank" rel="noopener" title="отчёт о том, почему модель промахнулась на этом кадре">разобрать ↗</a>
+    <a id="yt" class="out" target="_blank" rel="noopener" title="открыть момент на YouTube">YouTube ↗</a>
   </div>
 </main>
 
-<section id="netview" class="netview hidden">
-  <div class="pipebar">
-    <div class="pipenav">
-      <button id="stPrev" title="[">◀ этап</button>
-      <span class="stnum" id="stNum">—</span>
-      <button id="stNext" title="]">этап ▶</button>
+<section id="netview" class="frame netview hidden">
+  <div class="stagebar">
+    <button class="round" id="stPrev" title="[">◀</button>
+    <div class="stname">
+      <div id="stName">—</div>
+      <div class="mono" id="stShape"></div>
     </div>
-    <div class="pipe" id="pipe"></div>
+    <button class="round" id="stNext" title="]">▶</button>
+    <div class="groups" id="pipe"></div>
   </div>
   <div class="netrow">
-    <div class="panel netcol">
-      <div class="phead"><span id="inTitle">что пришло</span>
-        <span class="grow"></span><span class="shape" id="inShape"></span></div>
+    <div class="netcol">
+      <div class="nhead"><i>вход</i><span id="inName"></span>
+        <span class="grow"></span><span class="mono" id="inShape"></span></div>
       <div class="sheet"><img id="inGrid" alt="вход этапа"></div>
     </div>
-    <div class="panel netcol">
-      <div class="phead"><span id="outTitle">что получилось</span>
-        <span class="grow"></span><span class="shape" id="outShape"></span></div>
-      <div class="sheet"><img id="outGrid" alt="выход этапа" class="clickable"></div>
-      <div class="cap">каждая клетка — одна карта признаков; нажмите, чтобы
-        рассмотреть</div>
+    <div class="netcol">
+      <div class="nhead"><i>выход</i><span id="outName"></span>
+        <span class="grow"></span><span class="mono" id="outShape"></span></div>
+      <div class="sheet"><img id="outGrid" alt="выход этапа" class="clickable"
+        title="каждая клетка — одна карта признаков; нажмите, чтобы рассмотреть"></div>
     </div>
-    <div class="panel netcol zoom">
-      <div class="phead"><span>канал <b id="chNo">—</b></span>
+    <div class="netcol zoom">
+      <div class="nhead"><i>канал</i><b id="chNo">—</b><i id="chTotal"></i>
         <span class="grow"></span>
-        <button class="ghost" id="chPrev">◀</button>
-        <button class="ghost" id="chNext">▶</button></div>
-      <img id="chBig" alt="канал крупно">
-      <table class="num" id="chStats"></table>
-      <div class="kern hidden" id="kernBox">
-        <div class="cap">ядро свёртки для этого канала: по плитке на входной
-          канал, оранжевое — вклад со знаком плюс, синее — минус</div>
+        <button class="bare" id="chPrev">◀</button>
+        <button class="bare" id="chNext">▶</button></div>
+      <div class="sheet"><img id="chBig" alt="канал крупно"></div>
+      <div class="chstats" id="chStats"></div>
+      <div class="kern hidden" id="kernBox"
+        title="ядро свёртки: по плитке на входной канал, оранжевое — плюс, синее — минус">
         <img id="kernImg" alt="ядро">
       </div>
     </div>
   </div>
-  <div class="explain" id="explain"></div>
+  <div class="note"><span id="stNote"></span>
+    <button class="bare link" id="whyBtn">подробнее</button></div>
+  <p class="whytxt hidden" id="explain"></p>
 </section>
 
-<section class="strip" id="stripbox">
+<section class="frame strip">
+  <div class="navrow">
+    <button class="round" id="prev" title="← (Shift — 10 кадров)">◀</button>
+    <button class="round play" id="play" title="пробел">▶</button>
+    <button class="round" id="next" title="→ (Shift — 10 кадров)">▶</button>
+    <input id="jump" type="text" title="перейти: кадр или 12:30">
+    <span class="pos"><span id="posNo"></span> <span class="faint" id="posTotal"></span></span>
+    <span class="grow"></span>
+    <i>шагать по</i>
+    <button class="pill" id="fErr" title="только крупные промахи">промахам</button>
+    <button class="pill" id="fUns" title="только кадры, где модель сомневается">сомнениям</button>
+    <button class="pill" id="fLab" title="только с ручной меткой">меткам</button>
+  </div>
   <div id="film" class="film"></div>
+  <div class="tlbox">
+    <canvas id="tl"></canvas>
+    <div id="hov" class="hov hidden">
+      <img id="hovImg" alt="">
+      <div><span id="hovTime"></span><span id="hovErr"></span></div>
+    </div>
+  </div>
 </section>
 
 <div id="help" class="help hidden">
-  <h3>Клавиши</h3>
-  <table>
-    <tr><td>← →</td><td>предыдущий / следующий кадр</td></tr>
-    <tr><td>Shift + ← →</td><td>на 10 кадров</td></tr>
-    <tr><td>N / P</td><td>следующий / предыдущий крупный промах</td></tr>
-    <tr><td>пробел</td><td>проигрывание</td></tr>
-    <tr><td>G</td><td>сетка ячеек</td></tr>
-    <tr><td>H</td><td>распределение вероятности</td></tr>
-    <tr><td>T</td><td>след камеры</td></tr>
-    <tr><td>Home / End</td><td>первый / последний кадр</td></tr>
-  </table>
-  <button class="ghost" id="helpClose">закрыть</button>
+  <div class="keys" id="keys"></div>
 </div>
 
 <script src="/static/app.js"></script>
