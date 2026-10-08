@@ -126,6 +126,8 @@ tr.hl-link:hover { background: #3b3522; }
   border: 1px solid #33425e; border-radius: 6px; padding: 5px;
 }
 .yt:hover { background: #2a3a57; color: #fff; }
+.why { border-color: #5c4a2a; color: #e3b35e; margin-top: 6px; }
+.why:hover { background: #3b3522; color: #fff; }
 
 .strip { border-top: 1px solid var(--line); background: #171a1f; padding: 6px 14px; }
 .film { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; }

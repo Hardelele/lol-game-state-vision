@@ -152,6 +152,7 @@ function render() {
   $("vLabel").textContent = f.label || "—";
   $("yt").href = `https://www.youtube.com/watch?v=${S.video}&t=${Math.round(f.t)}s`;
   $("yt").textContent = `▶ ${fmtTime(f.t)} на YouTube`;
+  $("why").href = `/explain/${S.run.id}/${S.video}/${f.i}.html`;
   drawMap(f);
 }
 

@@ -32,6 +32,7 @@ import numpy as np
 from PIL import Image
 
 import activations as act
+import explain_miss
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = Path(__file__).resolve().parent / "webapp"
@@ -258,6 +259,13 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/api/cells/(\d+)x(\d+)", p)
             if m:
                 return self._json(cell_quads(int(m.group(1)), int(m.group(2))))
+            m = re.fullmatch(r"/explain/(.+)/([\w-]+)/(\d+)\.html", p)
+            if m:
+                run, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                with _lock:
+                    body = explain_miss.build(run, vid, idx)
+                return self._send(body.encode("utf-8"),
+                                  "text/html; charset=utf-8")
             m = re.fullmatch(r"/api/net/(.+)/([\w-]+)/(\d+)", p)
             if m:
                 run, vid, idx = m.group(1), m.group(2), int(m.group(3))
