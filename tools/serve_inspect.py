@@ -200,8 +200,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        if cache:
-            self.send_header("Cache-Control", f"max-age={cache}")
+        # Без явного указания браузер кеширует страницу и стили на своё
+        # усмотрение и после правки продолжает показывать старую версию.
+        # Картинки кадров неизменны, их кешировать нужно; разметку — нет.
+        self.send_header("Cache-Control",
+                         f"max-age={cache}" if cache else "no-store")
         self.end_headers()
         self.wfile.write(body)
 
