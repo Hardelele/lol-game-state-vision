@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -32,12 +33,26 @@ import numpy as np
 from PIL import Image
 
 from paths import COORDS_DATA
+from paths import ROOT
 from scene_data import crop_box
 from mask_frames import mask_boxes
 from minimap_camera import MM, white_mask, find_box, estimate_box
 
+ROOT_VIDEOS = ROOT / "data" / "videos"
 STORE_W = 720   # ширина хранимой сцены; вход модели делается из неё
 MINI_STORE = 256
+
+
+def probe_url(url: str) -> tuple[int, int, float, str, dict]:
+    """Размеры и длительность ролика без его скачивания."""
+    out = subprocess.run(
+        ["python", "-m", "yt_dlp", "-f", "bv*[height<=1080]", "--skip-download",
+         "--dump-json", url],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        raise RuntimeError(f"не удалось получить сведения о ролике: {url}")
+    d = json.loads(out.stdout)
+    return int(d["width"]), int(d["height"]), float(d["duration"]), d["id"], d
 
 
 def probe(video: Path) -> tuple[int, int, float]:
@@ -51,12 +66,34 @@ def probe(video: Path) -> tuple[int, int, float]:
     return int(s["width"]), int(s["height"]), float(d["format"]["duration"])
 
 
-def frames(video: Path, w: int, h: int, fps: float):
-    """Последовательный поток кадров через ffmpeg; память не растёт."""
-    cmd = ["ffmpeg", "-v", "error", "-i", str(video), "-vf", f"fps={fps}",
+def frames(video, w: int, h: int, fps: float, from_url: bool = False):
+    """Последовательный поток кадров через ffmpeg; память не растёт.
+
+    Из YouTube читаем через трубу от yt-dlp, а не отдаём ffmpeg прямой
+    медиа-адрес: YouTube душит прямое обращение к нему, и ffmpeg на таком
+    адресе просто висит (замерено: 7 минут без единого байта, при том что
+    yt-dlp по той же ссылке идёт на 18 МиБ/с — он снимает ограничение,
+    решая проверочный скрипт). На диск при этом не пишется ничего.
+    """
+    # Без ограничения ffmpeg забирает все ядра на распаковку 1080p60,
+    # и машина перестаёт отзываться.
+    threads = max(2, (os.cpu_count() or 8) // 2)
+    puller = None
+    if from_url:
+        puller = subprocess.Popen(
+            ["python", "-m", "yt_dlp", "-f", "bv*[height<=1080]", "-o", "-",
+             "--quiet", "--no-warnings", str(video)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=1 << 22)
+        src, stdin = "pipe:0", puller.stdout
+    else:
+        src, stdin = str(video), None
+    cmd = ["ffmpeg", "-v", "error", "-threads", str(threads),
+           "-i", src, "-vf", f"fps={fps}",
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     n = w * h * 3
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=n * 2)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=stdin, bufsize=n * 2)
+    if puller is not None:
+        puller.stdout.close()          # трубой дальше владеет ffmpeg
     try:
         while True:
             buf = p.stdout.read(n)
@@ -66,11 +103,18 @@ def frames(video: Path, w: int, h: int, fps: float):
     finally:
         p.stdout.close()
         p.wait()
+        if puller is not None:
+            puller.terminate()
+            puller.wait()
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("video", type=Path)
+    ap.add_argument("video", type=Path, nargs="?", default=None,
+                    help="локальный файл; либо задайте --url")
+    ap.add_argument("--url", default=None,
+                    help="ссылка на YouTube или идентификатор: ролик читается "
+                         "потоком, на диск не сохраняется")
     ap.add_argument("--layout", type=Path, required=True)
     ap.add_argument("--fps", type=float, default=1.0, help="кадров в секунду ролика")
     ap.add_argument("--out", type=Path, default=COORDS_DATA)
@@ -78,8 +122,22 @@ def main() -> None:
     args = ap.parse_args()
 
     layout = json.loads(args.layout.read_text(encoding="utf-8"))
-    vid = args.video.stem
-    w, h, dur = probe(args.video)
+    if not args.video and not args.url:
+        raise SystemExit("укажите файл или --url")
+    if args.url:
+        url = args.url if "://" in args.url else             f"https://www.youtube.com/watch?v={args.url}"
+        w, h, dur, vid, info = probe_url(url)
+        source, from_url = url, True
+        # Описание пригодится дальше (роль, сторона), сохраняем рядом.
+        meta = ROOT_VIDEOS / f"{vid}.info.json"
+        meta.parent.mkdir(parents=True, exist_ok=True)
+        if not meta.exists():
+            meta.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        print(f"{vid}: читаю потоком, на диск видео не пишется")
+    else:
+        vid = args.video.stem
+        w, h, dur = probe(args.video)
+        source, from_url = args.video, False
     print(f"{vid}: {w}x{h}, {dur:.0f} с, выборка {args.fps} кадр/с "
           f"→ ожидается ~{int(dur * args.fps)} кадров")
 
@@ -100,7 +158,7 @@ def main() -> None:
     # оценка уезжает. Маски копим целиком (на 1500 кадров это ~90 МБ).
     masks: list[np.ndarray] = []
 
-    for i, fr in enumerate(frames(args.video, w, h, args.fps)):
+    for i, fr in enumerate(frames(source, w, h, args.fps, from_url)):
         img = Image.fromarray(fr)
         mini = img.crop(mmbox).resize((MM, MM), Image.LANCZOS)
         masks.append(white_mask(np.asarray(mini, dtype=np.float32)).astype(np.uint8))
