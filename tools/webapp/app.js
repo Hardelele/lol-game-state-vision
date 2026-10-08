@@ -668,7 +668,7 @@ function showMeta(vid, train) {
 const CH = {
   all: [], have: {}, handle: null, url: null, vids: [], sel: null,
   q: "", vq: "", role: null, onlyMine: false, limit: 60, timer: null,
-  vseq: 0, src: "",
+  vseq: 0, src: "", jobs: {},
 };
 const VROLES = ["Top", "Jungle", "Mid", "ADC", "Support"];
 
@@ -783,8 +783,9 @@ function drawVids() {
       v.vs ? `<span class="tag dim">vs ${esc(v.vs)}</span>` : "",
       v.patch ? `<span class="tag dim">${esc(v.patch)}</span>` : "",
       v.region ? `<span class="tag dim">${esc(v.region)}</span>` : "",
-      h && h.frames ? `<span class="tag have">в датасете · ${h.frames} кадров</span>`
-        : h ? `<span class="tag dim">описание есть</span>` : "",
+      CH.jobs[v.id] === "идёт" ? `<span class="tag run">собираю кадры…</span>`
+        : h && h.frames ? `<span class="tag have">в датасете · ${h.frames} кадров</span>`
+          : h ? `<span class="tag dim">описание есть</span>` : "",
     ].join("");
     return `<button class="vrow${v.id === CH.sel ? " cur" : ""}" data-id="${v.id}">` +
       `<img loading="lazy" src="${esc(v.thumb || "")}" alt="">` +
@@ -882,6 +883,7 @@ function drawJobs(jobs) {
 async function pollJobs(force) {
   const d = await (await fetch("/api/jobs")).json();
   CH.have = d.have || CH.have;
+  CH.jobs = Object.fromEntries((d.jobs || []).map((j) => [j.id, j.state]));
   drawJobs(d.jobs || []);
   if (CH.vids.length) drawVids();
   const running = (d.jobs || []).some((j) => j.state === "идёт");

@@ -326,6 +326,7 @@ kbd {
   border: 1px solid #39404c; color: var(--dim); }
 .tag.dim { border-color: #2a2e36; color: var(--faint); }
 .tag.have { border-color: #2f6d43; color: #8ee0a6; }
+.tag.run { border-color: var(--accent); color: #8ab4ff; }
 .vdur { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums;
   flex: 0 0 auto; }
 
