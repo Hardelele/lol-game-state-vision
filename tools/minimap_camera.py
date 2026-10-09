@@ -1,9 +1,8 @@
 """Чтение положения камеры с миникарты: белая рамка → координаты на карте.
 
 Зачем. Метка «что показывает камера» уже есть в каждом кадре — это рамка
-вьюпорта на миникарте. Руками по ней размечали первые ролики. Если читать её
-программно, разметка перестаёт стоить человеко-часов: из одного ролика
-получаются тысячи кадров с координатами вместо сотни с меткой класса.
+вьюпорта на миникарте. Если читать её программно, разметка перестаёт стоить
+человеко-часов: из одного ролика получаются тысячи кадров с координатами.
 
 Утечки нет: вся нижняя полоса с миникартой закрыта маской и во вход модели
 не попадает. Рамка — источник цели, а не признак.
@@ -16,7 +15,8 @@
 
 Пример:
     python tools/minimap_camera.py dataset/videos/58w57eJ5Qks \
-        --layout dataset/layouts/spectator-volibear-challenger.json --check \n        --out runs/minimap/camera_coords.csv
+        --layout dataset/layouts/spectator-volibear-challenger.json \
+        --out runs/minimap/camera_coords.csv
 """
 
 from __future__ import annotations
@@ -98,7 +98,6 @@ def read_video(video_dir: Path, layout: dict, sample: int = 12) -> list[dict]:
         out.append({
             "frame": Path(r["frame"]).stem,
             "t_sec": int(r["t_sec"]),
-            "label": r["label"],
             # Центр вьюпорта в долях миникарты: (0,0) верхний левый угол карты.
             "cx": round((x + bw / 2) / MM, 4),
             "cy": round((y + bh / 2) / MM, 4),
@@ -112,8 +111,6 @@ def main() -> None:
     ap.add_argument("video_dirs", type=Path, nargs="+")
     ap.add_argument("--layout", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=None, help="CSV с координатами")
-    ap.add_argument("--check", action="store_true",
-                    help="сверить с ручными метками top/not_top")
     args = ap.parse_args()
 
     layout = json.loads(args.layout.read_text(encoding="utf-8"))
@@ -128,20 +125,10 @@ def main() -> None:
               f"{box[0]:.3f}x{box[1]:.3f} доли карты, качество "
               f"медиана {np.median(q):.2f}, минимум {q.min():.2f}")
 
-        if args.check:
-            lab = [r for r in rows if r["label"] in ("top", "not_top")]
-            top = np.array([(r["cx"], r["cy"]) for r in lab if r["label"] == "top"])
-            nt = np.array([(r["cx"], r["cy"]) for r in lab if r["label"] == "not_top"])
-            if len(top) and len(nt):
-                print(f"   top    ({len(top):3d}): cx {top[:, 0].mean():.3f}"
-                      f" cy {top[:, 1].mean():.3f}")
-                print(f"   not_top({len(nt):3d}): cx {nt[:, 0].mean():.3f}"
-                      f" cy {nt[:, 1].mean():.3f}")
-
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         with args.out.open("w", encoding="utf-8", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=["video_id", "frame", "t_sec", "label",
+            w = csv.DictWriter(f, fieldnames=["video_id", "frame", "t_sec",
                                               "cx", "cy", "quality"])
             w.writeheader()
             w.writerows(everything)

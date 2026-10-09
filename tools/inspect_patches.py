@@ -69,7 +69,7 @@ def load_frames(layout: dict, coords: dict, per_video: int) -> list[dict]:
                 rgb = apply_mask(im, layout)
             cx, cy, _ = coords[(vid, Path(r["frame"]).stem)]
             out.append({
-                "video": vid, "t_sec": int(r["t_sec"]), "label": r["label"],
+                "video": vid, "t_sec": int(r["t_sec"]),
                 "rgb": rgb, "gray": np.asarray(rgb.convert("L"), dtype=np.float32),
                 "c": np.array([cx, cy]),
             })
@@ -119,7 +119,7 @@ def section_scales(frames: list[dict], picks: list, layout: dict) -> str:
         d.rectangle([x - 5, y - 5, x + 5, y + 5], outline=(120, 255, 160), width=4)
         rows.append(
             f'<div class="prow"><div class="meta">{html.escape(f["video"])} · '
-            f't={f["t_sec"]}с · метка {html.escape(f["label"] or "—")}<br>'
+            f't={f["t_sec"]}с<br>'
             f'камера на карте {f["c"][0]:.2f}, {f["c"][1]:.2f}</div>'
             f'<figure class="ctx"><img src="{b64(full.resize((360, 203)))}" alt="кадр">'
             f'<figcaption>кадр после маски; красным — окно 320 px</figcaption></figure>'

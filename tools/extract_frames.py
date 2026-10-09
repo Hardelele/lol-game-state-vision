@@ -5,7 +5,8 @@
         --info data/videos/58w57eJ5Qks.info.json --every 15
 
 Кадр берётся точным поиском по времени (`-ss` перед `-i`), поэтому подпись
-`t` совпадает с моментом ролика независимо от ключевых кадров.
+`t` совпадает с моментом ролика независимо от ключевых кадров. Повторный
+запуск не перезаписывает готовые кадры и сохраняет заметки в `note`.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 
 from paths import DATASET, ROOT
 
-FIELDS = ["frame", "video_id", "t_sec", "timecode", "label", "note"]
+FIELDS = ["frame", "video_id", "t_sec", "timecode", "note"]
 
 
 def duration(video: Path) -> float:
@@ -77,7 +78,6 @@ def main() -> None:
             "video_id": video_id,
             "t_sec": t,
             "timecode": timecode(t),
-            "label": prev.get("label", ""),
             "note": prev.get("note", ""),
         })
 
