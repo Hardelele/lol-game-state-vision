@@ -184,7 +184,7 @@ class Session:
                "px": round(px, 4), "py": round(py, 4),
                "qx": round(qx, 4), "qy": round(qy, 4),
                "err": round(float(np.hypot(cx - px, cy - py)), 4),
-               "spread": round(sp, 3), "q": round(q, 3), "label": None}
+               "spread": round(sp, 3), "q": round(q, 3)}
         with self._lock:
             self.scene[i] = _jpeg(scene, 85)
             self.mini[i] = _jpeg(mini.resize((MINI_STORE, MINI_STORE)), 82)

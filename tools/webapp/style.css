@@ -144,9 +144,6 @@ body.lit-link #mapSvg line.link { opacity: 1; }
 .ring { width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%;
   align-self: center; }
 .plus { color: var(--pred); font-weight: 700; font-size: 15px; line-height: 1; }
-.chip { padding: 2px 8px; border-radius: 10px; font-size: 12px;
-  border: 1px solid #39404c; color: var(--dim); }
-.chip.top { border-color: var(--accent); color: #8ab4ff; }
 .facts a.out { padding: 5px 10px; border-radius: 8px; }
 .ok { color: var(--ok); } .mid { color: var(--mid); } .bad { color: var(--bad); }
 

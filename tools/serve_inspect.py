@@ -147,18 +147,6 @@ def net_stages(run: str, vid: str, idx: int) -> list[dict]:
 
 
 @lru_cache(maxsize=1)
-def hand_labels() -> dict:
-    """Ручные метки top/not_top: показываются рядом с ответом модели."""
-    out = {}
-    for p in sorted((ROOT / "dataset" / "videos").glob("*/frames.csv")):
-        vid = p.parent.name
-        for r in csv.DictReader(p.open(encoding="utf-8")):
-            if r["label"]:
-                out[f"{vid}:{int(r['t_sec'])}"] = r["label"]
-    return out
-
-
-@lru_cache(maxsize=1)
 def video_meta() -> dict:
     """Название, роль и сторона по каждому ролику.
 
@@ -335,9 +323,6 @@ class Handler(BaseHTTPRequestHandler):
                 run, vid = m.group(1), m.group(2)
                 with _lock:
                     rows = frames_of(run, vid)
-                labels = hand_labels()
-                for r in rows:
-                    r["label"] = labels.get(f"{vid}:{int(round(r['t']))}")
                 return self._json({"video": vid, "run": run, "frames": rows})
             m = re.fullmatch(r"/api/cells/(\d+)x(\d+)", p)
             if m:

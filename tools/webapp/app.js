@@ -20,7 +20,7 @@ const FUNNEL = 16;   // верхняя полоса холста: воронка
 const S = {
   runs: [], run: null, video: null, frames: [], pos: 0,
   proj: null, mapUnits: 14800, cells: [], cellSpec: "8x5",
-  grid: true, heat: true, trail: false, fErr: false, fUns: false, fLab: false,
+  grid: true, heat: true, trail: false, fErr: false, fUns: false,
   playing: null, trailLen: 40, filmN: 15,
   mode: "end",        // "end" — сквозной режим, "net" — разбор по слоям
   stages: [], stage: 0, chan: 0, why: false,
@@ -146,7 +146,6 @@ function summary() {
 function passes(f) {
   if (S.fErr && f.err < BIG) return false;
   if (S.fUns && f.spread < UNSURE) return false;
-  if (S.fLab && !f.label) return false;
   return true;
 }
 
@@ -199,9 +198,6 @@ function render() {
   $("vSpread").textContent = f.spread.toFixed(2);
   $("vSpread").className = f.spread >= UNSURE ? "mid" : "";
   $("vQ").textContent = f.q.toFixed(2);
-  $("vLabel").textContent = f.label || "";
-  $("vLabel").className = "chip" + (f.label ? "" : " hidden") +
-    (f.label === "top" ? " top" : "");
   $("yt").href = `https://www.youtube.com/watch?v=${S.video}&t=${Math.round(f.t)}s`;
   $("why").href = `/explain/${S.run.id}/${S.video}/${f.i}.html`;
   $("why").classList.toggle("hidden", !!S.live);
@@ -354,11 +350,6 @@ function drawTimeline() {
     x.fillStyle = BAR[errClass(f.err)];
     const bh = minH + Math.min(span, f.err / 0.3 * span);
     x.fillRect(i * w / n, base - bh, bw, bh);
-    if (f.label) {
-      x.globalAlpha = on ? 0.9 : 0.2;
-      x.fillStyle = f.label === "top" ? "#8ab4ff" : "#5b6472";
-      x.fillRect(i * w / n, base + 1, bw, 3);
-    }
   });
   x.globalAlpha = 1;
   const p = S.pos, px = p * w / n;
@@ -436,7 +427,7 @@ function wire() {
   $("prev").onclick = (e) => step(e.shiftKey ? -10 : -1);
   $("next").onclick = (e) => step(e.shiftKey ? 10 : 1);
   $("play").onclick = play;
-  ["grid", "heat", "trail", "fErr", "fUns", "fLab"].forEach((k) => {
+  ["grid", "heat", "trail", "fErr", "fUns"].forEach((k) => {
     $(k).onclick = () => toggle(k);
   });
   $("cells").onclick = () =>
