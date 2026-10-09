@@ -462,10 +462,38 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(n).decode("utf-8"))
 
+    def _refuse(self, method: str) -> tuple[int, str] | None:
+        """Запрос не из нашей же страницы — отказ.
+
+        Сервер запускает yt-dlp, ffmpeg и сеансы на видеокарте и читает
+        чекпоинты, а слушает localhost, куда может постучаться любой
+        открытый в браузере сайт:
+
+        * Host — только наш: иначе сайт с DNS rebinding (evil.com →
+          127.0.0.1) читает ответы как свои;
+        * Origin, если он есть, — тот же адрес, что и Host;
+        * POST — только application/json: такой запрос браузер с чужой
+          страницы без preflight не отправит, а OPTIONS сервер не знает.
+        """
+        host = (self.headers.get("Host") or "").lower()
+        if host not in self.server.hosts:
+            return 403, "чужой Host"
+        origin = self.headers.get("Origin")
+        if origin is not None and origin.lower() != f"http://{host}":
+            return 403, "запрос с чужой страницы"
+        if method == "POST":
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0]
+            if ctype.strip().lower() != "application/json":
+                return 415, "нужен Content-Type: application/json"
+        return None
+
     def _dispatch(self, method: str) -> None:
         url = urlparse(self.path)
         p = unquote(url.path)
         self.query = parse_qs(url.query)
+        bad = self._refuse(method)
+        if bad:
+            return self.fail(*bad)
         try:
             self.body = self._body() if method == "POST" else {}
             for meth, rx, fn in ROUTES:
@@ -490,10 +518,23 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("POST")
 
 
+class Server(ThreadingHTTPServer):
+    """HTTP-сервер смотрелки со списком имён, по которым к нему можно прийти."""
+
+    def __init__(self, host: str, port: int):
+        super().__init__((host, port), Handler)
+        names = {"127.0.0.1", "localhost", "[::1]",
+                 f"[{host}]" if ":" in host else host}
+        self.hosts = {n.lower() for n in names} | {f"{n}:{port}".lower()
+                                                   for n in names}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8732)
-    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="адрес, который слушать; запросы принимаются только "
+                         "с Host этим именем или 127.0.0.1/localhost")
     ap.add_argument("--live-run", default=live.DEFAULT_RUN,
                     help="прогон под runs/ для потока по умолчанию; тип "
                          "модели (патчевая или CoordNet) берётся из чекпоинта")
@@ -509,7 +550,7 @@ def main() -> None:
     if not projection():
         print("внимание: нет dataset/layouts/projection.json — "
               "трапеция видимой области и сетка ячеек не будут показаны")
-    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    srv = Server(args.host, args.port)
     print(f"\nсмотрелка на http://{args.host}:{args.port}  (Ctrl+C — остановить)")
     try:
         srv.serve_forever()
