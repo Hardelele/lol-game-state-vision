@@ -40,6 +40,7 @@ CoordNet (tools/coord_model.py). Новый чекпоинт патчевой м
 
 from __future__ import annotations
 
+import enum
 import io
 import json
 import threading
@@ -170,6 +171,38 @@ def models() -> list[dict]:
 
 # ---------- сеанс ----------
 
+class State(enum.Enum):
+    """Состояние сеанса. Логика сравнивает члены, а наружу (в JSON поля
+    state) уходит подпись `label`: её показывает и с ней сравнивает
+    webapp/app.js."""
+
+    PREPARING = "preparing"
+    PROBING = "probing"
+    RUNNING = "running"
+    STOPPED = "stopped"
+    ENDED = "ended"
+    FAILED = "failed"
+
+    @property
+    def label(self) -> str:
+        return STATE_LABELS[self]
+
+    @property
+    def active(self) -> bool:
+        """Сеанс ещё работает (или вот-вот начнёт)."""
+        return self in (State.PREPARING, State.PROBING, State.RUNNING)
+
+
+STATE_LABELS = {
+    State.PREPARING: "готовлюсь",
+    State.PROBING: "спрашиваю YouTube",
+    State.RUNNING: "идёт",
+    State.STOPPED: "остановлено",
+    State.ENDED: "ролик кончился",
+    State.FAILED: "сбой",
+}
+
+
 class Session:
     """Один ролик, читаемый потоком. Живёт в памяти, пока его не закрыли."""
 
@@ -184,7 +217,7 @@ class Session:
         self.kind = ""
         self.model_label = ""
         self.trained_on: list[str] = []
-        self.state = "готовлюсь"
+        self.state = State.PREPARING
         self.note = ""
         self.duration = 0.0
         self.title = ""
@@ -203,7 +236,7 @@ class Session:
             tail = self.rows[-TIMING_WINDOW:]
         el = time.time() - self.started
         seen = (self.start + n / self.fps) if n else self.start
-        return {"id": self.vid, "run": self.run, "state": self.state,
+        return {"id": self.vid, "run": self.run, "state": self.state.label,
                 "kind": self.kind, "model": self.model_label,
                 "trained_on": self.trained_on, "timing": timing(tail),
                 "note": self.note, "fps": self.fps, "start": self.start,
@@ -219,7 +252,7 @@ class Session:
     # ---------- работа ----------
 
     def _fail(self, why: str) -> None:
-        self.state, self.note = "сбой", why
+        self.state, self.note = State.FAILED, why
 
     def _run(self) -> None:
         try:
@@ -230,7 +263,7 @@ class Session:
     def _work(self) -> None:
         layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
         url = f"https://www.youtube.com/watch?v={self.vid}"
-        self.state = "спрашиваю YouTube"
+        self.state = State.PROBING
         w, h, dur, _, info = probe_url(url)
         self.duration, self.title = dur, info.get("title") or self.vid
 
@@ -266,7 +299,7 @@ class Session:
                 a[y0:y1, x0:x1] = 0
             return cv2.resize(a, (STORE_W, store_h), interpolation=cv2.INTER_AREA)
 
-        self.state = "идёт"
+        self.state = State.RUNNING
 
         # Размер рамки вьюпорта постоянен внутри ролика, но по первому кадру
         # его не оценить: в начале заставка. Копим первые кадры, оцениваем по
@@ -324,8 +357,8 @@ class Session:
             for m, s, p, mi, t in warm:
                 self._emit(m, s, p, mi, bw, bh, model, t)
 
-        if self.state == "идёт":
-            self.state = "остановлено" if self._stop.is_set() else "ролик кончился"
+        if self.state is State.RUNNING:
+            self.state = State.STOPPED if self._stop.is_set() else State.ENDED
 
     def _emit(self, mask, scene: np.ndarray, prep, mini: Image.Image,
               bw: int, bh: int, model, ms: dict) -> None:
@@ -438,7 +471,7 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
                 break
             _sessions.pop(old_id).stop()
         old = _sessions.get(vid)
-        if old and old.state in ("идёт", "готовлюсь", "спрашиваю YouTube"):
+        if old and old.state.active:
             if old.run == run:
                 return old.status()
             old.stop()                   # тот же ролик, но другой моделью
@@ -458,6 +491,6 @@ def stop(vid: str) -> None:
 
 
 def listing() -> list[dict]:
-    return [{"id": s.vid, "state": s.state, "count": len(s.rows),
+    return [{"id": s.vid, "state": s.state.label, "count": len(s.rows),
              "run": s.run, "kind": s.kind, "title": s.title}
             for s in _sessions.values()]

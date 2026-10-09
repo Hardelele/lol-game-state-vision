@@ -21,6 +21,7 @@ build_coords.py --url, а смотреть его можно плеером YouT
 
 from __future__ import annotations
 
+import enum
 import json
 import os
 import re
@@ -255,6 +256,32 @@ def videos(handle: str, url: str | None = None, limit: int = 60,
 
 # ---------- забор ролика в датасет ----------
 
+class JobState(enum.Enum):
+    """Состояние сборки. В JSON поля state уходит подпись `label`: её
+    показывает и с ней сравнивает webapp/app.js."""
+
+    RUNNING = "running"
+    ALREADY_RUNNING = "already_running"
+    DONE = "done"
+    FAILED = "failed"
+
+    @property
+    def label(self) -> str:
+        return JOB_LABELS[self]
+
+    @classmethod
+    def of(cls, code: int | None) -> "JobState":
+        """По коду возврата процесса; None — ещё работает."""
+        return cls.RUNNING if code is None else cls.DONE if code == 0 else cls.FAILED
+
+
+JOB_LABELS = {
+    JobState.RUNNING: "идёт",
+    JobState.ALREADY_RUNNING: "уже идёт",
+    JobState.DONE: "готово",
+    JobState.FAILED: "сбой",
+}
+
 _jobs: dict[str, dict] = {}
 _jlock = threading.Lock()
 
@@ -265,8 +292,7 @@ def jobs() -> list[dict]:
         for j in _jobs.values():
             p = j["proc"]
             code = p.poll()
-            out.append({"id": j["id"], "state": ("идёт" if code is None else
-                                                 "готово" if code == 0 else "сбой"),
+            out.append({"id": j["id"], "state": JobState.of(code).label,
                         "code": code, "started": j["started"],
                         "log": _tail(j["logfile"]), "fps": j["fps"]})
         return sorted(out, key=lambda r: -r["started"])
@@ -291,7 +317,7 @@ def ingest(vid: str, fps: float = 1.0) -> dict:
     with _jlock:
         old = _jobs.get(vid)
         if old and old["proc"].poll() is None:
-            return {"id": vid, "state": "уже идёт"}
+            return {"id": vid, "state": JobState.ALREADY_RUNNING.label}
     INGEST_LOGS.mkdir(parents=True, exist_ok=True)
     logfile = INGEST_LOGS / f"{vid}.log"
     fh = logfile.open("w", encoding="utf-8")
@@ -304,7 +330,7 @@ def ingest(vid: str, fps: float = 1.0) -> dict:
     with _jlock:
         _jobs[vid] = {"id": vid, "proc": proc, "logfile": logfile,
                       "started": time.time(), "fps": fps}
-    return {"id": vid, "state": "идёт"}
+    return {"id": vid, "state": JobState.RUNNING.label}
 
 
 # ---------- сведения о конкретном ролике ----------
