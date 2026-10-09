@@ -5,7 +5,9 @@
 матча, роль, патч — и сразу понимать, брали мы этот ролик или нет.
 
 Ключевые каналы уже есть: `dataset/sources/champion-replay-channels.json`
-хранит по каналу на каждого из 173 чемпионов. Свои добавляются поверх и
+хранит по каналу на каждого из 173 чемпионов, а
+`dataset/sources/top-player-channels.json` — каналы топ-игроков и стримеров
+с записями от первого лица (другой HUD). Свои добавляются поверх и
 лежат отдельно, в `data/channels/custom.json`, чтобы собранный каталог
 оставался неизменным.
 
@@ -29,7 +31,8 @@ from pathlib import Path
 
 from paths import ROOT
 
-CATALOG = ROOT / "dataset" / "sources" / "champion-replay-channels.json"
+CATALOGS = (ROOT / "dataset" / "sources" / "champion-replay-channels.json",
+            ROOT / "dataset" / "sources" / "top-player-channels.json")
 STORE = ROOT / "data" / "channels"
 CACHE = STORE / "cache"
 CUSTOM = STORE / "custom.json"
@@ -97,7 +100,8 @@ def channels() -> list[dict]:
     Канал, с которого уже брались ролики, помечается — именно с таких и
     хочется продолжать, а искать их в списке из 173 штук утомительно.
     """
-    cat = json.loads(CATALOG.read_text(encoding="utf-8"))
+    cat = [c for p in CATALOGS if p.exists()
+           for c in json.loads(p.read_text(encoding="utf-8"))["channels"]]
     mine: dict[str, int] = {}
     for vid in have_ids():
         handle, cid = _owner(vid)
@@ -106,9 +110,10 @@ def channels() -> list[dict]:
                 mine[key] = mine.get(key, 0) + 1
 
     rows = []
-    for c in cat["channels"]:
+    for c in cat:
         rows.append({"handle": c["handle"], "url": c["url"],
-                     "name": c.get("champion") or c.get("channel_title"),
+                     "name": (c.get("champion") or c.get("player")
+                              or c.get("channel_title")),
                      "title": c.get("channel_title"), "id": c.get("channel_id"),
                      "videos": c.get("videos"), "subs": c.get("subscribers"),
                      "custom": False})
