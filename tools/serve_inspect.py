@@ -38,6 +38,7 @@ import live
 import video_side
 from geometry import MAP_UNITS, apply_h, load_projection
 from channels import youtube_id
+from checkpoints import checkpoint_kind, read_checkpoint
 from paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS, run_dir
 
 WEB = TOOLS / "webapp"
@@ -55,24 +56,29 @@ def run_id(run: str) -> str:
 
 
 def discover_runs() -> list[dict]:
-    """Прогоны — это каталоги с файлами predictions_<ролик>.csv."""
-    out = []
+    """Прогоны — это каталоги с файлами predictions_<ролик>.csv.
+
+    Типы моделей берутся одним проходом live.models() на весь список, а не
+    по проходу runs/ на каждый прогон.
+    """
+    kinds = {m["id"]: m["kind"] for m in live.models()}
+    out: dict[str, dict] = {}
     for d in sorted(RUNS.rglob("predictions_*.csv")):
         run = d.parent
-        rid = str(run.relative_to(RUNS)).replace("\\", "/")
-        rec = next((r for r in out if r["id"] == rid), None)
+        rid = run.relative_to(RUNS).as_posix()
+        rec = out.get(rid)
         if rec is None:
             meta = {}
             f = run / "eval_coords.json"
             if f.exists():
                 meta = json.loads(f.read_text(encoding="utf-8"))
-            rec = {"id": rid, "title": rid, "trained_on": meta.get("trained_on", []),
-                   "kind": model_kind(rid), "videos": []}
-            out.append(rec)
+            rec = out[rid] = {"id": rid, "title": rid,
+                              "trained_on": meta.get("trained_on", []),
+                              "kind": kinds.get(rid), "videos": []}
         rec["videos"].append(d.name[len("predictions_"):-len(".csv")])
-    for r in out:
+    for r in out.values():
         r["videos"].sort()
-    return out
+    return list(out.values())
 
 
 @lru_cache(maxsize=32)
@@ -109,10 +115,10 @@ def scene_file(vid: str, idx: int) -> Path:
     return COORDS_DATA / youtube_id(vid) / "scene" / f"{int(idx):06d}.jpg"
 
 
-def model_kind(run: str) -> str | None:
-    """Тип модели прогона («patch», «coordnet») или None, если чекпоинта нет."""
-    m = next((r for r in live.models() if r["id"] == run), None)
-    return m["kind"] if m else None
+@lru_cache(maxsize=64)
+def _ckpt_kind(path: str, mtime: float) -> str | None:
+    """Тип модели («patch», «coordnet») по полям чекпоинта; до смены файла."""
+    return checkpoint_kind(read_checkpoint(Path(path), mmap=True))
 
 
 def ckpt_of(run: str) -> str:
@@ -120,7 +126,7 @@ def ckpt_of(run: str) -> str:
     p = live.run_checkpoint(run)
     if not p.is_file():
         raise FileNotFoundError(f"нет чекпоинта {p}")
-    if model_kind(run) == "patch":
+    if _ckpt_kind(str(p), p.stat().st_mtime) == "patch":
         raise ValueError("разбор по слоям есть только у CoordNet, "
                          "у патчевой модели его нет")
     return str(p)
