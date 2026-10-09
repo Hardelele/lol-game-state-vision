@@ -24,8 +24,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
+import torch.nn.functional as F
+
 from patch_model import (UNITS_PER_PX, load_patchnet, load_projection, rectify,
-                         predict_canvases)
+                         predict_canvases, to_world)
 
 
 def is_patch_checkpoint(ck: dict) -> bool:
@@ -73,14 +75,27 @@ class PatchInfer:
         a = np.asarray(scene.convert("RGB")) if hasattr(scene, "convert") else scene
         return rectify(a, np.eye(3), self.h0, self.units, self.net.stride)
 
+    def frame_prep(self, frame_size, crop, boxes, store_size) -> "FramePrep | None":
+        """Подготовка полного кадра на видеокарте; без неё — None."""
+        if self.device != "cuda":
+            return None
+        return FramePrep(self, frame_size, crop, boxes, store_size)
+
     @torch.no_grad()
     def predict(self, prep) -> tuple[dict, np.ndarray, dict]:
-        """Ответ по подготовленному кадру: поля строки, тепловая карта, мс."""
+        """Ответ по подготовленному кадру: поля строки, тепловая карта, мс.
+
+        `prep` — от `prepare` (numpy) или от `FramePrep` (холст и маска уже
+        на видеокарте, (1, 3, H, W) и (1, H, W) в долях единицы).
+        """
         cv, val, q0 = prep
         cuda = self.device == "cuda"
         t0 = time.perf_counter()
-        x = torch.from_numpy(cv).to(self.device).permute(2, 0, 1)[None].float().div_(255)
-        v = torch.from_numpy(val).to(self.device)[None].float().div_(255)
+        if isinstance(cv, torch.Tensor):
+            x, v = cv, val
+        else:
+            x = torch.from_numpy(cv).to(self.device).permute(2, 0, 1)[None].float().div_(255)
+            v = torch.from_numpy(val).to(self.device)[None].float().div_(255)
         q = torch.tensor(q0[None], device=self.device, dtype=torch.float32)
         if cuda:
             self._ev = (torch.cuda.Event(enable_timing=True),
@@ -124,6 +139,66 @@ class PatchInfer:
             row["game"] = p_game
             row["is_game"] = bool(is_game)
         return row, heat, {"net": net_ms, "agg": agg_ms}
+
+
+class FramePrep:
+    """Полный кадр → вход патчевой модели, целиком на видеокарте.
+
+    Зачем. На процессоре подготовка стоила больше самой модели: копия кадра
+    1080p, маска, LANCZOS до хранимой сцены и вид сверху — около 19 мс на
+    кадр против ~4 мс сети. Здесь то же самое делается за ~1 мс: обрезка
+    по плотной области (видом numpy, без копии всего кадра), маска, сглаженное
+    уменьшение до хранимой сцены (bicubic с antialias вместо LANCZOS) и вид
+    сверху через grid_sample. Геометрия от ролика к ролику постоянна, поэтому
+    сетка выборки, маска следа и центр камеры считаются один раз.
+
+    Совпадение с прежним путём замерено на 172 кадрах 1080p отложенных
+    роликов: ответ модели отличается на 0.2 ед. по медиане (p95 0.6) при
+    карте в 14 800 ед.; ошибка к метке та же.
+    """
+
+    def __init__(self, infer: "PatchInfer", frame_size, crop, boxes, store_size):
+        dev = infer.device
+        self.dev = dev
+        self.crop = tuple(int(v) for v in crop)
+        cx0, cy0, cx1, cy1 = self.crop
+        self.store = tuple(int(v) for v in store_size)
+        sw, sh = self.store
+        # Маска в координатах обрезки: прямоугольники HUD, попавшие в неё.
+        keep = torch.ones(1, 1, cy1 - cy0, cx1 - cx0, device=dev)
+        for x0, y0, x1, y1 in boxes:
+            if x1 > cx0 and x0 < cx1 and y1 > cy0 and y0 < cy1:
+                keep[..., max(y0, cy0) - cy0:min(y1, cy1) - cy0,
+                     max(x0, cx0) - cx0:min(x1, cx1) - cx0] = 0
+        self.keep = keep
+        # Холст, маска следа и центр камеры — ровно как у rectify на
+        # хранимой сцене этого размера; отсюда же обратное отображение
+        # «пиксель холста → пиксель сцены» для grid_sample.
+        cv0, val0, q0 = infer.prepare(np.zeros((sh, sw, 3), np.uint8))
+        hc, wc = cv0.shape[:2]
+        t = (np.array([[1, 0, q0[0]], [0, 1, q0[1]], [0, 0, 1]], dtype=np.float64)
+             @ to_world(infer.h0, np.eye(3), infer.units))
+        ys, xs = np.mgrid[0:hc, 0:wc].astype(np.float64)
+        p = np.linalg.inv(t) @ np.stack([xs.ravel(), ys.ravel(), np.ones(xs.size)])
+        gx = p[0] / p[2] / (sw - 1) * 2 - 1
+        gy = p[1] / p[2] / (sh - 1) * 2 - 1
+        self.grid = torch.tensor(np.stack([gx, gy], -1).reshape(1, hc, wc, 2),
+                                 dtype=torch.float32, device=dev)
+        self.val = torch.from_numpy(val0).to(dev)[None].float().div_(255)
+        self.q0 = q0
+
+    @torch.no_grad()
+    def __call__(self, frame: np.ndarray):
+        """(H, W, 3) uint8 → (prep для predict, хранимая сцена uint8 для показа)."""
+        cx0, cy0, cx1, cy1 = self.crop
+        a = torch.from_numpy(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1])).to(self.dev)
+        a = a.permute(2, 0, 1)[None].float() * self.keep
+        s = F.interpolate(a, size=(self.store[1], self.store[0]), mode="bicubic",
+                          antialias=True, align_corners=False).clamp_(0, 255).round_()
+        cv = F.grid_sample(s, self.grid, mode="bilinear", padding_mode="zeros",
+                           align_corners=True).div_(255)
+        scene = s[0].permute(1, 2, 0).to(torch.uint8).cpu().numpy()
+        return (cv, self.val, self.q0), scene
 
 
 def vote_stats(votes: torch.Tensor, w: torch.Tensor, cam: torch.Tensor,

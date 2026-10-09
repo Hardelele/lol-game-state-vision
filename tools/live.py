@@ -16,11 +16,10 @@
 примерно за две с половиной минуты, а первые кадры видны через несколько
 секунд после нажатия.
 
-Путь кадра в сеансе (замер на потоке 58w57eJ5Qks, 1 кадр/с, видеокарта
-свободна, медиана): маска, обрезка и масштаб сцены на процессоре ~20 мс,
-патчевая сеть ~4 мс, разбор и сведение голосов ~6 мс, сжатие картинок
-~1.5 мс — около 30 кадров/с, наравне с CoordNet; поток при этом шёл
-примерно в 13x реального времени.
+Путь кадра в сеансе у патчевой модели: подготовка входа (обрезка, маска,
+масштаб, вид сверху) на видеокарте ~1 мс, сеть ~4 мс, разбор и сведение
+голосов ~6 мс, сжатие картинок ~1.5 мс. Раньше подготовка шла на процессоре
+через PIL LANCZOS и одна стоила ~20 мс.
 
 Перемотки нет: YouTube душит любое обращение к медиа-адресу, кроме
 последовательного чтения самим yt-dlp. Проверено — ffmpeg с `-ss` по прямому
@@ -47,6 +46,7 @@ import threading
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -248,6 +248,24 @@ class Session:
         self.trained_on = list(model.trained_on)
         self.note = (f"{w}x{h}, {dur / 60:.0f} мин · "
                      f"{model.describe((STORE_W, store_h))} · {self.device}")
+        # Подготовка кадра: у патчевой модели на видеокарте целиком (~1 мс),
+        # иначе на процессоре — обрезка видом, маска на малом, cv2 INTER_AREA
+        # вместо PIL LANCZOS (~3 мс против ~17; ответ патчевой модели тот же
+        # в пределах 0.3 ед.).
+        gpu_prep = (model.frame_prep((w, h), (cx0, cy0, cx1, cy1), boxes,
+                                     (STORE_W, store_h))
+                    if hasattr(model, "frame_prep") else None)
+        cboxes = [(max(x0, cx0) - cx0, max(y0, cy0) - cy0,
+                   min(x1, cx1) - cx0, min(y1, cy1) - cy0)
+                  for x0, y0, x1, y1 in boxes
+                  if x1 > cx0 and x0 < cx1 and y1 > cy0 and y0 < cy1]
+
+        def cpu_scene(fr: np.ndarray) -> np.ndarray:
+            a = fr[cy0:cy1, cx0:cx1].copy()
+            for x0, y0, x1, y1 in cboxes:
+                a[y0:y1, x0:x1] = 0
+            return cv2.resize(a, (STORE_W, store_h), interpolation=cv2.INTER_AREA)
+
         self.state = "идёт"
 
         # Размер рамки вьюпорта постоянен внутри ролика, но по первому кадру
@@ -266,20 +284,24 @@ class Session:
             t1 = time.perf_counter()
             if fr is None or self._stop.is_set() or len(self.rows) >= MAX_FRAMES:
                 break
-            img = Image.fromarray(fr)
-            mini = img.crop(mmbox).resize((MM, MM), Image.LANCZOS)
+            # Миникарта — только источник метки. LANCZOS оставлен как в
+            # build_coords: с INTER_AREA рамка в 15% кадров уезжала на пиксель
+            # (~58 ед.) от меток датасета. Обрезается до PIL, а не после:
+            # перевод в PIL всего кадра 1080p стоил сам по себе.
+            mini = Image.fromarray(np.ascontiguousarray(
+                fr[mmbox[1]:mmbox[3], mmbox[0]:mmbox[2]])).resize((MM, MM), Image.LANCZOS)
             mask = white_mask(np.asarray(mini, dtype=np.float32))
             t2 = time.perf_counter()
-            scene = img.copy()
-            for bx in boxes:
-                scene.paste((0, 0, 0), bx)
-            scene = scene.crop((cx0, cy0, cx1, cy1)).resize(
-                (STORE_W, store_h), Image.LANCZOS)
+            if gpu_prep is not None:
+                prep, scene = gpu_prep(fr)
+            else:
+                scene = cpu_scene(fr)
+                prep = model.prepare(Image.fromarray(scene))
             ms = {"decode": (t1 - t0) * 1000,
                   "prep": (time.perf_counter() - t2) * 1000}
 
             if bw is None:
-                warm.append((mask, scene, mini, ms))
+                warm.append((mask, scene, prep, mini, ms))
                 # Считаются только кадры, где рамка уже видна: по заставке
                 # размер выходил меньше настоящего (58w57eJ5Qks: 56x32 вместо
                 # 68x38), и все метки ролика смещались на ~380 ед.
@@ -290,36 +312,33 @@ class Session:
                 good = [m[0] for m in warm if find_box(m[0], *BOX0)[2] >= WARM_Q]
                 bw, bh = estimate_box(good or [m[0] for m in warm])
                 self.note += f" · рамка {bw}x{bh}"
-                for m, s, mi, t in warm:
-                    self._emit(m, s, mi, bw, bh, model, t)
+                for m, s, p, mi, t in warm:
+                    self._emit(m, s, p, mi, bw, bh, model, t)
                 warm.clear()
                 continue
-            self._emit(mask, scene, mini, bw, bh, model, ms)
+            self._emit(mask, scene, prep, mini, bw, bh, model, ms)
         stream.close()                    # ffmpeg и yt-dlp не должны висеть
         if bw is None and warm and not self._stop.is_set():
             # Ролик кончился раньше, чем набралась оценка рамки.
             bw, bh = estimate_box([m[0] for m in warm])
-            for m, s, mi, t in warm:
-                self._emit(m, s, mi, bw, bh, model, t)
+            for m, s, p, mi, t in warm:
+                self._emit(m, s, p, mi, bw, bh, model, t)
 
         if self.state == "идёт":
             self.state = "остановлено" if self._stop.is_set() else "ролик кончился"
 
-    def _emit(self, mask, scene: Image.Image, mini: Image.Image,
+    def _emit(self, mask, scene: np.ndarray, prep, mini: Image.Image,
               bw: int, bh: int, model, ms: dict) -> None:
         """Один кадр: истина с миникарты, ответ модели, картинки в память.
 
-        `ms` — уже набежавшее время кадра (распаковка; маска, обрезка и
-        масштаб сцены); сюда добавляются подготовка входа модели, сеть,
+        `ms` — уже набежавшее время кадра (распаковка; подготовка входа
+        модели — маска, обрезка, масштаб, вид сверху); сюда добавляются сеть,
         сведение голосов и «ответ» — сжатие картинок и запись в сеанс.
         Метка с миникарты в путь модели не входит и не считается.
         """
         x, y, q = find_box(mask, bw, bh)
         cx, cy = (x + bw / 2) / MM, (y + bh / 2) / MM
 
-        t0 = time.perf_counter()
-        prep = model.prepare(scene)
-        ms["prep"] += (time.perf_counter() - t0) * 1000
         out, hm, mt = model.predict(prep)
         ms.update(mt)
 
@@ -336,7 +355,7 @@ class Session:
         for k in ("votes", "is_game"):
             if k in out:
                 row[k] = out[k]
-        sj = _jpeg(scene, 85)
+        sj = _jpeg(Image.fromarray(scene), 85)
         mj = _jpeg(mini.resize((MINI_STORE, MINI_STORE)), 82)
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
