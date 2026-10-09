@@ -459,6 +459,10 @@ def aggregate(cand: np.ndarray, w: np.ndarray, radius: float = 0.025):
     правильными; затем по этим союзникам берётся взвешенная медиана по
     каждой оси. Это RANSAC с полным перебором гипотез: патчей сотни, и
     полный перебор дешевле случайного.
+
+    В пути модели работает aggregate_batch; эта версия — эталон для неё:
+    совпадение проверяет tests/test_patch_model.py, скорость сравнивает
+    tools/bench_models.py.
     """
     if len(cand) == 0 or w.sum() <= 0:
         return np.array([np.nan, np.nan]), 0.0

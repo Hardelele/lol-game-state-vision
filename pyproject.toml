@@ -1,0 +1,22 @@
+# Только настройки инструментов: проект не ставится как пакет, скрипты
+# запускаются как `python tools/<script>.py` и импортируют друг друга из tools/.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["tools", "tests"]
+
+[tool.ruff.lint]
+# BLE и N включены, чтобы стоящие в коде `# noqa: BLE001` / `# noqa: N802`
+# что-то значили.
+select = ["E", "F", "W", "B", "BLE", "N"]
+ignore = [
+    "N803", "N806",  # H, W, A и т.п. — обозначения из геометрии, не константы
+    "N812",          # import torch.nn.functional as F — общепринято
+    "E731",          # короткая lambda-переменная внутри функции
+    "B905",          # zip без strict: длины совпадают по построению
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["tools"]
+testpaths = ["tests"]
