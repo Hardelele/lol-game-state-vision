@@ -21,7 +21,6 @@ import json
 import mimetypes
 import re
 import traceback
-import threading
 from collections.abc import Callable
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,7 +42,11 @@ from paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS, run_dir
 
 WEB = TOOLS / "webapp"
 
-_lock = threading.Lock()
+# Общей блокировки на маршрутах нет: кеши ниже потокобезопасны (lru_cache в
+# худшем случае посчитает одно и то же дважды), чтение файлов и сборка
+# картинок друг другу не мешают, explain_miss.build грузит свою копию модели.
+# Единственное общее изменяемое — хуки на модели в activations.activations,
+# и они защищены там же.
 
 
 def run_id(run: str) -> str:
@@ -314,9 +317,8 @@ def ingest(h) -> None:
 
 @route("GET", r"/api/live-models")
 def live_models(h) -> None:
-    with _lock:
-        h._json({"models": live.models(h.server.live_run),
-                 "default": h.server.live_run})
+    h._json({"models": live.models(h.server.live_run),
+             "default": h.server.live_run})
 
 
 @route("GET", r"/api/live/([\w-]+)")
@@ -363,16 +365,14 @@ def live_heat(h, vid: str, idx: str) -> None:
 
 @route("GET", r"/api/index")
 def index(h) -> None:
-    with _lock:
-        h._json({"runs": discover_runs(), "projection": projection(),
-                 "videos": video_meta(), "map_units": MAP_UNITS})
+    h._json({"runs": discover_runs(), "projection": projection(),
+             "videos": video_meta(), "map_units": MAP_UNITS})
 
 
 @route("GET", r"/api/frames/(.+)/([\w-]+)")
 def frames(h, run: str, vid: str) -> None:
     run, vid = run_id(run), youtube_id(vid)
-    with _lock:
-        rows = frames_of(run, vid)
+    rows = frames_of(run, vid)
     h._json({"video": vid, "run": run, "frames": rows})
 
 
@@ -384,23 +384,20 @@ def cells(h, cols: str, rows: str) -> None:
 @route("GET", r"/explain/(.+)/([\w-]+)/(\d+)\.html")
 def explain(h, run: str, vid: str, idx: str) -> None:
     run, vid, idx = run_id(run), youtube_id(vid), int(idx)
-    with _lock:
-        body = explain_miss.build(run, vid, idx)
+    body = explain_miss.build(run, vid, idx)
     h._send(body.encode("utf-8"), "text/html; charset=utf-8")
 
 
 @route("GET", r"/api/net/(.+)/([\w-]+)/(\d+)")
 def net(h, run: str, vid: str, idx: str) -> None:
     run, vid, idx = run_id(run), youtube_id(vid), int(idx)
-    with _lock:
-        h._json({"stages": net_stages(run, vid, idx)})
+    h._json({"stages": net_stages(run, vid, idx)})
 
 
 @route("GET", r"/api/chan/(.+)/([\w-]+)/(\d+)/([\w.]+)")
 def chan(h, run: str, vid: str, idx: str, sid: str) -> None:
     run, vid, idx = run_id(run), youtube_id(vid), int(idx)
-    with _lock:
-        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
     h._json(act.channel_stats(a[sid]))
 
 
@@ -412,44 +409,39 @@ def image(h, kind: str, vid: str, idx: str) -> None:
 @route("GET", r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/grid\.png")
 def net_grid(h, run: str, vid: str, idx: str, sid: str) -> None:
     run, vid, idx = run_id(run), youtube_id(vid), int(idx)
-    with _lock:
-        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
-        body = act.grid_png(a[sid])
+    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+    body = act.grid_png(a[sid])
     h._send(body, "image/png", cache=3600)
 
 
 @route("GET", r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/ch(\d+)\.png")
 def net_channel(h, run: str, vid: str, idx: str, sid: str, ch: str) -> None:
     run, vid, idx, ch = run_id(run), youtube_id(vid), int(idx), int(ch)
-    with _lock:
-        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
-        body = (act.rgb_png(a[sid]) if sid == "input" and ch < 0
-                else act.channel_png(a[sid], ch))
+    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+    body = (act.rgb_png(a[sid]) if sid == "input" and ch < 0
+            else act.channel_png(a[sid], ch))
     h._send(body, "image/png", cache=3600)
 
 
 @route("GET", r"/img/scenefull/(.+)/([\w-]+)/(\d+)\.png")
 def scene_full(h, run: str, vid: str, idx: str) -> None:
     run, vid, idx = run_id(run), youtube_id(vid), int(idx)
-    with _lock:
-        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
-        body = act.rgb_png(a["input"], width=560)
+    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+    body = act.rgb_png(a["input"], width=560)
     h._send(body, "image/png", cache=3600)
 
 
 @route("GET", r"/img/kernel/(.+)/([\w.]+)/(\d+)\.png")
 def kernel(h, run: str, sid: str, ch: str) -> None:
     run = run_id(run)
-    with _lock:
-        body = act.kernel_png(ckpt_of(run), sid, int(ch))
+    body = act.kernel_png(ckpt_of(run), sid, int(ch))
     h._send(body, "image/png", cache=86400)
 
 
 @route("GET", r"/img/heat/(.+)/([\w-]+)/(\d+)\.png")
 def heat(h, run: str, vid: str, idx: str) -> None:
     run, vid, idx = run_id(run), youtube_id(vid), int(idx)
-    with _lock:
-        body = heat_png(run, vid, idx)
+    body = heat_png(run, vid, idx)
     h._send(body, "image/png", cache=86400)
 
 
