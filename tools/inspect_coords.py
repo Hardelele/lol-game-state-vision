@@ -30,10 +30,10 @@ import json
 from pathlib import Path
 
 import numpy as np
-import torch
 from PIL import Image
 
 from paths import COORDS_DATA, COORDS_RUNS, INSPECT, PROJECTION
+from checkpoints import read_checkpoint
 from geometry import MAP_UNITS, apply_h, load_projection
 from inspect_pages import (NAV_OPEN, NAV_CLOSE, b64, heat_rgba, sync_nav, update_manifest,
                            write_index)
@@ -421,8 +421,7 @@ def main() -> None:
 
     cols, rows = (int(v) for v in args.cells.lower().split("x"))
     ck = json.loads((args.run / "eval_coords.json").read_text(encoding="utf-8"))
-    grid = int(torch.load(args.run / "model.pt", map_location="cpu",
-                          weights_only=False).get("grid", 32))
+    grid = int(read_checkpoint(args.run / "model.pt", mmap=True).get("grid", 32))
     trained = args.video in ck.get("trained_on", [])
     out = args.out or INSPECT / f"coords-{args.video}.html"
     if not PROJECTION.exists():

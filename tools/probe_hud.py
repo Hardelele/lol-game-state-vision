@@ -61,9 +61,10 @@ from PIL import Image
 
 from paths import COORDS_DATA, CHECKS, DEFAULT_LAYOUT, VIDEOS
 from mask_frames import crop_box, mask_boxes
-from coord_model import CoordNet, GRID, expected_point
+from checkpoints import load_checkpoint
+from coord_model import expected_point
 from geometry import MAP_UNITS
-from patch_model import load_patchnet, load_projection, scene_from_box, infer_images
+from patch_model import load_projection, scene_from_box, infer_images
 
 W, H = 1920, 1080
 OPAQUE_NAMES = ("scoreboard_and_objective_icons", "team_and_intro_left",
@@ -222,14 +223,10 @@ class OldModel:
 
     kind = "coordnet"
 
-    def __init__(self, path: Path, dev: str):
-        ck = torch.load(path, map_location=dev, weights_only=False)
-        self.net = CoordNet(grid=ck.get("grid", GRID)).to(dev)
-        self.net.encoder.load_state_dict(ck["encoder"])
-        self.net.head.load_state_dict(ck["head"])
-        self.net.eval()
+    def __init__(self, net, ck: dict, dev: str):
+        self.net = net
         self.size = tuple(ck["input_size"])
-        self.grid = ck.get("grid", GRID)
+        self.grid = net.grid
         self.trained_on = ck.get("trained_on", [])
         self.dev = dev
 
@@ -250,9 +247,8 @@ class OldModel:
 class PatchModel:
     kind = "patch"
 
-    def __init__(self, path: Path, dev: str):
-        self.net = load_patchnet(path, dev)
-        ck = torch.load(path, map_location="cpu", weights_only=False)
+    def __init__(self, net, ck: dict, dev: str):
+        self.net = net
         self.trained_on = ck.get("trained_on", [])
         self.h0, _ = load_projection()
         self.dev = dev
@@ -266,8 +262,8 @@ class PatchModel:
 
 
 def load_any(path: Path, dev: str):
-    ck = torch.load(path, map_location="cpu", weights_only=False)
-    return (PatchModel if ck.get("kind") == "patch" else OldModel)(path, dev)
+    net, ck = load_checkpoint(path, dev)
+    return (PatchModel if ck.get("kind") == "patch" else OldModel)(net, ck, dev)
 
 
 def metrics(pred, gt, patches=None, threshold=None) -> dict:

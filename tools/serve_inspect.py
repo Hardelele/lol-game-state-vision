@@ -118,8 +118,9 @@ def ckpt_of(run: str) -> str:
 @lru_cache(maxsize=256)
 def net_stages(run: str, vid: str, idx: int) -> list[dict]:
     """Этапы сети с формами и сводкой по каналам для конкретного кадра."""
-    model, _ = act.load_model(ckpt_of(run))
-    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+    ck = ckpt_of(run)
+    model, _ = act.load_model(ck)
+    a = act.activations(ck, str(scene_file(vid, idx)))
     out = []
     prev = None
     for st in act.stage_plan(model):

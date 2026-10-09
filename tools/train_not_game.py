@@ -29,7 +29,7 @@
 цифры не входят и видны только в разбивке по подклассам.
 
 Итог — новый чекпоинт: веса исходной модели без изменений плюс поле
-frame_head (load_patchnet подхватывает его сам, старый код его не читает).
+frame_head (load_checkpoint подхватывает его сам, старый код его не читает).
 
 Пример:
     python tools/train_not_game.py runs/patches/cnn-split16/model.pt \
@@ -53,7 +53,8 @@ import torch.nn.functional as F
 from paths import COORDS_DATA, RUNS, DEFAULT_LAYOUT
 from runlog import tee_stdout
 from mask_frames import crop_box
-from patch_model import (load_patchnet, load_projection, scene_from_box,
+from checkpoints import load_checkpoint
+from patch_model import (load_projection, scene_from_box,
                          infer_images, FrameHead, FRAME_SCALARS)
 from build_not_game import NOT_GAME_DATA, NOT_GAME_LABELS, load_labels, label_at
 
@@ -288,9 +289,8 @@ def main() -> None:
 def run(args) -> None:
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     t_start = time.perf_counter()
-    model = load_patchnet(args.model, dev)
+    model, base = load_checkpoint(args.model, dev, "patch")
     model.frame_dim = model.head.embed.out_channels + len(FRAME_SCALARS)
-    base = torch.load(args.model, map_location="cpu", weights_only=False)
     split = json.loads(args.split.read_text(encoding="utf-8"))
     coords_train = split.get("coords_train") or base.get("trained_on", [])
     coords_test = split["coords_test"]

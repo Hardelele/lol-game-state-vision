@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import io
 from functools import lru_cache
-from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
 from torch import nn
 
-from coord_model import CoordNet, GRID
+from checkpoints import load_checkpoint
+from coord_model import CoordNet
 
 # Тёплая шкала: тёмное — слабый отклик, светлое — сильный. Серая шкала хуже
 # читается на мелких картах признаков, а радуга искажает порядок величин.
@@ -60,11 +60,7 @@ def png(img: Image.Image) -> bytes:
 
 @lru_cache(maxsize=4)
 def load_model(ckpt: str):
-    ck = torch.load(ckpt, map_location="cpu", weights_only=False)
-    m = CoordNet(grid=ck.get("grid", GRID))
-    m.encoder.load_state_dict(ck["encoder"])
-    m.head.load_state_dict(ck["head"])
-    m.eval()
+    m, ck = load_checkpoint(ckpt, kind="coordnet")
     return m, tuple(ck["input_size"])
 
 

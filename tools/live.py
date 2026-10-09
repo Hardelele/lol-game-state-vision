@@ -52,13 +52,13 @@ import torch
 from PIL import Image
 
 from paths import DEFAULT_LAYOUT, RUNS
-from activations import load_model
+from checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
 from build_coords import STORE_W, probe_url, frames as frame_stream
 from coord_model import expected_point, peak_point, spread
 from geometry import MAP_UNITS
 from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box
-from patch_infer import PatchInfer, is_patch_checkpoint
+from patch_infer import PatchInfer
 
 MINI_STORE = 256
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
@@ -78,12 +78,11 @@ class CoordInfer:
 
     kind = "coordnet"
 
-    def __init__(self, path: Path, device: str):
-        model, self.size = load_model(str(path))
-        self.net = model.to(device)
+    def __init__(self, net, ck: dict, device: str):
+        self.net = net
+        self.size = tuple(ck["input_size"])
         self.device = device
-        self.grid = model.grid
-        ck = torch.load(path, map_location="cpu", weights_only=False)
+        self.grid = net.grid
         self.trained_on = ck.get("trained_on", [])
         self.label = "CoordNet"
 
@@ -118,23 +117,11 @@ def run_checkpoint(run: str) -> Path:
     return ck
 
 
-def _kind_of(ck: dict) -> dict | None:
-    if is_patch_checkpoint(ck):
-        return {"kind": "patch", "label": f"патч-{ck.get('encoder', '?')}"}
-    # У классификатора сцены (runs/scene) те же ключи, но есть «classes».
-    if ("encoder" in ck and "head" in ck and "input_size" in ck
-            and "classes" not in ck):
-        return {"kind": "coordnet", "label": "CoordNet"}
-    return None
-
-
 def load_runner(path: Path, device: str):
     """Модель для потока по типу чекпоинта: патчевая или CoordNet."""
-    ck = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
-    info = _kind_of(ck)
-    if info is None:
-        raise ValueError(f"неизвестный тип чекпоинта: {path.name}")
-    return PatchInfer(path, device) if info["kind"] == "patch" else CoordInfer(path, device)
+    net, ck = load_checkpoint(path, device)
+    runner = PatchInfer if checkpoint_kind(ck) == "patch" else CoordInfer
+    return runner(net, ck, device)
 
 
 _kinds: dict[str, tuple[float, dict]] = {}
@@ -153,13 +140,16 @@ def models() -> list[dict]:
         hit = _kinds.get(rid)
         if hit is None or hit[0] != mt:
             try:
-                ck = torch.load(p, map_location="cpu", weights_only=False, mmap=True)
+                ck = read_checkpoint(p, mmap=True)
             except Exception:                                 # noqa: BLE001
                 continue
-            info = _kind_of(ck)
-            if info is None:
+            kind = checkpoint_kind(ck)
+            if kind is None:
                 continue
-            info["trained_on"] = list(ck.get("trained_on", []))
+            info = {"kind": kind,
+                    "label": (f"патч-{ck.get('encoder', '?')}" if kind == "patch"
+                              else "CoordNet"),
+                    "trained_on": list(ck.get("trained_on", []))}
             hit = _kinds[rid] = (mt, info)
         out.append({"id": rid, **hit[1], "default": rid == DEFAULT_RUN})
     return out

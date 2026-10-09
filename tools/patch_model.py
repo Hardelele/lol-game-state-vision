@@ -335,7 +335,8 @@ class PatchNet(nn.Module):
 
     def state(self) -> dict:
         # Веса FrameHead — отдельным полем, а не в "state": чекпоинт с
-        # головой кадра грузится и старым load_patchnet (поле он не читает).
+        # головой кадра грузится и старым кодом (поле он не читает). Читает
+        # чекпоинт checkpoints.load_checkpoint.
         sd = {k: v for k, v in self.state_dict().items()
               if not k.startswith("encoder.vit.") and not k.startswith("frame.")}
         out = {"kind": "patch", "encoder": self.kind, "state": sd,
@@ -348,21 +349,6 @@ class PatchNet(nn.Module):
                 "threshold": float(self.frame_threshold),
                 "features": list(FRAME_SCALARS)}
         return out
-
-
-def load_patchnet(path: Path, dev: str) -> PatchNet:
-    ck = torch.load(path, map_location="cpu", weights_only=False)
-    m = PatchNet(ck["encoder"], ck.get("dim", 128))
-    missing, unexpected = m.load_state_dict(ck["state"], strict=False)
-    bad = [k for k in missing if not k.startswith("encoder.vit.")]
-    if bad or unexpected:
-        raise RuntimeError(f"чекпоинт не подходит: {bad[:5]} {unexpected[:5]}")
-    fh = ck.get("frame_head")
-    if fh:
-        m.frame = FrameHead(fh["cin"], fh.get("hidden", 64))
-        m.frame.load_state_dict(fh["state"])
-        m.frame_threshold = float(fh.get("threshold", 0.5))
-    return m.to(dev).eval()
 
 
 # ---------------------------------------------------------------- цели и ответ

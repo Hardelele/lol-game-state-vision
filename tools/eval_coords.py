@@ -28,18 +28,10 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from paths import COORDS_DATA
-from coord_model import CoordNet, GRID, expected_point, peak_point, spread
+from checkpoints import load_checkpoint
+from coord_model import GRID, expected_point, peak_point, spread
 from geometry import MAP_UNITS
 from train_coords import Scenes, load_rows
-
-
-def load_model(path: Path, dev: str):
-    ck = torch.load(path, map_location=dev, weights_only=False)
-    m = CoordNet(grid=ck.get("grid", GRID)).to(dev)
-    m.encoder.load_state_dict(ck["encoder"])
-    m.head.load_state_dict(ck["head"])
-    m.eval()
-    return m, ck
 
 
 @torch.no_grad()
@@ -68,7 +60,7 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model, ck = load_model(args.checkpoint, dev)
+    model, ck = load_checkpoint(args.checkpoint, dev, "coordnet")
     size = tuple(ck["input_size"])
     out_dir = args.out or args.checkpoint.parent
     trained = set(ck.get("trained_on", []))

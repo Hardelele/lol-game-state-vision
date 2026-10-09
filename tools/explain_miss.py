@@ -34,21 +34,13 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from coord_model import CoordNet, GRID, grid_centers
-from paths import DATASET, COORDS_DATA, RUNS, INSPECT
+from checkpoints import load_checkpoint
+from coord_model import grid_centers
+from paths import COORDS_DATA, RUNS, INSPECT
 from inspect_pages import b64
 from geometry import MAP_UNITS
 NEAR = 0.035          # «рядом» по карте, в долях карты
 POOL = 48             # сколько кадров берём в каждое облако
-
-
-def load_model(run: str, dev: str):
-    ck = torch.load(RUNS / run / "model.pt", map_location=dev, weights_only=False)
-    m = CoordNet(grid=ck.get("grid", GRID)).to(dev)
-    m.encoder.load_state_dict(ck["encoder"])
-    m.head.load_state_dict(ck["head"])
-    m.eval()
-    return m, tuple(ck["input_size"]), ck.get("trained_on", [])
 
 
 def coords_rows(vid: str) -> list[dict]:
@@ -125,7 +117,8 @@ def stage_keys(model) -> list[str]:
 
 def build(run: str, vid: str, idx: int, cells=(8, 5)) -> str:
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model, size, trained = load_model(run, dev)
+    model, ck = load_checkpoint(RUNS / run / "model.pt", dev, "coordnet")
+    size, trained = tuple(ck["input_size"]), ck.get("trained_on", [])
     grid = model.grid
 
     rows = {r["idx"]: r for r in coords_rows(vid)}

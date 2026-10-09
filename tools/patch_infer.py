@@ -27,12 +27,8 @@ import torch
 
 import torch.nn.functional as F
 
-from patch_model import (MAP_UNITS, UNITS_PER_PX, load_patchnet, load_projection, rectify,
+from patch_model import (MAP_UNITS, UNITS_PER_PX, load_projection, rectify,
                          canvases_post, to_world)
-
-
-def is_patch_checkpoint(ck: dict) -> bool:
-    return ck.get("kind") == "patch"
 
 
 class PatchInfer:
@@ -52,11 +48,11 @@ class PatchInfer:
 
     kind = "patch"
 
-    def __init__(self, path: Path, device: str, amp: bool = False,
+    def __init__(self, net, ck: dict, device: str, amp: bool = False,
                  graphs: bool = True):
+        """`net` и `ck` — от checkpoints.load_checkpoint."""
         self.device = device
-        self.net = load_patchnet(Path(path), device)
-        ck = torch.load(path, map_location="cpu", weights_only=False)
+        self.net = net
         self.units = float(ck.get("units_per_px", UNITS_PER_PX))
         self.trained_on = ck.get("trained_on", [])
         self.label = f"патч-{self.net.kind}"
@@ -279,6 +275,7 @@ def _main() -> None:
     import csv
     from PIL import Image
     from paths import COORDS_DATA
+    from checkpoints import load_checkpoint
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("model", type=Path)
@@ -286,7 +283,7 @@ def _main() -> None:
     ap.add_argument("--n", type=int, default=50)
     args = ap.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    m = PatchInfer(args.model, dev)
+    m = PatchInfer(*load_checkpoint(args.model, dev, "patch"), dev)
     rows = [r for r in csv.DictReader((COORDS_DATA / f"{args.video}.csv").open(encoding="utf-8"))
             if float(r["quality"]) >= 0.4][:args.n]
     err = []

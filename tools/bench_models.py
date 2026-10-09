@@ -34,8 +34,9 @@ import torch
 
 from paths import CHECKS, DATASET_VIDEOS, DEFAULT_LAYOUT, VIDEOS
 from mask_frames import crop_box, mask_boxes
-from coord_model import CoordNet, GRID, expected_point
-from patch_model import (load_patchnet, load_projection, rectify, scene_from_box,
+from checkpoints import load_checkpoint
+from coord_model import GRID, expected_point
+from patch_model import (load_projection, rectify, scene_from_box,
                          decode_points, aggregate, aggregate_batch, cell_offsets,
                          count_params, UNITS_PER_PX)
 
@@ -56,14 +57,6 @@ def timeit(fn, n: int, warm: int, cuda: bool) -> float:
             torch.cuda.synchronize()
         ts.append(time.perf_counter() - t)
     return float(np.median(ts) * 1000)
-
-
-def load_coordnet(path: Path, dev: str):
-    ck = torch.load(path, map_location="cpu", weights_only=False)
-    m = CoordNet(grid=ck.get("grid", GRID))
-    m.encoder.load_state_dict(ck["encoder"])
-    m.head.load_state_dict(ck["head"])
-    return m.to(dev).eval(), tuple(ck["input_size"])
 
 
 def net_fn(model, kind: str, x: torch.Tensor, amp: bool):
@@ -220,10 +213,10 @@ def main() -> None:
     h0, store = load_projection()
 
     models = []
-    cn, cn_size = load_coordnet(args.coordnet, dev)
-    models.append(("CoordNet", cn, "coordnet", cn_size))
+    cn, ck = load_checkpoint(args.coordnet, dev, "coordnet")
+    models.append(("CoordNet", cn, "coordnet", tuple(ck["input_size"])))
     for p in args.patch:
-        m = load_patchnet(p, dev)
+        m, _ = load_checkpoint(p, dev, "patch")
         cv, _, _ = rectify(np.zeros((store[1], store[0], 3), np.uint8), np.eye(3), h0,
                            UNITS_PER_PX, m.stride)
         nm = "патч-CNN" if m.kind == "cnn" else f"{m.kind}+голова"
