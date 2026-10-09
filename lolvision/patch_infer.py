@@ -20,14 +20,13 @@ probe_hud, поэтому ответ live на тех же кадрах совп
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 
 import torch.nn.functional as F
 
-from lolvision.patch_model import (MAP_UNITS, UNITS_PER_PX, load_projection, rectify,
+from lolvision.patch_model import (UNITS_PER_PX, load_projection, rectify,
                          canvases_post, to_world)
 
 
@@ -268,33 +267,3 @@ def vote_stats(votes: torch.Tensor, w: torch.Tensor, cam: torch.Tensor,
     small = torch.where((tot > 0) & torch.isfinite(cam).all(), small,
                         torch.full_like(small, float("nan")))
     return heat.reshape(grid, grid), small
-
-
-def _main() -> None:
-    import argparse
-    import csv
-    from PIL import Image
-    from lolvision.paths import COORDS_DATA
-    from lolvision.checkpoints import load_checkpoint
-
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("model", type=Path)
-    ap.add_argument("video")
-    ap.add_argument("--n", type=int, default=50)
-    args = ap.parse_args()
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
-    m = PatchInfer(*load_checkpoint(args.model, dev, "patch"), dev)
-    rows = [r for r in csv.DictReader((COORDS_DATA / f"{args.video}.csv").open(encoding="utf-8"))
-            if float(r["quality"]) >= 0.4][:args.n]
-    err = []
-    for r in rows:
-        with Image.open(COORDS_DATA / r["scene"]) as s:
-            a = np.asarray(s.convert("RGB"))
-        out, _, ms = m.predict(m.prepare(a))
-        err.append(np.hypot(out["px"] - float(r["cx"]), out["py"] - float(r["cy"])) * MAP_UNITS)
-    print(f"{m.describe(m.store)}: {len(err)} кадров, медиана {np.median(err):.0f} ед.,"
-          f" последний кадр {ms}")
-
-
-if __name__ == "__main__":
-    _main()

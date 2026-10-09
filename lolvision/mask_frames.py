@@ -10,10 +10,7 @@
 
 from __future__ import annotations
 
-import argparse
-import json
 import math
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -107,23 +104,3 @@ def crop_box(size: tuple[int, int], layout: dict, mode: str = "dense"
     if mode == "none":
         return (0, 0, size[0], size[1])
     raise ValueError(f"неизвестный режим обрезки {mode!r}")
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("layout", type=Path)
-    ap.add_argument("frames", type=Path, nargs="+")
-    ap.add_argument("--out", type=Path, required=True)
-    args = ap.parse_args()
-
-    layout = json.loads(args.layout.read_text(encoding="utf-8"))
-    args.out.mkdir(parents=True, exist_ok=True)
-    for frame in args.frames:
-        with Image.open(frame) as img:
-            # PNG сохраняет чёрные области точно, без артефактов JPEG на границах.
-            apply_mask(img, layout).save(args.out / f"{frame.stem}.png")
-    print(f"{len(args.frames)} кадров → {args.out}")
-
-
-if __name__ == "__main__":
-    main()

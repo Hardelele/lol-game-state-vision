@@ -24,7 +24,6 @@
 
 from __future__ import annotations
 
-import argparse
 import csv
 import html
 from pathlib import Path
@@ -36,7 +35,7 @@ from PIL import Image
 
 from lolvision.checkpoints import load_checkpoint
 from lolvision.coord_model import grid_centers
-from lolvision.paths import COORDS_DATA, RUNS, INSPECT
+from lolvision.paths import COORDS_DATA, RUNS
 from lolstream.inspect_pages import b64
 from lolvision.geometry import MAP_UNITS
 NEAR = 0.035          # «рядом» по карте, в долях карты
@@ -359,23 +358,3 @@ TEMPLATE = """<!doctype html>
 модели в их отборе не участвует.</div>
 </body></html>
 """
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("run")
-    ap.add_argument("video")
-    ap.add_argument("idx", type=int)
-    ap.add_argument("--out", type=Path, default=None)
-    args = ap.parse_args()
-
-    html_doc = build(args.run, args.video, args.idx)
-    out = args.out or (INSPECT /
-                       f"miss-{args.video}-{args.idx}.html")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(html_doc, encoding="utf-8")
-    print(f"отчёт ({out.stat().st_size / 1e6:.1f} МБ) → {out}")
-
-
-if __name__ == "__main__":
-    main()
