@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
 import json
 import mimetypes
 import re
@@ -29,11 +28,11 @@ from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
 
 import numpy as np
-from PIL import Image
 
 import activations as act
 import channels
 import explain_miss
+import inspect_pages
 import live
 import video_side
 from geometry import MAP_UNITS, apply_h, load_projection
@@ -92,18 +91,7 @@ def heatmaps_of(run: str, vid: str):
 @lru_cache(maxsize=4096)
 def heat_png(run: str, vid: str, idx: int, size: int = 320) -> bytes:
     hm, pos = heatmaps_of(run, vid)
-    h = hm[pos[idx]]
-    h = h / max(float(h.max()), 1e-9)
-    big = np.asarray(Image.fromarray((h * 255).astype(np.uint8)).resize(
-        (size, size), Image.BILINEAR), dtype=np.float32) / 255.0
-    rgba = np.zeros((size, size, 4), np.uint8)
-    rgba[..., 0] = np.clip(255 * big ** 0.6, 0, 255)
-    rgba[..., 1] = np.clip(90 * big ** 1.6, 0, 255)
-    rgba[..., 2] = np.clip(40 * big ** 2.0, 0, 255)
-    rgba[..., 3] = np.clip(225 * big ** 0.8, 0, 255)
-    buf = io.BytesIO()
-    Image.fromarray(rgba, "RGBA").save(buf, "PNG")
-    return buf.getvalue()
+    return inspect_pages.heat_png(hm[pos[idx]], size)
 
 
 def scene_file(vid: str, idx: int) -> Path:
@@ -365,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
                 h = ses.heat.get(int(m.group(2))) if ses else None
                 if h is None:
                     return self.fail(404, "кадра нет в сеансе")
-                return self._send(live.heat_png(h), "image/png", cache=3600)
+                return self._send(inspect_pages.heat_png(h), "image/png", cache=3600)
 
             m = re.fullmatch(r"/img/(scene|mini)/([\w-]+)/(\d+)\.jpg", p)
             if m:

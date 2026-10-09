@@ -3,6 +3,9 @@
 Страницы в одной папке знают друг о друге: каждая новая сборка обновляет
 список `pages.json`, перестраивает переключатель во всех страницах и главную
 `index.html`. Используется `inspect_coords.py` и `inspect_patches.py`.
+
+Здесь же палитра тепловой карты ответа: одна на статические страницы,
+сервер смотрелки и live.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import json
 import re
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 NAV_OPEN, NAV_CLOSE = "<!--NAV-->", "<!--/NAV-->"
@@ -29,6 +33,30 @@ def b64(img: Image.Image, fmt: str = "JPEG", quality: int = 82) -> str:
         img.save(buf, fmt)
     return (f"data:image/{fmt.lower()};base64,"
             + base64.b64encode(buf.getvalue()).decode("ascii"))
+
+
+def heat_rgba(h: np.ndarray, size: int) -> Image.Image:
+    """Тепловая карта по карте → полупрозрачный слой size×size поверх карты.
+
+    Сетка любая: у CoordNet это softmax 32×32, у патчевой модели —
+    гистограмма голосов 64×64; рисунок всё равно растягивается на карту.
+    """
+    h = h.astype(np.float32)
+    h = h / max(float(h.max()), 1e-9)
+    big = np.asarray(Image.fromarray((h * 255).astype(np.uint8)).resize(
+        (size, size), Image.BILINEAR), dtype=np.float32) / 255.0
+    rgba = np.zeros((size, size, 4), np.uint8)
+    rgba[..., 0] = np.clip(255 * big ** 0.6, 0, 255)
+    rgba[..., 1] = np.clip(90 * big ** 1.6, 0, 255)
+    rgba[..., 2] = np.clip(40 * big ** 2.0, 0, 255)
+    rgba[..., 3] = np.clip(225 * big ** 0.8, 0, 255)
+    return Image.fromarray(rgba, "RGBA")
+
+
+def heat_png(h: np.ndarray, size: int = 320) -> bytes:
+    buf = io.BytesIO()
+    heat_rgba(h, size).save(buf, "PNG")
+    return buf.getvalue()
 
 
 def nav_html(pages: list[dict], current: str) -> str:

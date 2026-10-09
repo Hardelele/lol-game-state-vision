@@ -391,26 +391,6 @@ def _jpeg(img: Image.Image, quality: int) -> bytes:
     return buf.getvalue()
 
 
-def heat_png(h: np.ndarray, size: int = 320) -> bytes:
-    """Тепловая карта в ту же палитру, что и в обычной смотрелке.
-
-    Сетка любая: у CoordNet это softmax 32×32, у патчевой модели —
-    гистограмма голосов 64×64; рисунок всё равно растягивается на карту.
-    """
-    h = h.astype(np.float32)
-    h = h / max(float(h.max()), 1e-9)
-    big = np.asarray(Image.fromarray((h * 255).astype(np.uint8)).resize(
-        (size, size), Image.BILINEAR), dtype=np.float32) / 255.0
-    rgba = np.zeros((size, size, 4), np.uint8)
-    rgba[..., 0] = np.clip(255 * big ** 0.6, 0, 255)
-    rgba[..., 1] = np.clip(90 * big ** 1.6, 0, 255)
-    rgba[..., 2] = np.clip(40 * big ** 2.0, 0, 255)
-    rgba[..., 3] = np.clip(225 * big ** 0.8, 0, 255)
-    buf = io.BytesIO()
-    Image.fromarray(rgba, "RGBA").save(buf, "PNG")
-    return buf.getvalue()
-
-
 # ---------- реестр сеансов ----------
 
 _sessions: dict[str, Session] = {}

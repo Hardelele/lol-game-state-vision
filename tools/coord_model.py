@@ -116,8 +116,9 @@ def spread(logits: torch.Tensor, grid: int) -> torch.Tensor:
     return var.sqrt()
 
 
-def count_params(m: nn.Module) -> int:
-    return sum(p.numel() for p in m.parameters())
+def count_params(m: nn.Module, trainable: bool = False) -> int:
+    return sum(p.numel() for p in m.parameters()
+               if p.requires_grad or not trainable)
 
 
 if __name__ == "__main__":

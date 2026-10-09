@@ -35,7 +35,8 @@ from PIL import Image
 
 from paths import COORDS_DATA, COORDS_RUNS, INSPECT, PROJECTION
 from geometry import MAP_UNITS, apply_h, load_projection
-from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
+from inspect_pages import (NAV_OPEN, NAV_CLOSE, b64, heat_rgba, sync_nav, update_manifest,
+                           write_index)
 
 # Видимая область берётся из калиброванной проекции (tools/calibrate_projection.py):
 # камера наклонена, поэтому на карте она покрывает трапецию, а не прямоугольник,
@@ -63,15 +64,7 @@ def cell_polys(Hm, size, cols: int, rows: int):
 
 def heat_png(heat: np.ndarray) -> str:
     """Распределение ответа отдельным полупрозрачным слоем поверх карты."""
-    h = heat / max(heat.max(), 1e-9)
-    big = np.asarray(Image.fromarray((h * 255).astype(np.uint8)).resize(
-        (MAP_W, MAP_W), Image.BILINEAR), dtype=np.float32) / 255.0
-    rgba = np.zeros((MAP_W, MAP_W, 4), np.uint8)
-    rgba[..., 0] = np.clip(255 * big ** 0.6, 0, 255)
-    rgba[..., 1] = np.clip(90 * big ** 1.6, 0, 255)
-    rgba[..., 2] = np.clip(40 * big ** 2.0, 0, 255)
-    rgba[..., 3] = np.clip(225 * big ** 0.8, 0, 255)
-    return b64(Image.fromarray(rgba, "RGBA"), "PNG")
+    return b64(heat_rgba(heat, MAP_W), "PNG")
 
 
 def cell_rects(x0, y0, w, h, cols, rows, cls, with_label=False, label_px=9):

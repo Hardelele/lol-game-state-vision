@@ -25,10 +25,8 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import csv
 import html
-import io
 from pathlib import Path
 
 import numpy as np
@@ -38,15 +36,10 @@ from PIL import Image
 
 from coord_model import CoordNet, GRID, grid_centers
 from paths import DATASET, COORDS_DATA, RUNS, INSPECT
+from inspect_pages import b64
 from geometry import MAP_UNITS
 NEAR = 0.035          # «рядом» по карте, в долях карты
 POOL = 48             # сколько кадров берём в каждое облако
-
-
-def b64(img: Image.Image, fmt="JPEG", q=84) -> str:
-    buf = io.BytesIO()
-    img.save(buf, fmt, quality=q) if fmt == "JPEG" else img.save(buf, fmt)
-    return f"data:image/{fmt.lower()};base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def load_model(run: str, dev: str):
@@ -208,15 +201,17 @@ def build(run: str, vid: str, idx: int, cells=(8, 5)) -> str:
 def render(run, vid, idx, me, true, pred, err, pmax, scene_path, pool_t, pool_p,
            steps, flip, base_p, occ, worst, cells, grid, heat) -> str:
     with Image.open(scene_path) as im:
-        scene = b64(im.convert("RGB").resize((520, round(520 * im.height / im.width))))
+        scene = b64(im.convert("RGB").resize((520, round(520 * im.height / im.width))),
+                    quality=84)
     with Image.open(COORDS_DATA / me["mini"]) as im:
-        mini = b64(im.convert("RGB").resize((300, 300)))
+        mini = b64(im.convert("RGB").resize((300, 300)), quality=84)
 
     def strip(pool, n=6):
         out = []
         for r in pool[:n]:
             with Image.open(COORDS_DATA / r["scene"]) as im:
-                out.append(f'<figure><img src="{b64(im.convert("RGB").resize((190, 98)))}">'
+                src = b64(im.convert("RGB").resize((190, 98)), quality=84)
+                out.append(f'<figure><img src="{src}">'
                            f'<figcaption>{html.escape(r["video_id"][:7])} '
                            f'{float(r["t_sec"]):.0f}с<br>{float(r["cx"]):.3f}, '
                            f'{float(r["cy"]):.3f}</figcaption></figure>')

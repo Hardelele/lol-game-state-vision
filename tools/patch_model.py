@@ -56,6 +56,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from coord_model import block, count_params     # блок свёрток с GroupNorm, как у CoordNet
 from geometry import MAP_UNITS, apply_h, load_projection
 
 UNITS_PER_PX = 6.0     # вид сверху: столько игровых единиц на пиксель входа
@@ -138,16 +139,6 @@ def cell_offsets(h: int, w: int, stride: float, q0: torch.Tensor,
 
 
 # ---------------------------------------------------------------- модель
-
-def block(cin: int, cout: int, stride: int) -> nn.Sequential:
-    # GroupNorm, как в coord_model: инференс по одному кадру = обучение.
-    return nn.Sequential(
-        nn.Conv2d(cin, cout, 3, stride, 1, bias=False),
-        nn.GroupNorm(8, cout), nn.ReLU(inplace=True),
-        nn.Conv2d(cout, cout, 3, 1, 1, bias=False),
-        nn.GroupNorm(8, cout), nn.ReLU(inplace=True),
-    )
-
 
 class Dilated(nn.Module):
     """Остаточный блок с разрежённой свёрткой: расширяет обзор патча без
@@ -574,11 +565,6 @@ def infer_images(model: PatchNet, imgs, mats, opens, h0: np.ndarray, dev: str,
                 "frame_feat": feat[j],
                 "game": None if game is None else float(game[j])})
     return np.concatenate(cams), np.concatenate(agree), patches
-
-
-def count_params(m: nn.Module, trainable: bool = False) -> int:
-    return sum(p.numel() for p in m.parameters()
-               if p.requires_grad or not trainable)
 
 
 if __name__ == "__main__":
