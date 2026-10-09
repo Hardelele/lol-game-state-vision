@@ -34,6 +34,8 @@ import cv2
 import numpy as np
 from scipy.optimize import least_squares
 
+from paths import COORDS_DATA, PROJECTION
+
 PATCH = 96
 
 
@@ -166,10 +168,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--fit", nargs="+", required=True)
     ap.add_argument("--check", nargs="*", default=[])
-    ap.add_argument("--root", type=Path, default=Path("data/coords"))
+    ap.add_argument("--root", type=Path, default=COORDS_DATA)
     ap.add_argument("--min-quality", type=float, default=0.5)
     ap.add_argument("--max-pairs", type=int, default=900)
-    ap.add_argument("--out", type=Path, default=Path("dataset/layouts/projection.json"))
+    ap.add_argument("--out", type=Path, default=PROJECTION)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 

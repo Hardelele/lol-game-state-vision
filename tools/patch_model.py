@@ -57,12 +57,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from paths import ROOT
+from paths import PROJECTION
 
 MAP_UNITS = 14800
 UNITS_PER_PX = 6.0     # вид сверху: столько игровых единиц на пиксель входа
 MAP_GRID = 64          # сетка карты у головы патча: ячейка ≈ 231 ед.
-PROJECTION = ROOT / "dataset" / "layouts" / "projection.json"
 
 
 # ---------------------------------------------------------------- геометрия

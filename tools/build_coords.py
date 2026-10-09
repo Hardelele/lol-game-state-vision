@@ -35,12 +35,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from paths import COORDS_DATA
-from paths import ROOT
+from paths import COORDS_DATA, VIDEOS
 from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, white_mask, find_box, estimate_box
 
-ROOT_VIDEOS = ROOT / "data" / "videos"
 STORE_W = 720   # ширина хранимой сцены; вход модели делается из неё
 MINI_STORE = 256
 
@@ -167,7 +165,7 @@ def main() -> None:
         w, h, dur, vid, info = probe_url(url)
         source, from_url = url, True
         # Описание пригодится дальше (роль, сторона), сохраняем рядом.
-        meta = ROOT_VIDEOS / f"{vid}.info.json"
+        meta = VIDEOS / f"{vid}.info.json"
         meta.parent.mkdir(parents=True, exist_ok=True)
         if not meta.exists():
             meta.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")

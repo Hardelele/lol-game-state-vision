@@ -50,7 +50,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from paths import COORDS_DATA, RUNS, DATASET
+from paths import COORDS_DATA, RUNS, DEFAULT_LAYOUT
 from runlog import tee_stdout
 from mask_frames import crop_box
 from patch_model import (load_patchnet, load_projection, scene_from_box,
@@ -58,7 +58,6 @@ from patch_model import (load_patchnet, load_projection, scene_from_box,
 from build_not_game import NOT_GAME_DATA, NOT_GAME_LABELS, load_labels, label_at
 
 SPLIT = NOT_GAME_LABELS / "split.json"
-LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 CACHE = RUNS / "not_game" / "cache"
 VARIANTS = ("scene", "nomask", "piece")
 FULL = (1920, 1080)
@@ -299,7 +298,7 @@ def run(args) -> None:
     seen = set(coords_test) & set(base.get("trained_on", []))
     if seen:
         raise SystemExit(f"отложенные ролики data/coords видела исходная модель: {seen}")
-    layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
+    layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
     h0, store = load_projection()
     inputs = Inputs(layout, store)
     tag = f"{args.model.parent.name}"

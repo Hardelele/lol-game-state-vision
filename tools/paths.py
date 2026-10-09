@@ -17,15 +17,23 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / "tools"
 
 DATASET = ROOT / "dataset"
 DATASET_VIDEOS = DATASET / "videos"
+LAYOUTS = DATASET / "layouts"          # раскладки HUD
+DEFAULT_LAYOUT = LAYOUTS / "spectator-volibear-challenger.json"   # раскладка наблюдателя
+PROJECTION = LAYOUTS / "projection.json"   # calibrate_projection.py: сцена → карта
+SOURCES = DATASET / "sources"          # каталоги каналов
 
 DATA = ROOT / "data"
 COORDS_DATA = DATA / "coords"          # build_coords.py: кадры сцены, миникарты, CSV
+VIDEOS = DATA / "videos"               # ролики и их .info.json от yt-dlp
+CHANNELS = DATA / "channels"           # channels.py: кеш списков роликов каналов
 
 RUNS = ROOT / "runs"
 COORDS_RUNS = RUNS / "coords"          # модель координат камеры
+INGEST_LOGS = RUNS / "ingest"          # логи сборки датасета из смотрелки
 INSPECT = RUNS / "inspect"             # HTML-смотрелки, знают друг о друге
 MINIMAP = RUNS / "minimap"             # координаты камеры по кадрам датасета
 CHECKS = RUNS / "checks"               # разовые визуальные проверки

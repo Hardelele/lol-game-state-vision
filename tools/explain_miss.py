@@ -37,10 +37,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from coord_model import CoordNet, GRID, grid_centers
-from paths import DATASET, ROOT
-
-DATA = ROOT / "data" / "coords"
-RUNS = ROOT / "runs"
+from paths import DATASET, COORDS_DATA, RUNS, INSPECT
 MAP_UNITS = 14800
 NEAR = 0.035          # «рядом» по карте, в долях карты
 POOL = 48             # сколько кадров берём в каждое облако
@@ -62,7 +59,7 @@ def load_model(run: str, dev: str):
 
 
 def coords_rows(vid: str) -> list[dict]:
-    return list(csv.DictReader((DATA / f"{vid}.csv").open(encoding="utf-8")))
+    return list(csv.DictReader((COORDS_DATA / f"{vid}.csv").open(encoding="utf-8")))
 
 
 def load_batch(paths: list[Path], size, dev) -> torch.Tensor:
@@ -141,7 +138,7 @@ def build(run: str, vid: str, idx: int, cells=(8, 5)) -> str:
     rows = {r["idx"]: r for r in coords_rows(vid)}
     me = rows[str(idx)] if str(idx) in rows else rows[f"{idx}"]
     true = (float(me["cx"]), float(me["cy"]))
-    scene_path = DATA / me["scene"]
+    scene_path = COORDS_DATA / me["scene"]
 
     x = load_batch([scene_path], size, dev)
     with torch.no_grad():
@@ -154,14 +151,14 @@ def build(run: str, vid: str, idx: int, cells=(8, 5)) -> str:
     # Облака кадров: из обучающих роликов, потому что именно их сеть видела.
     ref_rows = []
     for v in (trained or [vid]):
-        f = DATA / f"{v}.csv"
+        f = COORDS_DATA / f"{v}.csv"
         if f.exists():
             ref_rows += coords_rows(v)
     pool_t = pick_pool(ref_rows, true, POOL, exclude=(vid, idx))
     pool_p = pick_pool(ref_rows, pred, POOL, exclude=(vid, idx))
 
-    xt = load_batch([DATA / r["scene"] for r in pool_t], size, dev)
-    xp = load_batch([DATA / r["scene"] for r in pool_p], size, dev)
+    xt = load_batch([COORDS_DATA / r["scene"] for r in pool_t], size, dev)
+    xp = load_batch([COORDS_DATA / r["scene"] for r in pool_p], size, dev)
     mq, _ = stage_means(model, x)
     mt, _ = stage_means(model, xt)
     mp, _ = stage_means(model, xp)
@@ -212,13 +209,13 @@ def render(run, vid, idx, me, true, pred, err, pmax, scene_path, pool_t, pool_p,
            steps, flip, base_p, occ, worst, cells, grid, heat) -> str:
     with Image.open(scene_path) as im:
         scene = b64(im.convert("RGB").resize((520, round(520 * im.height / im.width))))
-    with Image.open(DATA / me["mini"]) as im:
+    with Image.open(COORDS_DATA / me["mini"]) as im:
         mini = b64(im.convert("RGB").resize((300, 300)))
 
     def strip(pool, n=6):
         out = []
         for r in pool[:n]:
-            with Image.open(DATA / r["scene"]) as im:
+            with Image.open(COORDS_DATA / r["scene"]) as im:
                 out.append(f'<figure><img src="{b64(im.convert("RGB").resize((190, 98)))}">'
                            f'<figcaption>{html.escape(r["video_id"][:7])} '
                            f'{float(r["t_sec"]):.0f}с<br>{float(r["cx"]):.3f}, '
@@ -385,7 +382,7 @@ def main() -> None:
     args = ap.parse_args()
 
     html_doc = build(args.run, args.video, args.idx)
-    out = args.out or (ROOT / "runs" / "inspect" /
+    out = args.out or (INSPECT /
                        f"miss-{args.video}-{args.idx}.html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html_doc, encoding="utf-8")

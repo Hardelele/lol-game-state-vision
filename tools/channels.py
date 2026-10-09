@@ -29,17 +29,13 @@ import threading
 import time
 from pathlib import Path
 
-from paths import ROOT
+from paths import (ROOT, TOOLS, SOURCES, CHANNELS as STORE, COORDS_DATA as COORDS,
+                   VIDEOS, DEFAULT_LAYOUT, INGEST_LOGS)
 
-CATALOGS = (ROOT / "dataset" / "sources" / "champion-replay-channels.json",
-            ROOT / "dataset" / "sources" / "top-player-channels.json")
-STORE = ROOT / "data" / "channels"
+CATALOGS = (SOURCES / "champion-replay-channels.json",
+            SOURCES / "top-player-channels.json")
 CACHE = STORE / "cache"
 CUSTOM = STORE / "custom.json"
-COORDS = ROOT / "data" / "coords"
-VIDEOS = ROOT / "data" / "videos"
-LAYOUT = ROOT / "dataset" / "layouts" / "spectator-volibear-challenger.json"
-INGEST_LOGS = ROOT / "runs" / "ingest"
 
 FRESH = 6 * 3600          # сколько секунд считаем кеш списка годным
 ROLES = ("Top", "Jungle", "Mid", "ADC", "Bot", "Support")
@@ -294,10 +290,10 @@ def ingest(vid: str, fps: float = 1.0) -> dict:
     INGEST_LOGS.mkdir(parents=True, exist_ok=True)
     logfile = INGEST_LOGS / f"{vid}.log"
     fh = logfile.open("w", encoding="utf-8")
-    env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(ROOT / "tools")}
+    env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(TOOLS)}
     proc = subprocess.Popen(
-        ["python", "-u", str(ROOT / "tools" / "build_coords.py"),
-         "--url", vid, "--layout", str(LAYOUT), "--fps", str(fps)],
+        ["python", "-u", str(TOOLS / "build_coords.py"),
+         "--url", vid, "--layout", str(DEFAULT_LAYOUT), "--fps", str(fps)],
         cwd=str(ROOT), stdout=fh, stderr=subprocess.STDOUT,
         env={**os.environ, **env})
     with _jlock:

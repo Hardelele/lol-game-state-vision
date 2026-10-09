@@ -45,7 +45,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
-from paths import COORDS_DATA, RUNS, TRAIN_LOG, DATASET
+from paths import COORDS_DATA, RUNS, TRAIN_LOG, DEFAULT_LAYOUT
 from runlog import tee_stdout
 from mask_frames import crop_box, keep_grid
 from train_coords import load_rows
@@ -53,7 +53,6 @@ from patch_model import (PatchNet, MAP_UNITS, UNITS_PER_PX, load_projection,
                          to_world, footprint, cell_offsets, soft_target_sep,
                          infer_images, count_params, decode_points)
 
-LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 PATCH_RUNS = RUNS / "patches"
 
 
@@ -298,7 +297,7 @@ def run(args) -> None:
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"устройство: {dev}"
           + (f" ({torch.cuda.get_device_name(0)})" if dev == "cuda" else ""))
-    layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
+    layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
     h0, store = load_projection()
     keep = stored_keep(layout, store=store)
     print("обучающие ролики:")

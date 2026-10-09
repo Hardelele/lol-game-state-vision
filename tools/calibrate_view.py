@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from paths import COORDS_DATA
+
 
 def validity_mask(root: Path, rows: list[dict], n: int = 60) -> np.ndarray:
     """Пиксели, которые вообще меняются от кадра к кадру.
@@ -79,7 +81,7 @@ def shift_by_phase(a: np.ndarray, b: np.ndarray,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("videos", nargs="+")
-    ap.add_argument("--root", type=Path, default=Path("data/coords"))
+    ap.add_argument("--root", type=Path, default=COORDS_DATA)
     ap.add_argument("--min-quality", type=float, default=0.6)
     ap.add_argument("--max-step", type=float, default=0.06,
                     help="макс. сдвиг камеры между кадрами в долях карты")

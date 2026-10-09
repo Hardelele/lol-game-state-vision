@@ -51,7 +51,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from paths import ROOT
+from paths import DEFAULT_LAYOUT, RUNS
 from activations import load_model
 from build_coords import probe_url, frames as frame_stream
 from coord_model import expected_point, peak_point, spread
@@ -59,8 +59,6 @@ from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box
 from patch_infer import PatchInfer, is_patch_checkpoint
 
-LAYOUT = ROOT / "dataset" / "layouts" / "spectator-volibear-challenger.json"
-RUNS = ROOT / "runs"
 STORE_W = 720            # как в датасете: кадр показывается, а не хранится
 MINI_STORE = 256
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
@@ -228,7 +226,7 @@ class Session:
             self._fail(f"{type(exc).__name__}: {exc}")
 
     def _work(self) -> None:
-        layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
+        layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
         url = f"https://www.youtube.com/watch?v={self.vid}"
         self.state = "спрашиваю YouTube"
         w, h, dur, _, info = probe_url(url)

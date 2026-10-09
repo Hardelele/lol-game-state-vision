@@ -42,13 +42,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from paths import DATA, DATASET
+from paths import DATA, DATASET, DEFAULT_LAYOUT, VIDEOS
 from mask_frames import crop_box, mask_boxes
 from build_coords import probe_url, frames, have_nvdec, STORE_W
 
 NOT_GAME_DATA = DATA / "not_game"
 NOT_GAME_LABELS = DATASET / "not_game"
-LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 FULL_SIZE = (960, 540)
 FIELDS = ["video_id", "t_sec", "scene", "full"]
 
@@ -99,11 +98,11 @@ def main() -> None:
 
     url = args.url if "://" in args.url else f"https://www.youtube.com/watch?v={args.url}"
     w, h, dur, vid, info = probe_url(url)
-    layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
+    layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
     end = args.end or dur
     print(f"{vid}: {w}x{h}, {dur:.0f} с; беру {args.start:.0f}-{end:.0f} с, "
           f"{args.fps} кадр/с; читаю потоком, на диск видео не пишется")
-    meta = DATA / "videos" / f"{vid}.info.json"
+    meta = VIDEOS / f"{vid}.info.json"
     meta.parent.mkdir(parents=True, exist_ok=True)
     if not meta.exists():
         meta.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")

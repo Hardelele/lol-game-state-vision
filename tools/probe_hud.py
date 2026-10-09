@@ -59,13 +59,12 @@ import numpy as np
 import torch
 from PIL import Image
 
-from paths import COORDS_DATA, CHECKS, DATA, DATASET
+from paths import COORDS_DATA, CHECKS, DEFAULT_LAYOUT, VIDEOS
 from mask_frames import crop_box, mask_boxes
 from coord_model import CoordNet, GRID, expected_point
 from train_coords import MAP_UNITS
 from patch_model import load_patchnet, load_projection, scene_from_box, infer_images
 
-LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 W, H = 1920, 1080
 OPAQUE_NAMES = ("scoreboard_and_objective_icons", "team_and_intro_left",
                 "team_and_intro_right", "bottom_overlays_and_minimap")
@@ -306,7 +305,7 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
+    layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
     var = Variants(layout)
     keys = list(var.names) if args.variants == "all" else args.variants.split(",")
     rows = list(csv.DictReader((COORDS_DATA / f"{args.video}.csv").open(encoding="utf-8")))
@@ -341,7 +340,7 @@ def main() -> None:
     keep = stored_keep(layout, store=var.store)
     saved = False
     n_buf = 0
-    for i, fr in enumerate(frames(DATA / "videos" / f"{args.video}.mp4")):
+    for i, fr in enumerate(frames(VIDEOS / f"{args.video}.mp4")):
         if i not in want:
             continue
         r = want[i]

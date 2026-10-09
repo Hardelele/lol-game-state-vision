@@ -33,6 +33,7 @@ import numpy as np
 import torch
 from PIL import Image
 
+from paths import COORDS_DATA, COORDS_RUNS, INSPECT, PROJECTION
 from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
 
 MAP_UNITS = 14800
@@ -40,7 +41,6 @@ MAP_UNITS = 14800
 # камера наклонена, поэтому на карте она покрывает трапецию, а не прямоугольник,
 # и масштаб меняется примерно на 30% от верха кадра к низу. Прямоугольник,
 # который рисует сама игра на миникарте, этой трапеции соответствует лишь грубо.
-PROJECTION = Path("dataset/layouts/projection.json")
 VIEW_W, VIEW_H = 0.25, 0.166   # запасной вариант, если проекции ещё нет
 SCENE_W = 460
 MAP_W = 320
@@ -431,8 +431,8 @@ show('all');
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("video")
-    ap.add_argument("--run", type=Path, default=Path("runs/coords"))
-    ap.add_argument("--root", type=Path, default=Path("data/coords"))
+    ap.add_argument("--run", type=Path, default=COORDS_RUNS)
+    ap.add_argument("--root", type=Path, default=COORDS_DATA)
     ap.add_argument("--every", type=int, default=12)
     ap.add_argument("--worst", type=int, default=20)
     ap.add_argument("--cells", default="8x5", help="сетка на картинке, СТОЛБЦЫxСТРОКИ")
@@ -444,7 +444,7 @@ def main() -> None:
     grid = int(torch.load(args.run / "model.pt", map_location="cpu",
                           weights_only=False).get("grid", 32))
     trained = args.video in ck.get("trained_on", [])
-    out = args.out or Path("runs/inspect") / f"coords-{args.video}.html"
+    out = args.out or INSPECT / f"coords-{args.video}.html"
     proj = load_projection()
     if proj is None:
         raise SystemExit("нет dataset/layouts/projection.json — "

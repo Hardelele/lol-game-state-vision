@@ -32,14 +32,13 @@ import cv2
 import numpy as np
 import torch
 
-from paths import CHECKS, DATA, DATASET
+from paths import CHECKS, DATASET_VIDEOS, DEFAULT_LAYOUT, VIDEOS
 from mask_frames import crop_box, mask_boxes
 from coord_model import CoordNet, GRID, expected_point
 from patch_model import (load_patchnet, load_projection, rectify, scene_from_box,
                          decode_points, aggregate, aggregate_batch, cell_offsets,
                          count_params, UNITS_PER_PX)
 
-LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 COMMON = (448, 224)
 
 
@@ -192,7 +191,7 @@ def main() -> None:
     ap.add_argument("--coordnet", type=Path, required=True)
     ap.add_argument("--patch", type=Path, nargs="+", required=True)
     ap.add_argument("--frame", type=Path,
-                    default=DATASET / "videos" / "58w57eJ5Qks" / "frames" / "58w57eJ5Qks_t00300.jpg",
+                    default=DATASET_VIDEOS / "58w57eJ5Qks" / "frames" / "58w57eJ5Qks_t00300.jpg",
                     help="полный кадр 1920×1080 для замера пути live")
     ap.add_argument("--runs", type=int, default=200)
     ap.add_argument("--cpu-runs", type=int, default=50)
@@ -209,13 +208,13 @@ def main() -> None:
            "cpu_threads": args.threads, "smi_before": smi}
     print(f"torch {env['torch']}, CUDA {env['cuda']}, cuDNN {env['cudnn']}")
     torch.backends.cudnn.benchmark = True
-    layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
+    layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
     if args.frame.exists():
         frame = cv2.cvtColor(cv2.imread(str(args.frame)), cv2.COLOR_BGR2RGB)
     else:
         # Кадры датасета хранятся только локально; без них берём 5-ю минуту ролика.
         raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "300", "-i",
-                              str(DATA / "videos" / "58w57eJ5Qks.mp4"), "-frames:v", "1",
+                              str(VIDEOS / "58w57eJ5Qks.mp4"), "-frames:v", "1",
                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                              capture_output=True, check=True).stdout
         frame = np.frombuffer(raw, np.uint8).reshape(1080, 1920, 3)

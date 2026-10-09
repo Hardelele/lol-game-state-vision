@@ -36,12 +36,9 @@ import channels
 import explain_miss
 import live
 import video_side
+from paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS
 
-ROOT = Path(__file__).resolve().parent.parent
-WEB = Path(__file__).resolve().parent / "webapp"
-DATA = ROOT / "data" / "coords"
-RUNS = ROOT / "runs"
-PROJ = ROOT / "dataset" / "layouts" / "projection.json"
+WEB = TOOLS / "webapp"
 MAP_UNITS = 14800
 
 _lock = threading.Lock()
@@ -110,7 +107,7 @@ def heat_png(run: str, vid: str, idx: int, size: int = 320) -> bytes:
 
 
 def scene_file(vid: str, idx: int) -> Path:
-    return DATA / vid / "scene" / f"{idx:06d}.jpg"
+    return COORDS_DATA / vid / "scene" / f"{idx:06d}.jpg"
 
 
 def model_kind(run: str) -> str | None:
@@ -164,7 +161,7 @@ def video_meta() -> dict:
     невозможно понять ни что за матч, ни участвовал ли он в обучении.
     """
     out = {}
-    for p in sorted((ROOT / "data" / "videos").glob("*.info.json")):
+    for p in sorted(VIDEOS.glob("*.info.json")):
         vid = p.stem.replace(".info", "")
         try:
             a = video_side.analyse(json.loads(p.read_text(encoding="utf-8")))
@@ -177,9 +174,9 @@ def video_meta() -> dict:
 
 @lru_cache(maxsize=1)
 def projection() -> dict:
-    if not PROJ.exists():
+    if not PROJECTION.exists():
         return {}
-    d = json.loads(PROJ.read_text(encoding="utf-8"))
+    d = json.loads(PROJECTION.read_text(encoding="utf-8"))
     Hm = np.array(d["homography"], float)
     W, H = d["scene_size"]
 
@@ -380,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"/img/(scene|mini)/([\w-]+)/(\d+)\.jpg", p)
             if m:
                 kind, vid, idx = m.group(1), m.group(2), int(m.group(3))
-                return self._file(DATA / vid / kind / f"{idx:06d}.jpg")
+                return self._file(COORDS_DATA / vid / kind / f"{idx:06d}.jpg")
             m = re.fullmatch(r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/grid\.png", p)
             if m:
                 run, vid, idx, sid = (m.group(1), m.group(2), int(m.group(3)),

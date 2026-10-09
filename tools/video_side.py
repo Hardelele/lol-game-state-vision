@@ -28,9 +28,8 @@ import re
 import subprocess
 from pathlib import Path
 
-from paths import ROOT
+from paths import VIDEOS
 
-VIDEOS = ROOT / "data" / "videos"
 ROLES = ("Top", "Jungle", "Mid", "ADC", "Bot", "Support")
 
 
