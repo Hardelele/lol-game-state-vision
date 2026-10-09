@@ -5,11 +5,6 @@
 роликам: кадры одного матча похожи, и смешивать их между обучением и
 проверкой нельзя.
 
-Кроме ошибки в координатах считается производная метрика: предсказанную
-точку прогоняем через L-коридор верхней линии и сравниваем с РУЧНЫМИ
-метками top/not_top. Это прямое сравнение с прежним классификатором,
-который на отложенных роликах давал 0.634.
-
 Пример:
     python tools/train_coords.py --train 58w57eJ5Qks ibUVbSX7ARU \
         --test olmTXkkUv58 zJvTSjEnKNE --epochs 12
@@ -31,18 +26,12 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 
-from paths import COORDS_DATA, COORDS_RUNS, DATASET_VIDEOS, TRAIN_LOG
+from paths import COORDS_DATA, COORDS_RUNS, TRAIN_LOG
 from runlog import tee_stdout
 from coord_model import (CoordNet, GRID, soft_target, expected_point, peak_point,
                          spread, count_params)
 
 MAP_UNITS = 14800
-# L-коридор верхней линии, подобранный по ручной разметке (согласие 0.958).
-TOP_CX, TOP_CY = 0.19, 0.22
-
-
-def in_top(cx: np.ndarray, cy: np.ndarray) -> np.ndarray:
-    return (cx < TOP_CX) | (cy < TOP_CY)
 
 
 def decode_all(rows: list[dict], root: Path, size, workers: int = 16
@@ -122,21 +111,8 @@ def load_rows(ids: list[str], root: Path, min_q: float) -> list[dict]:
     return rows
 
 
-def hand_labels(ids: list[str]) -> dict:
-    """Ручные метки top/not_top по роликам: нужны только для сверки."""
-    out = {}
-    for vid in ids:
-        p = DATASET_VIDEOS / vid / "frames.csv"
-        if not p.exists():
-            continue
-        for r in csv.DictReader(p.open(encoding="utf-8")):
-            if r["label"] in ("top", "not_top"):
-                out[(vid, int(r["t_sec"]))] = r["label"]
-    return out
-
-
 @torch.no_grad()
-def evaluate(model, cache, rows, dev, hand, batch=96) -> dict:
+def evaluate(model, cache, rows, dev, batch=96) -> dict:
     model.eval()
     exp, pk, spr = [], [], []
     for i in range(0, len(cache), batch):
@@ -151,30 +127,11 @@ def evaluate(model, cache, rows, dev, hand, batch=96) -> dict:
     true = np.array([[float(r["cx"]), float(r["cy"])] for r in rows])
     d_exp = np.linalg.norm(exp - true, axis=1)
     d_pk = np.linalg.norm(pk - true, axis=1)
-    res = {"n": len(rows),
-           "err_mean": float(d_exp.mean()), "err_median": float(np.median(d_exp)),
-           "err_peak_median": float(np.median(d_pk)),
-           "err_units": float(np.median(d_exp) * MAP_UNITS),
-           "spread_median": float(np.median(spr))}
-
-    # Сверка с ручной разметкой через L-коридор.
-    idx = [i for i, r in enumerate(rows)
-           if (r["video_id"], int(round(float(r["t_sec"])))) in hand]
-    if idx:
-        y = np.array([hand[(rows[i]["video_id"],
-                            int(round(float(rows[i]["t_sec"]))))] == "top"
-                      for i in idx])
-        p = in_top(pk[idx, 0], pk[idx, 1])
-        tp = int((p & y).sum())
-        fp = int((p & ~y).sum())
-        fn = int((~p & y).sum())
-        rec = [float(((p == y) & (y == c)).sum() / max((y == c).sum(), 1))
-               for c in (False, True)]
-        res["vs_hand"] = {
-            "n": len(idx), "accuracy": float((p == y).mean()),
-            "balanced_accuracy": float(np.mean(rec)),
-            "top_precision": tp / max(tp + fp, 1), "top_recall": tp / max(tp + fn, 1)}
-    return res
+    return {"n": len(rows),
+            "err_mean": float(d_exp.mean()), "err_median": float(np.median(d_exp)),
+            "err_peak_median": float(np.median(d_pk)),
+            "err_units": float(np.median(d_exp) * MAP_UNITS),
+            "spread_median": float(np.median(spr))}
 
 
 def main() -> None:
@@ -246,9 +203,7 @@ def run(args: argparse.Namespace) -> None:
         print(f"прорежено до {len(keep)} кадров из {len(tr)}")
         tr = keep
 
-    hand = hand_labels(args.train + args.test)
-    print(f"всего: обучение {len(tr)}, проверка {len(te)}; "
-          f"ручных меток для сверки {len(hand)}")
+    print(f"всего: обучение {len(tr)}, проверка {len(te)}")
 
     t_dec = time.perf_counter()
     cache_tr = decode_all(tr, args.root, size)
@@ -312,17 +267,15 @@ def run(args: argparse.Namespace) -> None:
             sched.step()
             tot += float(loss.detach()) * len(x)
             n += len(x)
-        ev = evaluate(model, cache_te, te, dev, hand)
+        ev = evaluate(model, cache_te, te, dev)
         row = {"epoch": ep + 1, "loss": tot / n, "sec": time.perf_counter() - t0, **ev}
         hist.append(row)
-        vh = ev.get("vs_hand", {})
         print(f"эпоха {ep + 1:2d}  loss {row['loss']:.4f}  {row['sec']:.0f} с  |  "
               f"отложенные: медиана {ev['err_median']:.3f} "
-              f"(~{ev['err_units']:.0f} ед.), среднее {ev['err_mean']:.3f}"
-              + (f"  |  через L-коридор acc {vh['accuracy']:.3f} "
-                 f"bal {vh['balanced_accuracy']:.3f}" if vh else ""), flush=True)
+              f"(~{ev['err_units']:.0f} ед.), среднее {ev['err_mean']:.3f}",
+              flush=True)
 
-    tr_ev = evaluate(model, cache_tr, tr, dev, hand)
+    tr_ev = evaluate(model, cache_tr, tr, dev)
     print(f"\nна обучающих роликах: медиана {tr_ev['err_median']:.3f} "
           f"(~{tr_ev['err_units']:.0f} ед.)")
     final = hist[-1]

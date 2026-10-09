@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader
 
 from paths import COORDS_DATA
 from coord_model import CoordNet, GRID, expected_point, peak_point, spread
-from train_coords import Scenes, load_rows, hand_labels, in_top, MAP_UNITS
+from train_coords import Scenes, load_rows, MAP_UNITS
 
 
 def load_model(path: Path, dev: str):
@@ -73,7 +73,6 @@ def main() -> None:
     trained = set(ck.get("trained_on", []))
     print(f"чекпоинт обучен на: {', '.join(sorted(trained))}; вход {size}")
 
-    hand = hand_labels(args.videos)
     summary = {}
     for vid in args.videos:
         tag = " (ОБУЧАЮЩИЙ — не отложенный)" if vid in trained else ""
@@ -86,27 +85,12 @@ def main() -> None:
                "mean": float(d.mean()), "p90": float(np.percentile(d, 90)),
                "median_units": float(np.median(d) * MAP_UNITS),
                "within_viewport": float((d < 0.133).mean())}
-        idx = [i for i, r in enumerate(rows)
-               if (vid, int(round(float(r["t_sec"])))) in hand]
-        if idx:
-            y = np.array([hand[(vid, int(round(float(rows[i]["t_sec"]))))] == "top"
-                          for i in idx])
-            p = in_top(pk[idx, 0], pk[idx, 1])
-            rec = [float(((p == y) & (y == c)).sum() / max((y == c).sum(), 1))
-                   for c in (False, True)]
-            res["vs_hand"] = {"n": len(idx), "top": int(y.sum()),
-                              "accuracy": float((p == y).mean()),
-                              "balanced_accuracy": float(np.mean(rec))}
         summary[vid] = res
 
         print(f"\n{vid}{tag}: кадров {res['n']}")
         print(f"  ошибка: медиана {res['median']:.3f} (~{res['median_units']:.0f} ед.), "
               f"среднее {res['mean']:.3f}, 90-й перцентиль {res['p90']:.3f}")
         print(f"  в пределах половины вьюпорта: {res['within_viewport'] * 100:.1f}% кадров")
-        if "vs_hand" in res:
-            v = res["vs_hand"]
-            print(f"  против ручных меток ({v['n']} шт, из них top {v['top']}): "
-                  f"acc {v['accuracy']:.3f}, bal {v['balanced_accuracy']:.3f}")
 
         with (out_dir / f"predictions_{vid}.csv").open("w", encoding="utf-8",
                                                        newline="") as f:
