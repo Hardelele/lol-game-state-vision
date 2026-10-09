@@ -33,7 +33,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from inspect_scene import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
+from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
 
 MAP_UNITS = 14800
 # Видимая область берётся из калиброванной проекции (tools/calibrate_projection.py):

@@ -37,8 +37,7 @@ from PIL import Image
 
 from paths import COORDS_DATA
 from paths import ROOT
-from scene_data import crop_box
-from mask_frames import mask_boxes
+from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, white_mask, find_box, estimate_box
 
 ROOT_VIDEOS = ROOT / "data" / "videos"

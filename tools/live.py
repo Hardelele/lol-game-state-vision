@@ -42,9 +42,8 @@ from paths import ROOT
 from activations import load_model
 from build_coords import probe_url, frames as frame_stream
 from coord_model import expected_point, peak_point, spread
-from mask_frames import mask_boxes
+from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, white_mask, find_box, estimate_box
-from scene_data import crop_box
 
 LAYOUT = ROOT / "dataset" / "layouts" / "spectator-volibear-challenger.json"
 RUNS = ROOT / "runs"

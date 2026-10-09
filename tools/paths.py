@@ -24,10 +24,8 @@ DATA = ROOT / "data"
 COORDS_DATA = DATA / "coords"          # build_coords.py: кадры сцены, миникарты, CSV
 
 RUNS = ROOT / "runs"
-SCENE_RUNS = RUNS / "scene"            # классификатор top / not_top
 COORDS_RUNS = RUNS / "coords"          # модель координат камеры
 INSPECT = RUNS / "inspect"             # HTML-смотрелки, знают друг о друге
-SHEETS = RUNS / "sheets"               # контактные листы разметки, по папке на ролик
 MINIMAP = RUNS / "minimap"             # координаты камеры по кадрам датасета
 CHECKS = RUNS / "checks"               # разовые визуальные проверки
 

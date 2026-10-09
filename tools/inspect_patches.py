@@ -38,7 +38,7 @@ from PIL import Image
 
 from mask_frames import apply_mask
 from paths import DATASET_VIDEOS, INSPECT, MINIMAP
-from inspect_scene import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
+from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
 
 SCALES = (10, 20, 40, 80, 160, 320)
 CELL = 150          # сторона показа кусочка на странице
