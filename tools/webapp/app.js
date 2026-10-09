@@ -225,7 +225,9 @@ function render() {
   $("heatimg").style.display = S.heat ? "" : "none";
 
   const answered = Number.isFinite(f.px);
-  $("vErr").textContent = answered ? f.err.toFixed(3) : "нет ответа";
+  // Кадр, который голова кадра сочла «не игрой», ответа не имеет намеренно.
+  const notGame = f.is_game === false;
+  $("vErr").textContent = answered ? f.err.toFixed(3) : (notGame ? "не игра" : "нет ответа");
   $("vErr").className = "big " + errClass(f.err);
   $("vUnits").textContent = answered ? `${Math.round(f.err * S.mapUnits)} ед.` : "";
   $("vTrue").textContent = `${f.cx.toFixed(3)}, ${f.cy.toFixed(3)}`;
@@ -243,7 +245,8 @@ function render() {
   $("fScene").classList.toggle("hidden", f.scene === undefined);
   if (f.agree !== undefined) $("vAgree").textContent = num(f.agree, 2);
   if (f.scene !== undefined) {
-    $("vScene").textContent = `${num(f.scene, 2)} · ${f.votes} голосов`;
+    const pg = f.game !== undefined ? ` · игра ${num(f.game, 2)}` : "";
+    $("vScene").textContent = `${num(f.scene, 2)} · ${f.votes} голосов${pg}`;
     $("vScene").className = f.scene < 0.3 ? "mid" : "";
   }
   $("vQ").textContent = f.q.toFixed(2);

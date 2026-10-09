@@ -36,7 +36,7 @@ dataset notes are in Russian; the README is in English.
   cropped main view to a 32×32 heatmap over the map. It is kept as the
   baseline and can still be chosen in the live mode.
 - **Live mode.** `tools/live.py` reads a YouTube video as a stream and runs
-  the patch model (`runs/patches/cnn-split16` by default) on every sampled
+  the patch model with the "not a game" frame head (`runs/patches/cnn-split16-notgame` by default) on every sampled
   frame: camera point, vote spread, share of agreeing votes, share of
   "scene" patches and a heatmap of patch votes, next to the minimap label.
   Any run with a `model.pt` can be picked; the model type is read from the

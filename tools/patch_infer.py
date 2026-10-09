@@ -95,11 +95,14 @@ class PatchInfer:
         live_p = (info["valid"][0].reshape(-1) >= 0.5).float()
         heat, small = vote_stats(votes, w, torch.from_numpy(cam).to(votes), self.grid)
         sc = (info["scene"][0].reshape(-1) > 0.5).float()
+        # Голова кадра «игра / не игра» есть не в каждом чекпойнте; без неё
+        # кадр считается игрой, как и раньше.
+        game = info["game"][0].reshape(1).float() if "game" in info else torch.ones(1, device=w.device)
         small = torch.cat([small, ((sc * live_p).sum() / live_p.sum().clamp(min=1))[None],
-                           (w > 0).sum()[None].float()])
+                           (w > 0).sum()[None].float(), game])
         # Одна выгрузка на кадр: каждая лишняя синхронизация с занятой
         # видеокартой стоит миллисекунды.
-        heat, (qx, qy, sp, scene_share, n_vote) = heat.cpu().numpy(), small.cpu().tolist()
+        heat, (qx, qy, sp, scene_share, n_vote, p_game) = heat.cpu().numpy(), small.cpu().tolist()
         if cuda:
             self._ev[2].record()
             torch.cuda.synchronize()
@@ -109,11 +112,17 @@ class PatchInfer:
         else:
             net_ms = (time.perf_counter() - t0) * 1000
             agg_ms = 0.0
-        ok = bool(np.isfinite(cam).all())
+        # На кадре «не игра» точка камеры бессмысленна: ответа нет, как и у
+        # кадра без единого голоса.
+        is_game = "game" not in info or p_game >= self.net.frame_threshold
+        ok = bool(np.isfinite(cam).all()) and is_game
         px, py = (float(cam[0]), float(cam[1])) if ok else (float("nan"),) * 2
         row = {"px": px, "py": py, "qx": qx, "qy": qy,
                "spread": sp, "agree": float(agree[0]),
                "scene": scene_share, "votes": int(n_vote)}
+        if "game" in info:
+            row["game"] = p_game
+            row["is_game"] = bool(is_game)
         return row, heat, {"net": net_ms, "agg": agg_ms}
 
 

@@ -69,7 +69,7 @@ WARM_Q = 0.4             # «рамка видна»: качество при р
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 MAP_UNITS = 14800
-DEFAULT_RUN = "patches/cnn-split16"
+DEFAULT_RUN = "patches/cnn-split16-notgame"
 STAGES = ("decode", "prep", "net", "agg", "out")
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 
@@ -330,11 +330,12 @@ class Session:
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
                "err": _r(np.hypot(cx - out["px"], cy - out["py"]), 4),
                "spread": _r(out["spread"], 3), "q": round(q, 3)}
-        for k in ("agree", "scene"):
+        for k in ("agree", "scene", "game"):
             if k in out:
                 row[k] = _r(out[k], 3)
-        if "votes" in out:
-            row["votes"] = out["votes"]
+        for k in ("votes", "is_game"):
+            if k in out:
+                row[k] = out[k]
         sj = _jpeg(scene, 85)
         mj = _jpeg(mini.resize((MINI_STORE, MINI_STORE)), 82)
         ms["out"] = (time.perf_counter() - t0) * 1000
