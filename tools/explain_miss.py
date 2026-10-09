@@ -38,7 +38,7 @@ from PIL import Image
 
 from coord_model import CoordNet, GRID, grid_centers
 from paths import DATASET, COORDS_DATA, RUNS, INSPECT
-MAP_UNITS = 14800
+from geometry import MAP_UNITS
 NEAR = 0.035          # «рядом» по карте, в долях карты
 POOL = 48             # сколько кадров берём в каждое облако
 

@@ -47,7 +47,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 
@@ -57,25 +56,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from paths import PROJECTION
+from geometry import MAP_UNITS, apply_h, load_projection
 
-MAP_UNITS = 14800
 UNITS_PER_PX = 6.0     # вид сверху: столько игровых единиц на пиксель входа
 MAP_GRID = 64          # сетка карты у головы патча: ячейка ≈ 231 ед.
 
 
 # ---------------------------------------------------------------- геометрия
-
-def load_projection(path: Path = PROJECTION) -> tuple[np.ndarray, tuple[int, int]]:
-    """Гомография «пиксель хранимой сцены → смещение от центра камеры (доли карты)»."""
-    d = json.loads(Path(path).read_text(encoding="utf-8"))
-    return np.array(d["homography"], dtype=np.float64), tuple(d["scene_size"])
-
-
-def apply_h(m: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    v = np.c_[pts, np.ones(len(pts))] @ m.T
-    return v[:, :2] / v[:, 2:3]
-
 
 def scene_from_box(box, out_size, crop, store_size) -> np.ndarray:
     """Аффинное A: пиксель картинки → пиксель хранимой сцены.

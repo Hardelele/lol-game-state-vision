@@ -27,7 +27,7 @@ import torch
 
 import torch.nn.functional as F
 
-from patch_model import (UNITS_PER_PX, load_patchnet, load_projection, rectify,
+from patch_model import (MAP_UNITS, UNITS_PER_PX, load_patchnet, load_projection, rectify,
                          canvases_post, to_world)
 
 
@@ -294,8 +294,8 @@ def _main() -> None:
         with Image.open(COORDS_DATA / r["scene"]) as s:
             a = np.asarray(s.convert("RGB"))
         out, _, ms = m.predict(m.prepare(a))
-        err.append(np.hypot(out["px"] - float(r["cx"]), out["py"] - float(r["cy"])) * 14800)
-    print(f"{m.describe((720, 372))}: {len(err)} кадров, медиана {np.median(err):.0f} ед.,"
+        err.append(np.hypot(out["px"] - float(r["cx"]), out["py"] - float(r["cy"])) * MAP_UNITS)
+    print(f"{m.describe(m.store)}: {len(err)} кадров, медиана {np.median(err):.0f} ед.,"
           f" последний кадр {ms}")
 
 

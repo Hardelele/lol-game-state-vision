@@ -117,8 +117,7 @@ def live_path(name, model, kind, frame, layout, dev, n, size=None):
     H, W = frame.shape[:2]
     boxes = mask_boxes((W, H), layout)
     crop = crop_box((W, H), layout, "dense")
-    store = (720, 372)
-    h0, _ = load_projection()
+    h0, store = load_projection()
     st = {}
 
     def prep():

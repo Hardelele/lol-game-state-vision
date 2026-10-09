@@ -35,6 +35,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 from paths import COORDS_DATA, PROJECTION
+from geometry import apply_h
 
 PATCH = 96
 
@@ -112,12 +113,6 @@ def to_matrix(par: np.ndarray, center: np.ndarray) -> np.ndarray:
     return np.array([[A[0, 0], A[0, 1], t[0]],
                      [A[1, 0], A[1, 1], t[1]],
                      [w[0], w[1], 1.0]])
-
-
-def apply_h(Hm: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    """Применить гомографию к (N,2)."""
-    v = np.c_[pts, np.ones(len(pts))] @ Hm.T
-    return v[:, :2] / v[:, 2:3]
 
 
 def residuals(par: np.ndarray, rec: np.ndarray, center: np.ndarray) -> np.ndarray:

@@ -36,10 +36,10 @@ import channels
 import explain_miss
 import live
 import video_side
+from geometry import MAP_UNITS, apply_h, load_projection
 from paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS
 
 WEB = TOOLS / "webapp"
-MAP_UNITS = 14800
 
 _lock = threading.Lock()
 
@@ -176,16 +176,10 @@ def video_meta() -> dict:
 def projection() -> dict:
     if not PROJECTION.exists():
         return {}
-    d = json.loads(PROJECTION.read_text(encoding="utf-8"))
-    Hm = np.array(d["homography"], float)
-    W, H = d["scene_size"]
-
-    def to_map(pts):
-        v = np.c_[pts, np.ones(len(pts))] @ Hm.T
-        return (v[:, :2] / v[:, 2:3]).tolist()
-
-    return {"scene_size": [W, H], "homography": d["homography"],
-            "outline": to_map(np.array([[0, 0], [W, 0], [W, H], [0, H]], float))}
+    Hm, (W, H) = load_projection()
+    return {"scene_size": [W, H], "homography": Hm.tolist(),
+            "outline": apply_h(Hm, np.array([[0, 0], [W, 0], [W, H], [0, H]],
+                                            float)).tolist()}
 
 
 def cell_quads(cols: int, rows: int) -> list[dict]:
@@ -202,9 +196,8 @@ def cell_quads(cols: int, rows: int) -> list[dict]:
             ys = [r * H / rows, (r + 1) * H / rows]
             quad = np.array([[xs[0], ys[0]], [xs[1], ys[0]],
                              [xs[1], ys[1]], [xs[0], ys[1]]], float)
-            v = np.c_[quad, np.ones(4)] @ Hm.T
             out.append({"id": f"{r + 1}.{c + 1}",
-                        "pts": (v[:, :2] / v[:, 2:3]).round(5).tolist()})
+                        "pts": apply_h(Hm, quad).round(5).tolist()})
     return out
 
 

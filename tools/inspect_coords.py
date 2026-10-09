@@ -34,9 +34,9 @@ import torch
 from PIL import Image
 
 from paths import COORDS_DATA, COORDS_RUNS, INSPECT, PROJECTION
+from geometry import MAP_UNITS, apply_h, load_projection
 from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
 
-MAP_UNITS = 14800
 # Видимая область берётся из калиброванной проекции (tools/calibrate_projection.py):
 # камера наклонена, поэтому на карте она покрывает трапецию, а не прямоугольник,
 # и масштаб меняется примерно на 30% от верха кадра к низу. Прямоугольник,
@@ -45,19 +45,6 @@ VIEW_W, VIEW_H = 0.25, 0.166   # запасной вариант, если пр�
 SCENE_W = 460
 MAP_W = 320
 GOOD, OKAY = 0.05, VIEW_W / 2
-
-
-def load_projection():
-    """Гомография «пиксель хранимой сцены → смещение от центра камеры»."""
-    if not PROJECTION.exists():
-        return None
-    d = json.loads(PROJECTION.read_text(encoding="utf-8"))
-    return np.array(d["homography"], float), tuple(d["scene_size"])
-
-
-def scene_to_map(Hm, pts: np.ndarray) -> np.ndarray:
-    v = np.c_[pts, np.ones(len(pts))] @ Hm.T
-    return v[:, :2] / v[:, 2:3]
 
 
 def cell_polys(Hm, size, cols: int, rows: int):
@@ -70,7 +57,7 @@ def cell_polys(Hm, size, cols: int, rows: int):
             ys = [r * H / rows, (r + 1) * H / rows]
             quad = np.array([[xs[0], ys[0]], [xs[1], ys[0]],
                              [xs[1], ys[1]], [xs[0], ys[1]]], float)
-            out.append((f"{r + 1}.{c + 1}", scene_to_map(Hm, quad)))
+            out.append((f"{r + 1}.{c + 1}", apply_h(Hm, quad)))
     return out
 
 
@@ -128,7 +115,7 @@ def map_svg(mini, heat, t, p, cols, rows, grid, proj) -> str:
         for i in range(1, grid))
 
     Hm, size = proj
-    out = scene_to_map(Hm, np.array([[0, 0], [size[0], 0],
+    out = apply_h(Hm, np.array([[0, 0], [size[0], 0],
                                      [size[0], size[1]], [0, size[1]]], float))
 
     def poly(pts, origin):
@@ -445,10 +432,10 @@ def main() -> None:
                           weights_only=False).get("grid", 32))
     trained = args.video in ck.get("trained_on", [])
     out = args.out or INSPECT / f"coords-{args.video}.html"
-    proj = load_projection()
-    if proj is None:
+    if not PROJECTION.exists():
         raise SystemExit("нет dataset/layouts/projection.json — "
                          "сначала tools/calibrate_projection.py")
+    proj = load_projection()
     cards, dots, st = build(args.video, args.run, args.root, args.every,
                             args.worst, grid, cols, rows, proj)
 

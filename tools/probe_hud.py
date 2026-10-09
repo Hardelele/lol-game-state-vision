@@ -62,7 +62,7 @@ from PIL import Image
 from paths import COORDS_DATA, CHECKS, DEFAULT_LAYOUT, VIDEOS
 from mask_frames import crop_box, mask_boxes
 from coord_model import CoordNet, GRID, expected_point
-from train_coords import MAP_UNITS
+from geometry import MAP_UNITS
 from patch_model import load_patchnet, load_projection, scene_from_box, infer_images
 
 W, H = 1920, 1080

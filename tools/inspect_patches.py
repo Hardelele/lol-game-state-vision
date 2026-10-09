@@ -38,11 +38,11 @@ from PIL import Image
 
 from mask_frames import apply_mask
 from paths import DATASET_VIDEOS, INSPECT, MINIMAP
+from geometry import MAP_UNITS
 from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
 
 SCALES = (10, 20, 40, 80, 160, 320)
 CELL = 150          # сторона показа кусочка на странице
-MAP_UNITS = 14800   # примерный размер карты League of Legends в игровых единицах
 VIEW_FRAC = 0.266   # ширина вьюпорта камеры в долях карты
 
 

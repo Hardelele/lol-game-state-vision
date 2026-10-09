@@ -53,20 +53,19 @@ from PIL import Image
 
 from paths import DEFAULT_LAYOUT, RUNS
 from activations import load_model
-from build_coords import probe_url, frames as frame_stream
+from build_coords import STORE_W, probe_url, frames as frame_stream
 from coord_model import expected_point, peak_point, spread
+from geometry import MAP_UNITS
 from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box
 from patch_infer import PatchInfer, is_patch_checkpoint
 
-STORE_W = 720            # как в датасете: кадр показывается, а не хранится
 MINI_STORE = 256
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
-MAP_UNITS = 14800
 DEFAULT_RUN = "patches/cnn-split16-notgame"
 STAGES = ("decode", "prep", "net", "agg", "out")
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени

@@ -27,11 +27,11 @@ from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 
 from paths import COORDS_DATA, COORDS_RUNS, TRAIN_LOG
+from geometry import MAP_UNITS
 from runlog import tee_stdout
 from coord_model import (CoordNet, GRID, soft_target, expected_point, peak_point,
                          spread, count_params)
 
-MAP_UNITS = 14800
 
 
 def decode_all(rows: list[dict], root: Path, size, workers: int = 16
