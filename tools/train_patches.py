@@ -48,7 +48,7 @@ from paths import COORDS_DATA, RUNS, TRAIN_LOG, DATASET
 from runlog import tee_stdout
 from dataset_io import load_rows, stored_keep
 from augment import synth_ui, color_gpu
-from patch_model import (PatchNet, MAP_UNITS, UNITS_PER_PX, load_projection,
+from patch_model import (PatchNet, ENCODERS, MAP_UNITS, UNITS_PER_PX, load_projection,
                          to_world, footprint, cell_offsets, soft_target_sep,
                          infer_images, count_params, decode_points)
 
@@ -197,7 +197,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--train", nargs="+", required=True)
     ap.add_argument("--test", nargs="+", required=True)
-    ap.add_argument("--encoder", default="cnn",
+    ap.add_argument("--encoder", default="cnn", choices=ENCODERS,
                     help="cnn — свой энкодер; dinov2_vits14 / dinov2_vitb14 — замороженный DINOv2")
     ap.add_argument("--root", type=Path, default=COORDS_DATA)
     ap.add_argument("--epochs", type=int, default=30)

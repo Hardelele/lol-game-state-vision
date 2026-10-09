@@ -63,6 +63,12 @@ MAP_UNITS = 14800
 UNITS_PER_PX = 6.0     # вид сверху: столько игровых единиц на пиксель входа
 MAP_GRID = 64          # сетка карты у головы патча: ячейка ≈ 231 ед.
 PROJECTION = ROOT / "dataset" / "layouts" / "projection.json"
+# Энкодеры PatchNet: свой CNN или замороженный DINOv2 из torch.hub (имя —
+# точка входа hub, оно же лежит в поле "encoder" чекпоинта).
+DINO_ARCHS = ("dinov2_vits14", "dinov2_vitb14", "dinov2_vitl14", "dinov2_vitg14",
+              "dinov2_vits14_reg", "dinov2_vitb14_reg", "dinov2_vitl14_reg",
+              "dinov2_vitg14_reg")
+ENCODERS = ("cnn",) + DINO_ARCHS
 
 
 # ---------------------------------------------------------------- геометрия
@@ -338,6 +344,10 @@ class FrameHead(nn.Module):
 class PatchNet(nn.Module):
     def __init__(self, encoder: str = "cnn", dim: int = 128):
         super().__init__()
+        if encoder not in ENCODERS:
+            # Иначе любая строка ушла бы в torch.hub как имя архитектуры.
+            raise ValueError(f"неизвестный энкодер {encoder!r}; допустимы: "
+                             f"{', '.join(ENCODERS)}")
         self.kind = encoder
         self.encoder = CNNEncoder() if encoder == "cnn" else DinoEncoder(encoder)
         self.stride = self.encoder.stride
