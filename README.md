@@ -28,7 +28,14 @@ dataset notes are in Russian; the README is in English.
   tables and speed: [docs/patch-embeddings.md](docs/patch-embeddings.md).
 - **Baseline.** `CoordNet` (`tools/coord_model.py`) maps the masked and
   cropped main view to a 32×32 heatmap over the map. It is kept as the
-  baseline and still drives the live mode.
+  baseline and can still be chosen in the live mode.
+- **Live mode.** `tools/live.py` reads a YouTube video as a stream and runs
+  the patch model (`runs/patches/cnn-split16` by default) on every sampled
+  frame: camera point, vote spread, share of agreeing votes, share of
+  "scene" patches and a heatmap of patch votes, next to the minimap label.
+  Any run with a `model.pt` can be picked; the model type is read from the
+  checkpoint. On the stream the patch model gives the same points as on
+  the stored dataset scenes (median difference 2 units).
 - **Labels without people.** The target is read from the camera box on the
   minimap of the same frame (`tools/minimap_camera.py`). The minimap is
   masked out of the model input, so it is the source of the target, not a
@@ -79,7 +86,7 @@ python tools/train_coords.py --train 58w57eJ5Qks ibUVbSX7ARU \
 # 3. Evaluate held-out matches, with a black-input and a shuffled-pairs control
 python tools/eval_coords.py runs/coords/heatmap/model.pt olmTXkkUv58 zJvTSjEnKNE
 
-# 4. Inspect: open http://127.0.0.1:8732
+# 4. Inspect: open http://127.0.0.1:8732 (--live-run sets the default live model)
 python tools/serve_inspect.py
 
 # Patch model: train, check robustness to HUD changes, measure speed
@@ -117,7 +124,8 @@ python tools/calibrate_projection.py --fit 58w57eJ5Qks olmTXkkUv58 --check zJvTS
 | `calibrate_view.py`, `calibrate_projection.py` | Measure the screen → map scale; fit the homography in `dataset/layouts/projection.json` |
 | `serve_inspect.py`, `webapp/` | Local web viewer (standard library HTTP server, plain HTML/JS) |
 | `activations.py`, `explain_miss.py` | Layer-by-layer activations and the report on a single miss, served by the viewer |
-| `live.py` | Live mode: frames from a stream → model → viewer, nothing written to disk |
+| `live.py` | Live mode: frames from a stream → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk |
+| `patch_infer.py` | Patch model on one frame for the live mode: camera, vote spread and heatmap, share of "scene" patches |
 | `channels.py`, `video_side.py` | Channel catalog, video lists, ingest jobs; player role and side from the video description |
 | `inspect_coords.py`, `inspect_patches.py`, `inspect_pages.py` | Self-contained HTML pages: predictions of one video; which patch size identifies a place |
 | `extract_frames.py` | Full reference frames every N seconds into `dataset/videos/` |
@@ -184,7 +192,7 @@ for a new variant instead of overwriting an existing run.
 
 ## Later scope
 
-Patch model in the live mode, negative "not a game" frames, a second
+Negative "not a game" frames, a second
 channel layout. Then locating the player's champion, identifying champions and objects, reading
 HP/mana, and tracking state across frames. An SNN comparison may be tried
 once a model transfers across layouts.
