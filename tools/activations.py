@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import io
+import threading
 from functools import lru_cache
 
 import numpy as np
@@ -56,6 +57,12 @@ def png(img: Image.Image) -> bytes:
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return buf.getvalue()
+
+
+# Хуки вешаются на общую модель из load_model: два одновременных прогона
+# (сервер смотрелки многопоточный) записали бы состояния друг в друга, и
+# lru_cache запомнил бы чужие. Поэтому прогон с хуками — по одному.
+_hooked = threading.Lock()
 
 
 @lru_cache(maxsize=4)
@@ -118,15 +125,18 @@ def activations(ckpt: str, scene_path: str):
             caught[name] = out.detach()
         return fn
 
-    handles = []
-    for name, mod in model.encoder.stages.named_modules():
-        if isinstance(mod, (nn.Conv2d, nn.ReLU)) and name:
-            handles.append(mod.register_forward_hook(hook("stages." + name)))
-    handles.append(model.pool.register_forward_hook(hook("pool")))
-    with torch.no_grad():
-        logits = model(x)
-    for h in handles:
-        h.remove()
+    with _hooked:
+        handles = []
+        for name, mod in model.encoder.stages.named_modules():
+            if isinstance(mod, (nn.Conv2d, nn.ReLU)) and name:
+                handles.append(mod.register_forward_hook(hook("stages." + name)))
+        handles.append(model.pool.register_forward_hook(hook("pool")))
+        try:
+            with torch.no_grad():
+                logits = model(x)
+        finally:
+            for h in handles:
+                h.remove()
 
     out = {k: v[0].numpy() for k, v in caught.items()}
     out["input"] = x[0].numpy()

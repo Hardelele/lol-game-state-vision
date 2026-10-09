@@ -53,10 +53,11 @@ import numpy as np
 import torch
 from PIL import Image
 
-from paths import DEFAULT_LAYOUT, RUNS
+from paths import DEFAULT_LAYOUT, RUNS, run_dir
 from checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
 from dataset_io import MINI_STORE, STORE_W
 from video_stream import probe_url, frames as frame_stream
+from channels import check_fps, youtube_id
 from coord_model import expected_point, peak_point, spread
 from geometry import MAP_UNITS
 from mask_frames import crop_box, mask_boxes
@@ -138,10 +139,7 @@ class CoordInfer:
 
 def run_checkpoint(run: str) -> Path:
     """Прогон → его model.pt; только внутри runs/: чекпоинт — это код."""
-    ck = (RUNS / run / "model.pt").resolve()
-    if RUNS.resolve() not in ck.parents:
-        raise ValueError(f"прогон вне runs/: {run}")
-    return ck
+    return run_dir(run) / "model.pt"
 
 
 def load_runner(path: Path, device: str):
@@ -154,11 +152,12 @@ def load_runner(path: Path, device: str):
 _kinds: dict[str, tuple[float, dict]] = {}
 
 
-def models() -> list[dict]:
+def models(default: str = DEFAULT_RUN) -> list[dict]:
     """Все прогоны с model.pt, годные для потока, с типом модели.
 
     Тип читается из самого чекпоинта, а не из каталога (CoordNet для
     сравнения лежит и в runs/patches), и запоминается до смены файла.
+    `default` — какой прогон пометить моделью по умолчанию.
     """
     out = []
     for p in sorted(RUNS.rglob("model.pt")):
@@ -178,7 +177,7 @@ def models() -> list[dict]:
                               else "CoordNet"),
                     "trained_on": list(ck.get("trained_on", []))}
             hit = _kinds[rid] = (mt, info)
-        out.append({"id": rid, **hit[1], "default": rid == DEFAULT_RUN})
+        out.append({"id": rid, **hit[1], "default": rid == default})
     return out
 
 
@@ -448,6 +447,7 @@ _reg = threading.Lock()
 def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
           start_sec: float = 0.0) -> dict:
     """Открыть сеанс. Одновременно работает один: распаковка занимает карту."""
+    vid, fps = youtube_id(vid), check_fps(fps)
     run = run or DEFAULT_RUN
     run_checkpoint(run)                  # путь вне runs/ отвергается сразу
     with _reg:

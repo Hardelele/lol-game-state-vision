@@ -41,3 +41,17 @@ MINIMAP = RUNS / "minimap"             # координаты камеры по 
 CHECKS = RUNS / "checks"               # разовые визуальные проверки
 
 TRAIN_LOG = "train.log"                # имя лога обучения внутри папки прогона
+
+
+def run_dir(run: str) -> Path:
+    """Каталог прогона по имени вида `coords/full17` — только внутри runs/.
+
+    Имя приходит снаружи (адрес запроса, тело POST), а в прогоне лежит
+    чекпоинт — pickle, то есть код. Поэтому `../`, абсолютные пути и сам
+    runs/ отвергаются.
+    """
+    root = RUNS.resolve()
+    d = (RUNS / run).resolve()
+    if root not in d.parents:
+        raise ValueError(f"прогон вне runs/: {run}")
+    return d

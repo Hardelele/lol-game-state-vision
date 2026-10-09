@@ -42,6 +42,30 @@ CUSTOM = STORE / "custom.json"
 FRESH = 6 * 3600          # сколько секунд считаем кеш списка годным
 ROLES = ("Top", "Jungle", "Mid", "ADC", "Bot", "Support")
 YT = [sys.executable, "-m", "yt_dlp"]
+FPS_RANGE = (0.1, 10.0)   # кадр/с: реже — пусто, чаще — память и диск впустую
+
+
+def youtube_id(vid: str) -> str:
+    """Идентификатор ролика YouTube — ровно 11 знаков [A-Za-z0-9_-].
+
+    Он уходит в командную строку yt-dlp и в пути под data/, поэтому всё
+    прочее отвергается сразу.
+    """
+    if not isinstance(vid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
+        raise ValueError("непохоже на идентификатор ролика")
+    return vid
+
+
+def check_fps(fps) -> float:
+    """Частота кадров из запроса: число в разумных пределах FPS_RANGE."""
+    try:
+        v = float(fps)
+    except (TypeError, ValueError):
+        raise ValueError("частота кадров — не число") from None
+    lo, hi = FPS_RANGE
+    if not lo <= v <= hi:                         # NaN сюда тоже не пройдёт
+        raise ValueError(f"частота кадров вне {lo}–{hi}")
+    return v
 
 
 def _run(args: list[str], timeout: float = 180) -> str:
@@ -308,21 +332,21 @@ def ingest(vid: str, fps: float = 1.0) -> dict:
     Процесс отдельный, а не поток: распаковка видео занимает минуты, и
     держать её в сервере смотрелки — значит заморозить интерфейс.
     """
-    if not re.fullmatch(r"[\w-]{6,20}", vid):
-        raise ValueError("непохоже на идентификатор ролика")
+    vid, fps = youtube_id(vid), check_fps(fps)
     with _jlock:
         old = _jobs.get(vid)
         if old and old["proc"].poll() is None:
             return {"id": vid, "state": JobState.ALREADY_RUNNING.label}
     INGEST_LOGS.mkdir(parents=True, exist_ok=True)
     logfile = INGEST_LOGS / f"{vid}.log"
-    fh = logfile.open("w", encoding="utf-8")
     env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(TOOLS)}
-    proc = subprocess.Popen(
-        [sys.executable, "-u", str(TOOLS / "build_coords.py"),
-         "--url", vid, "--layout", str(DEFAULT_LAYOUT), "--fps", str(fps)],
-        cwd=str(ROOT), stdout=fh, stderr=subprocess.STDOUT,
-        env={**os.environ, **env})
+    # Дочерний процесс держит свою копию дескриптора лога, наша не нужна.
+    with logfile.open("w", encoding="utf-8") as fh:
+        proc = subprocess.Popen(
+            [sys.executable, "-u", str(TOOLS / "build_coords.py"),
+             "--url", vid, "--layout", str(DEFAULT_LAYOUT), "--fps", str(fps)],
+            cwd=str(ROOT), stdout=fh, stderr=subprocess.STDOUT,
+            env={**os.environ, **env})
     with _jlock:
         _jobs[vid] = {"id": vid, "proc": proc, "logfile": logfile,
                       "started": time.time(), "fps": fps}
