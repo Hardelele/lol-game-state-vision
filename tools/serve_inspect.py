@@ -22,6 +22,7 @@ import mimetypes
 import re
 import traceback
 import threading
+from collections.abc import Callable
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -200,6 +201,221 @@ def cell_quads(cols: int, rows: int) -> list[dict]:
     return out
 
 
+# ---------- маршруты ----------
+#
+# Таблица (метод, шаблон адреса, обработчик). Шаблон сверяется с путём
+# целиком, группы уходят обработчику позиционно; порядок строк — порядок
+# проверки. Обработчик получает запрос `h` и сам отвечает через него.
+
+ROUTES: list[tuple[str, re.Pattern, Callable]] = []
+
+
+def route(method: str, pattern: str):
+    def deco(fn: Callable) -> Callable:
+        ROUTES.append((method, re.compile(pattern), fn))
+        return fn
+    return deco
+
+
+@route("GET", r"/|/index\.html")
+def page(h) -> None:
+    h._file(WEB / "index.html", cache=0)
+
+
+@route("GET", r"/static/(.*)")
+def static(h, name: str) -> None:
+    if "/" in name or ".." in name:
+        return h.fail(403, "нельзя")
+    h._file(WEB / name, cache=0)
+
+
+# ---------- каналы и забор роликов ----------
+
+@route("GET", r"/api/channels")
+def channel_list(h) -> None:
+    h._json({"channels": channels.channels(), "have": channels.have_ids(),
+             "jobs": channels.jobs()})
+
+
+@route("GET", r"/api/channel")
+def channel_videos(h) -> None:
+    q = h.query
+    handle = (q.get("handle") or [""])[0]
+    if not handle:
+        return h.fail(400, "не указан канал")
+    h._json(channels.videos(handle, (q.get("url") or [None])[0],
+                            int((q.get("limit") or ["60"])[0]),
+                            (q.get("refresh") or [""])[0] == "1"))
+
+
+@route("GET", r"/api/jobs")
+def job_list(h) -> None:
+    h._json({"jobs": channels.jobs(), "have": channels.have_ids()})
+
+
+@route("GET", r"/api/video/([\w-]+)")
+def video(h, vid: str) -> None:
+    h._json(channels.video_info(youtube_id(vid)))
+
+
+@route("POST", r"/api/channels/add")
+def channel_add(h) -> None:
+    h._json(channels.add_channel(h.body.get("url", "")))
+
+
+@route("POST", r"/api/channels/drop")
+def channel_drop(h) -> None:
+    channels.drop_channel(h.body.get("handle", ""))
+    h._json({"ok": True})
+
+
+@route("POST", r"/api/ingest")
+def ingest(h) -> None:
+    h._json(channels.ingest(h.body.get("id", ""), h.body.get("fps") or 1.0))
+
+
+# ---------- поток ----------
+
+@route("GET", r"/api/live-models")
+def live_models(h) -> None:
+    with _lock:
+        h._json({"models": live.models(), "default": live.DEFAULT_RUN})
+
+
+@route("GET", r"/api/live/([\w-]+)")
+def live_status(h, vid: str) -> None:
+    ses = live.get(vid)
+    if ses is None:
+        return h.fail(404, "сеанс не открыт")
+    h._json(ses.status(int((h.query.get("since") or ["0"])[0])))
+
+
+@route("POST", r"/api/live/start")
+def live_start(h) -> None:
+    b = h.body
+    h._json(live.start(b.get("id", ""), b.get("run") or live.DEFAULT_RUN,
+                       b.get("fps") or 1.0, float(b.get("start") or 0.0)))
+
+
+@route("POST", r"/api/live/stop")
+def live_stop(h) -> None:
+    live.stop(h.body.get("id", ""))
+    h._json({"ok": True})
+
+
+@route("GET", r"/img/live/([\w-]+)/(scene|mini)/(\d+)\.jpg")
+def live_image(h, vid: str, kind: str, idx: str) -> None:
+    ses = live.get(vid)
+    store = (ses.scene if kind == "scene" else ses.mini) if ses else {}
+    body = store.get(int(idx))
+    if body is None:
+        return h.fail(404, "кадра нет в сеансе")
+    h._send(body, "image/jpeg", cache=3600)
+
+
+@route("GET", r"/img/live/([\w-]+)/heat/(\d+)\.png")
+def live_heat(h, vid: str, idx: str) -> None:
+    ses = live.get(vid)
+    hm = ses.heat.get(int(idx)) if ses else None
+    if hm is None:
+        return h.fail(404, "кадра нет в сеансе")
+    h._send(inspect_pages.heat_png(hm), "image/png", cache=3600)
+
+
+# ---------- прогоны с диска ----------
+
+@route("GET", r"/api/index")
+def index(h) -> None:
+    with _lock:
+        h._json({"runs": discover_runs(), "projection": projection(),
+                 "videos": video_meta(), "map_units": MAP_UNITS})
+
+
+@route("GET", r"/api/frames/(.+)/([\w-]+)")
+def frames(h, run: str, vid: str) -> None:
+    run, vid = run_id(run), youtube_id(vid)
+    with _lock:
+        rows = frames_of(run, vid)
+    h._json({"video": vid, "run": run, "frames": rows})
+
+
+@route("GET", r"/api/cells/(\d+)x(\d+)")
+def cells(h, cols: str, rows: str) -> None:
+    h._json(cell_quads(int(cols), int(rows)))
+
+
+@route("GET", r"/explain/(.+)/([\w-]+)/(\d+)\.html")
+def explain(h, run: str, vid: str, idx: str) -> None:
+    run, vid, idx = run_id(run), youtube_id(vid), int(idx)
+    with _lock:
+        body = explain_miss.build(run, vid, idx)
+    h._send(body.encode("utf-8"), "text/html; charset=utf-8")
+
+
+@route("GET", r"/api/net/(.+)/([\w-]+)/(\d+)")
+def net(h, run: str, vid: str, idx: str) -> None:
+    run, vid, idx = run_id(run), youtube_id(vid), int(idx)
+    with _lock:
+        h._json({"stages": net_stages(run, vid, idx)})
+
+
+@route("GET", r"/api/chan/(.+)/([\w-]+)/(\d+)/([\w.]+)")
+def chan(h, run: str, vid: str, idx: str, sid: str) -> None:
+    run, vid, idx = run_id(run), youtube_id(vid), int(idx)
+    with _lock:
+        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+    h._json(act.channel_stats(a[sid]))
+
+
+@route("GET", r"/img/(scene|mini)/([\w-]+)/(\d+)\.jpg")
+def image(h, kind: str, vid: str, idx: str) -> None:
+    h._file(COORDS_DATA / youtube_id(vid) / kind / f"{int(idx):06d}.jpg")
+
+
+@route("GET", r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/grid\.png")
+def net_grid(h, run: str, vid: str, idx: str, sid: str) -> None:
+    run, vid, idx = run_id(run), youtube_id(vid), int(idx)
+    with _lock:
+        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+        body = act.grid_png(a[sid])
+    h._send(body, "image/png", cache=3600)
+
+
+@route("GET", r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/ch(\d+)\.png")
+def net_channel(h, run: str, vid: str, idx: str, sid: str, ch: str) -> None:
+    run, vid, idx, ch = run_id(run), youtube_id(vid), int(idx), int(ch)
+    with _lock:
+        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+        body = (act.rgb_png(a[sid]) if sid == "input" and ch < 0
+                else act.channel_png(a[sid], ch))
+    h._send(body, "image/png", cache=3600)
+
+
+@route("GET", r"/img/scenefull/(.+)/([\w-]+)/(\d+)\.png")
+def scene_full(h, run: str, vid: str, idx: str) -> None:
+    run, vid, idx = run_id(run), youtube_id(vid), int(idx)
+    with _lock:
+        a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
+        body = act.rgb_png(a["input"], width=560)
+    h._send(body, "image/png", cache=3600)
+
+
+@route("GET", r"/img/kernel/(.+)/([\w.]+)/(\d+)\.png")
+def kernel(h, run: str, sid: str, ch: str) -> None:
+    run = run_id(run)
+    with _lock:
+        body = act.kernel_png(ckpt_of(run), sid, int(ch))
+    h._send(body, "image/png", cache=86400)
+
+
+@route("GET", r"/img/heat/(.+)/([\w-]+)/(\d+)\.png")
+def heat(h, run: str, vid: str, idx: str) -> None:
+    run, vid, idx = run_id(run), youtube_id(vid), int(idx)
+    with _lock:
+        body = heat_png(run, vid, idx)
+    h._send(body, "image/png", cache=86400)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -246,172 +462,18 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(n).decode("utf-8"))
 
-    def do_POST(self) -> None:                                   # noqa: N802
-        p = unquote(urlparse(self.path).path)
+    def _dispatch(self, method: str) -> None:
+        url = urlparse(self.path)
+        p = unquote(url.path)
+        self.query = parse_qs(url.query)
         try:
-            body = self._body()
-            if p == "/api/channels/add":
-                return self._json(channels.add_channel(body.get("url", "")))
-            if p == "/api/channels/drop":
-                channels.drop_channel(body.get("handle", ""))
-                return self._json({"ok": True})
-            if p == "/api/live/start":
-                return self._json(live.start(
-                    body.get("id", ""), body.get("run") or live.DEFAULT_RUN,
-                    float(body.get("fps") or 1.0),
-                    float(body.get("start") or 0.0)))
-            if p == "/api/live/stop":
-                live.stop(body.get("id", ""))
-                return self._json({"ok": True})
-            if p == "/api/ingest":
-                return self._json(channels.ingest(
-                    body.get("id", ""), float(body.get("fps") or 1.0)))
-        except ValueError as exc:
-            return self.fail(400, str(exc))
-        except Exception as exc:                                 # noqa: BLE001
-            traceback.print_exc()
-            return self.fail(500, f"{type(exc).__name__}: {exc}")
-        self.fail(404, "нет такого адреса")
-
-    def do_GET(self) -> None:                                    # noqa: N802
-        p = unquote(urlparse(self.path).path)
-        try:
-            if p in ("/", "/index.html"):
-                return self._file(WEB / "index.html", cache=0)
-            if p.startswith("/static/"):
-                name = p[len("/static/"):]
-                if "/" in name or ".." in name:
-                    return self.fail(403, "нельзя")
-                return self._file(WEB / name, cache=0)
-
-            if p == "/api/channels":
-                return self._json({"channels": channels.channels(),
-                                   "have": channels.have_ids(),
-                                   "jobs": channels.jobs()})
-            if p == "/api/channel":
-                q = parse_qs(urlparse(self.path).query)
-                handle = (q.get("handle") or [""])[0]
-                if not handle:
-                    return self.fail(400, "не указан канал")
-                return self._json(channels.videos(
-                    handle, (q.get("url") or [None])[0],
-                    int((q.get("limit") or ["60"])[0]),
-                    (q.get("refresh") or [""])[0] == "1"))
-            if p == "/api/live-models":
-                with _lock:
-                    return self._json({"models": live.models(),
-                                       "default": live.DEFAULT_RUN})
-            m = re.fullmatch(r"/api/live/([\w-]+)", p)
-            if m:
-                ses = live.get(m.group(1))
-                if ses is None:
-                    return self.fail(404, "сеанс не открыт")
-                q = parse_qs(urlparse(self.path).query)
-                return self._json(ses.status(int((q.get("since") or ["0"])[0])))
-            if p == "/api/jobs":
-                return self._json({"jobs": channels.jobs(),
-                                   "have": channels.have_ids()})
-            m = re.fullmatch(r"/api/video/([\w-]+)", p)
-            if m:
-                return self._json(channels.video_info(youtube_id(m.group(1))))
-
-            if p == "/api/index":
-                with _lock:
-                    return self._json({"runs": discover_runs(),
-                                       "projection": projection(),
-                                       "videos": video_meta(),
-                                       "map_units": MAP_UNITS})
-            m = re.fullmatch(r"/api/frames/(.+)/([\w-]+)", p)
-            if m:
-                run, vid = run_id(m.group(1)), youtube_id(m.group(2))
-                with _lock:
-                    rows = frames_of(run, vid)
-                return self._json({"video": vid, "run": run, "frames": rows})
-            m = re.fullmatch(r"/api/cells/(\d+)x(\d+)", p)
-            if m:
-                return self._json(cell_quads(int(m.group(1)), int(m.group(2))))
-            m = re.fullmatch(r"/explain/(.+)/([\w-]+)/(\d+)\.html", p)
-            if m:
-                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
-                                 int(m.group(3)))
-                with _lock:
-                    body = explain_miss.build(run, vid, idx)
-                return self._send(body.encode("utf-8"),
-                                  "text/html; charset=utf-8")
-            m = re.fullmatch(r"/api/net/(.+)/([\w-]+)/(\d+)", p)
-            if m:
-                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
-                                 int(m.group(3)))
-                with _lock:
-                    return self._json({"stages": net_stages(run, vid, idx)})
-            m = re.fullmatch(r"/api/chan/(.+)/([\w-]+)/(\d+)/([\w.]+)", p)
-            if m:
-                run, vid, idx, sid = (run_id(m.group(1)), youtube_id(m.group(2)),
-                                      int(m.group(3)), m.group(4))
-                with _lock:
-                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
-                return self._json(act.channel_stats(a[sid]))
-
-            m = re.fullmatch(r"/img/live/([\w-]+)/(scene|mini)/(\d+)\.jpg", p)
-            if m:
-                ses = live.get(m.group(1))
-                store = (ses.scene if m.group(2) == "scene" else ses.mini) if ses else {}
-                body = store.get(int(m.group(3)))
-                if body is None:
-                    return self.fail(404, "кадра нет в сеансе")
-                return self._send(body, "image/jpeg", cache=3600)
-            m = re.fullmatch(r"/img/live/([\w-]+)/heat/(\d+)\.png", p)
-            if m:
-                ses = live.get(m.group(1))
-                h = ses.heat.get(int(m.group(2))) if ses else None
-                if h is None:
-                    return self.fail(404, "кадра нет в сеансе")
-                return self._send(inspect_pages.heat_png(h), "image/png", cache=3600)
-
-            m = re.fullmatch(r"/img/(scene|mini)/([\w-]+)/(\d+)\.jpg", p)
-            if m:
-                kind, vid, idx = m.group(1), youtube_id(m.group(2)), int(m.group(3))
-                return self._file(COORDS_DATA / vid / kind / f"{idx:06d}.jpg")
-            m = re.fullmatch(r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/grid\.png", p)
-            if m:
-                run, vid, idx, sid = (run_id(m.group(1)), youtube_id(m.group(2)),
-                                      int(m.group(3)), m.group(4))
-                with _lock:
-                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
-                    body = act.grid_png(a[sid])
-                return self._send(body, "image/png", cache=3600)
-            m = re.fullmatch(
-                r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/ch(\d+)\.png", p)
-            if m:
-                run, vid, idx, sid, ch = (run_id(m.group(1)), youtube_id(m.group(2)),
-                                          int(m.group(3)), m.group(4),
-                                          int(m.group(5)))
-                with _lock:
-                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
-                    body = (act.rgb_png(a[sid]) if sid == "input" and ch < 0
-                            else act.channel_png(a[sid], ch))
-                return self._send(body, "image/png", cache=3600)
-            m = re.fullmatch(r"/img/scenefull/(.+)/([\w-]+)/(\d+)\.png", p)
-            if m:
-                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
-                                 int(m.group(3)))
-                with _lock:
-                    a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
-                    body = act.rgb_png(a["input"], width=560)
-                return self._send(body, "image/png", cache=3600)
-            m = re.fullmatch(r"/img/kernel/(.+)/([\w.]+)/(\d+)\.png", p)
-            if m:
-                run, sid, ch = run_id(m.group(1)), m.group(2), int(m.group(3))
-                with _lock:
-                    body = act.kernel_png(ckpt_of(run), sid, ch)
-                return self._send(body, "image/png", cache=86400)
-            m = re.fullmatch(r"/img/heat/(.+)/([\w-]+)/(\d+)\.png", p)
-            if m:
-                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
-                                 int(m.group(3)))
-                with _lock:
-                    body = heat_png(run, vid, idx)
-                return self._send(body, "image/png", cache=86400)
+            self.body = self._body() if method == "POST" else {}
+            for meth, rx, fn in ROUTES:
+                if meth != method:
+                    continue
+                m = rx.fullmatch(p)
+                if m:
+                    return fn(self, *m.groups())
         except FileNotFoundError:
             return self.fail(404, "нет данных")
         except ValueError as exc:
@@ -420,6 +482,12 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             return self.fail(500, f"{type(exc).__name__}: {exc}")
         self.fail(404, "нет такого адреса")
+
+    def do_GET(self) -> None:                                    # noqa: N802
+        self._dispatch("GET")
+
+    def do_POST(self) -> None:                                   # noqa: N802
+        self._dispatch("POST")
 
 
 def main() -> None:
