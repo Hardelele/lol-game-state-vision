@@ -36,11 +36,21 @@ import inspect_pages
 import live
 import video_side
 from geometry import MAP_UNITS, apply_h, load_projection
-from paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS
+from channels import youtube_id
+from paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS, run_dir
 
 WEB = TOOLS / "webapp"
 
 _lock = threading.Lock()
+
+
+def run_id(run: str) -> str:
+    """Прогон из адреса или тела запроса → его имя под runs/, проверенное.
+
+    Имя приводится к одному виду (`a/./b` и `a/b` — один прогон), чтобы
+    кеши ниже не заводили по записи на каждое написание.
+    """
+    return run_dir(run).relative_to(RUNS.resolve()).as_posix()
 
 
 def discover_runs() -> list[dict]:
@@ -66,7 +76,7 @@ def discover_runs() -> list[dict]:
 
 @lru_cache(maxsize=32)
 def frames_of(run: str, vid: str) -> list[dict]:
-    path = RUNS / run / f"predictions_{vid}.csv"
+    path = run_dir(run) / f"predictions_{vid}.csv"
     rows = []
     for r in csv.DictReader(path.open(encoding="utf-8")):
         rows.append({
@@ -83,7 +93,7 @@ def frames_of(run: str, vid: str) -> list[dict]:
 
 @lru_cache(maxsize=8)
 def heatmaps_of(run: str, vid: str):
-    z = np.load(RUNS / run / f"heatmaps_{vid}.npz")
+    z = np.load(run_dir(run) / f"heatmaps_{vid}.npz")
     idx = {int(v): k for k, v in enumerate(z["idx"])}
     return z["heatmaps"].astype(np.float32), idx
 
@@ -95,7 +105,7 @@ def heat_png(run: str, vid: str, idx: int, size: int = 320) -> bytes:
 
 
 def scene_file(vid: str, idx: int) -> Path:
-    return COORDS_DATA / vid / "scene" / f"{idx:06d}.jpg"
+    return COORDS_DATA / youtube_id(vid) / "scene" / f"{int(idx):06d}.jpg"
 
 
 def model_kind(run: str) -> str | None:
@@ -106,7 +116,7 @@ def model_kind(run: str) -> str | None:
 
 def ckpt_of(run: str) -> str:
     """Чекпоинт для разбора по слоям — он умеет только CoordNet."""
-    p = RUNS / run / "model.pt"
+    p = live.run_checkpoint(run)
     if not p.is_file():
         raise FileNotFoundError(f"нет чекпоинта {p}")
     if model_kind(run) == "patch":
@@ -303,7 +313,7 @@ class Handler(BaseHTTPRequestHandler):
                                    "have": channels.have_ids()})
             m = re.fullmatch(r"/api/video/([\w-]+)", p)
             if m:
-                return self._json(channels.video_info(m.group(1)))
+                return self._json(channels.video_info(youtube_id(m.group(1))))
 
             if p == "/api/index":
                 with _lock:
@@ -313,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
                                        "map_units": MAP_UNITS})
             m = re.fullmatch(r"/api/frames/(.+)/([\w-]+)", p)
             if m:
-                run, vid = m.group(1), m.group(2)
+                run, vid = run_id(m.group(1)), youtube_id(m.group(2))
                 with _lock:
                     rows = frames_of(run, vid)
                 return self._json({"video": vid, "run": run, "frames": rows})
@@ -322,20 +332,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(cell_quads(int(m.group(1)), int(m.group(2))))
             m = re.fullmatch(r"/explain/(.+)/([\w-]+)/(\d+)\.html", p)
             if m:
-                run, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
+                                 int(m.group(3)))
                 with _lock:
                     body = explain_miss.build(run, vid, idx)
                 return self._send(body.encode("utf-8"),
                                   "text/html; charset=utf-8")
             m = re.fullmatch(r"/api/net/(.+)/([\w-]+)/(\d+)", p)
             if m:
-                run, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
+                                 int(m.group(3)))
                 with _lock:
                     return self._json({"stages": net_stages(run, vid, idx)})
             m = re.fullmatch(r"/api/chan/(.+)/([\w-]+)/(\d+)/([\w.]+)", p)
             if m:
-                run, vid, idx, sid = (m.group(1), m.group(2), int(m.group(3)),
-                                      m.group(4))
+                run, vid, idx, sid = (run_id(m.group(1)), youtube_id(m.group(2)),
+                                      int(m.group(3)), m.group(4))
                 with _lock:
                     a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
                 return self._json(act.channel_stats(a[sid]))
@@ -358,12 +370,12 @@ class Handler(BaseHTTPRequestHandler):
 
             m = re.fullmatch(r"/img/(scene|mini)/([\w-]+)/(\d+)\.jpg", p)
             if m:
-                kind, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                kind, vid, idx = m.group(1), youtube_id(m.group(2)), int(m.group(3))
                 return self._file(COORDS_DATA / vid / kind / f"{idx:06d}.jpg")
             m = re.fullmatch(r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/grid\.png", p)
             if m:
-                run, vid, idx, sid = (m.group(1), m.group(2), int(m.group(3)),
-                                      m.group(4))
+                run, vid, idx, sid = (run_id(m.group(1)), youtube_id(m.group(2)),
+                                      int(m.group(3)), m.group(4))
                 with _lock:
                     a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
                     body = act.grid_png(a[sid])
@@ -371,8 +383,9 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(
                 r"/img/net/(.+)/([\w-]+)/(\d+)/([\w.]+)/ch(\d+)\.png", p)
             if m:
-                run, vid, idx, sid, ch = (m.group(1), m.group(2), int(m.group(3)),
-                                          m.group(4), int(m.group(5)))
+                run, vid, idx, sid, ch = (run_id(m.group(1)), youtube_id(m.group(2)),
+                                          int(m.group(3)), m.group(4),
+                                          int(m.group(5)))
                 with _lock:
                     a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
                     body = (act.rgb_png(a[sid]) if sid == "input" and ch < 0
@@ -380,20 +393,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(body, "image/png", cache=3600)
             m = re.fullmatch(r"/img/scenefull/(.+)/([\w-]+)/(\d+)\.png", p)
             if m:
-                run, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
+                                 int(m.group(3)))
                 with _lock:
                     a = act.activations(ckpt_of(run), str(scene_file(vid, idx)))
                     body = act.rgb_png(a["input"], width=560)
                 return self._send(body, "image/png", cache=3600)
             m = re.fullmatch(r"/img/kernel/(.+)/([\w.]+)/(\d+)\.png", p)
             if m:
-                run, sid, ch = m.group(1), m.group(2), int(m.group(3))
+                run, sid, ch = run_id(m.group(1)), m.group(2), int(m.group(3))
                 with _lock:
                     body = act.kernel_png(ckpt_of(run), sid, ch)
                 return self._send(body, "image/png", cache=86400)
             m = re.fullmatch(r"/img/heat/(.+)/([\w-]+)/(\d+)\.png", p)
             if m:
-                run, vid, idx = m.group(1), m.group(2), int(m.group(3))
+                run, vid, idx = (run_id(m.group(1)), youtube_id(m.group(2)),
+                                 int(m.group(3)))
                 with _lock:
                     body = heat_png(run, vid, idx)
                 return self._send(body, "image/png", cache=86400)

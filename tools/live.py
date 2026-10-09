@@ -51,7 +51,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from paths import DEFAULT_LAYOUT, RUNS
+from paths import DEFAULT_LAYOUT, RUNS, run_dir
 from checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
 from channels import check_fps, youtube_id
 from build_coords import STORE_W, probe_url, frames as frame_stream
@@ -112,10 +112,7 @@ class CoordInfer:
 
 def run_checkpoint(run: str) -> Path:
     """Прогон → его model.pt; только внутри runs/: чекпоинт — это код."""
-    ck = (RUNS / run / "model.pt").resolve()
-    if RUNS.resolve() not in ck.parents:
-        raise ValueError(f"прогон вне runs/: {run}")
-    return ck
+    return run_dir(run) / "model.pt"
 
 
 def load_runner(path: Path, device: str):
