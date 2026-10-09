@@ -1,0 +1,25 @@
+{
+  "video_id": "Kf68OmmNC_A",
+  "url": "https://www.youtube.com/watch?v=Kf68OmmNC_A",
+  "title": "BEST OF WORLDS 2025",
+  "channel": "Caedrel",
+  "channel_url": "https://www.youtube.com/channel/UCOFiUtKui6-x4T-J7_DgCag",
+  "upload_date": "20251112",
+  "duration_sec": 724,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "test",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        0.0,
+        724.0
+      ]
+    ],
+    "frames": 724,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

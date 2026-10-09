@@ -34,6 +34,13 @@
 пика берётся локальным мягким argmax 5×5. Отдельный выход — «это сцена»:
 чёрные поля, UI и пустота за краем кадра должны получать малый вес.
 
+Вопрос «это вообще игра?» решает необязательная голова кадра FrameHead
+поверх замороженной модели (обучает tools/train_not_game.py): по среднему
+эмбеддингу патчей и тому, насколько патчи уверены в своём месте и согласны
+между собой, она отличает игру от вебкамеры, клиента, заставок и других
+игр. Её веса и порог лежат в чекпоинте отдельным полем frame_head; если его
+нет, модель работает как раньше.
+
 Пример (проверка формы и геометрии):
     python tools/patch_model.py
 """
@@ -277,6 +284,57 @@ class PatchHead(nn.Module):
         return F.linear(h, c2.weight[:, :, 0, 0], c2.bias)
 
 
+FRAME_SCALARS = ("scene_mean", "scene_frac", "mass_mean", "weight_mean", "agree")
+
+
+def frame_features(emb: torch.Tensor, scene: torch.Tensor, mass: torch.Tensor,
+                   vf: torch.Tensor, agree: torch.Tensor,
+                   min_valid: float = 0.5) -> torch.Tensor:
+    """Признаки кадра для «игра / не игра» из ответов патчей: (B, D + 5).
+
+    Средний эмбеддинг патчей внутри следа картинки и пять чисел: средняя
+    P(сцена), доля патчей с P(сцена) > 0.5, средняя доля вероятности в окне
+    пика (насколько патч уверен в своём месте), средний вес голоса и доля
+    веса в согласии. Средний эмбеддинг — это то же, что усреднить по
+    патчам линейную оценку «патч из игры», то есть доля патчей-игры с
+    обучаемыми весами; числа добавлены потому, что именно по уверенности и
+    согласию видно, что патчи «не узнают» место, даже когда голова «сцена»
+    обманута (на панели во весь кадр P(сцена) = 0.76).
+    """
+    m = (vf >= min_valid).float()
+    n = m.sum((1, 2)).clamp(min=1)
+    e = (emb.float() * m[:, None]).sum((2, 3)) / n[:, None]
+    sc = scene.float()
+    ms = mass.float()
+    sc_mean = (sc * m).sum((1, 2)) / n
+    sc_frac = ((sc > 0.5).float() * m).sum((1, 2)) / n
+    ms_mean = (ms * m).sum((1, 2)) / n
+    w_mean = (sc * ms * m).sum((1, 2)) / n
+    return torch.cat([e, torch.stack([sc_mean, sc_frac, ms_mean, w_mean,
+                                      agree.float()], 1)], 1)
+
+
+class FrameHead(nn.Module):
+    """Признаки кадра (frame_features) → логит «это игровая сцена League».
+
+    Маленькая голова поверх замороженной патчевой модели: энкодер и голова
+    патча не меняются, поэтому координаты остаются ровно такими же. Порог
+    хранится рядом, в чекпоинте (поле frame_head), и подбирается при
+    обучении (tools/train_not_game.py).
+    """
+
+    def __init__(self, cin: int, hidden: int = 64):
+        super().__init__()
+        self.cin, self.hidden = cin, hidden
+        self.register_buffer("mu", torch.zeros(cin))
+        self.register_buffer("sd", torch.ones(cin))
+        self.net = nn.Sequential(nn.Linear(cin, hidden), nn.ReLU(inplace=True),
+                                 nn.Dropout(0.2), nn.Linear(hidden, 1))
+
+    def forward(self, feat: torch.Tensor) -> torch.Tensor:
+        return self.net((feat.float() - self.mu) / self.sd)[:, 0]
+
+
 class PatchNet(nn.Module):
     def __init__(self, encoder: str = "cnn", dim: int = 128):
         super().__init__()
@@ -285,6 +343,10 @@ class PatchNet(nn.Module):
         self.stride = self.encoder.stride
         self.head = PatchHead(self.encoder.out_ch, dim)
         self.grid = self.head.grid
+        # Голова «игра / не игра» (FrameHead) — необязательная: у старых
+        # чекпоинтов её нет, и тогда модель просто не отвечает на этот вопрос.
+        self.frame: FrameHead | None = None
+        self.frame_threshold = 0.5
 
     def forward(self, x01):
         """x01: (B, 3, H, W) в [0, 1]. Ответ: эмбеддинги (B, D, h, w),
@@ -295,11 +357,20 @@ class PatchNet(nn.Module):
         return [p for p in self.parameters() if p.requires_grad]
 
     def state(self) -> dict:
+        # Веса FrameHead — отдельным полем, а не в "state": чекпоинт с
+        # головой кадра грузится и старым load_patchnet (поле он не читает).
         sd = {k: v for k, v in self.state_dict().items()
-              if not k.startswith("encoder.vit.")}
-        return {"kind": "patch", "encoder": self.kind, "state": sd,
-                "units_per_px": UNITS_PER_PX, "grid": self.grid,
-                "dim": self.head.embed.out_channels}
+              if not k.startswith("encoder.vit.") and not k.startswith("frame.")}
+        out = {"kind": "patch", "encoder": self.kind, "state": sd,
+               "units_per_px": UNITS_PER_PX, "grid": self.grid,
+               "dim": self.head.embed.out_channels}
+        if self.frame is not None:
+            out["frame_head"] = {
+                "cin": self.frame.cin, "hidden": self.frame.hidden,
+                "state": self.frame.state_dict(),
+                "threshold": float(self.frame_threshold),
+                "features": list(FRAME_SCALARS)}
+        return out
 
 
 def load_patchnet(path: Path, dev: str) -> PatchNet:
@@ -309,6 +380,11 @@ def load_patchnet(path: Path, dev: str) -> PatchNet:
     bad = [k for k in missing if not k.startswith("encoder.vit.")]
     if bad or unexpected:
         raise RuntimeError(f"чекпоинт не подходит: {bad[:5]} {unexpected[:5]}")
+    fh = ck.get("frame_head")
+    if fh:
+        m.frame = FrameHead(fh["cin"], fh.get("hidden", 64))
+        m.frame.load_state_dict(fh["state"])
+        m.frame_threshold = float(fh.get("threshold", 0.5))
     return m.to(dev).eval()
 
 
@@ -425,11 +501,18 @@ def predict_canvases(model: PatchNet, x01: torch.Tensor, valid: torch.Tensor,
     pts = pts.reshape(b, h, w, 2)
     mass = mass.reshape(b, h, w)
     off = cell_offsets(h, w, s, q0, torch.full((b,), units, device=q0.device))
-    wt = torch.sigmoid(sc.float()) * mass * (vf >= min_valid)
+    scene = torch.sigmoid(sc.float())
+    wt = scene * mass * (vf >= min_valid)
     cams, agree = aggregate_batch((pts - off).reshape(b, -1, 2), wt.reshape(b, -1), radius)
-    return (cams.cpu().numpy(), agree.cpu().numpy(),
-            {"pts": pts, "off": off, "w": wt, "valid": vf,
-             "scene": torch.sigmoid(sc.float()), "emb": emb})
+    info = {"pts": pts, "off": off, "w": wt, "valid": vf, "scene": scene, "emb": emb,
+            "frame_feat": frame_features(emb, scene, mass, vf, agree, min_valid)}
+    if model.frame is not None:
+        # P(игра) кадра; камера считается всегда, решать, верить ли ей, —
+        # вызывающему (порог в model.frame_threshold).
+        # Голова крошечная — считаем её в fp32 и вне autocast.
+        with torch.autocast(q0.device.type, enabled=False):
+            info["game"] = torch.sigmoid(model.frame(info["frame_feat"].float()))
+    return cams.cpu().numpy(), agree.cpu().numpy(), info
 
 
 @torch.no_grad()
@@ -442,7 +525,8 @@ def infer_images(model: PatchNet, imgs, mats, opens, h0: np.ndarray, dev: str,
     opens — маска (H, W) «здесь видна сцена» или None. Маска модели не
     показывается: по ней только отбираются патчи для метрики «точность
     отдельного патча». Ответ: камеры (N, 2), доля согласия (N,) и по
-    каждой картинке словарь с открытыми патчами (точки, смещения, веса).
+    каждой картинке словарь с открытыми патчами (точки, смещения, веса),
+    признаками кадра frame_feat и P(игра) game (None без FrameHead).
     """
     cams, agree, patches = [], [], []
     s = model.stride
@@ -479,12 +563,16 @@ def infer_images(model: PatchNet, imgs, mats, opens, h0: np.ndarray, dev: str,
         h, w = info["w"].shape[1:]
         of = F.avg_pool2d(torch.from_numpy(o).to(dev)[:, None].float() / 255,
                           s, s)[:, 0, :h, :w]
+        feat = info["frame_feat"].cpu().numpy()
+        game = info["game"].cpu().numpy() if "game" in info else None
         for j in range(len(chunk)):
             keep = (of[j] >= 0.75).reshape(-1)
             patches.append({
                 "pts": info["pts"][j].reshape(-1, 2)[keep].cpu().numpy(),
                 "off": info["off"][j].reshape(-1, 2)[keep].cpu().numpy(),
-                "w": info["w"][j].reshape(-1)[keep].cpu().numpy()})
+                "w": info["w"][j].reshape(-1)[keep].cpu().numpy(),
+                "frame_feat": feat[j],
+                "game": None if game is None else float(game[j])})
     return np.concatenate(cams), np.concatenate(agree), patches
 
 

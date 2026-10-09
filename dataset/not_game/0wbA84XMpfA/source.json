@@ -1,0 +1,25 @@
+{
+  "video_id": "0wbA84XMpfA",
+  "url": "https://www.youtube.com/watch?v=0wbA84XMpfA",
+  "title": "THE CRAZIEST GAME EVER!? *90K DAMAGE*",
+  "channel": "Thebausffs",
+  "channel_url": "https://www.youtube.com/channel/UCu7ODDeIZ4x1rJwM1LCVL8w",
+  "upload_date": "20251221",
+  "duration_sec": 1432,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "test",
+  "sampling": {
+    "fps": 0.5,
+    "ranges_sec": [
+      [
+        0.0,
+        1432.0
+      ]
+    ],
+    "frames": 716,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "video_id": "Pa8fH6tfZB0",
+  "url": "https://www.youtube.com/watch?v=Pa8fH6tfZB0",
+  "title": "THE RAGE TOOK OVER... NO ONE WANTS TO WATCH ME PLAY THIS",
+  "channel": "Nemesis 2",
+  "channel_url": "https://www.youtube.com/channel/UCCHTpCMyNkwxHj8sG7hwY_w",
+  "upload_date": "20261003",
+  "duration_sec": 1427,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        0.0,
+        1427.0
+      ]
+    ],
+    "frames": 1427,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

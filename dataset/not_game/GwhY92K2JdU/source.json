@@ -1,0 +1,25 @@
+{
+  "video_id": "GwhY92K2JdU",
+  "url": "https://www.youtube.com/watch?v=GwhY92K2JdU",
+  "title": "Professional Immortal Player #9 (SOLO QUEUE)",
+  "channel": "Ache",
+  "channel_url": "https://www.youtube.com/channel/UCTVleVqZ2YKv0hFyFOddY1w",
+  "upload_date": "20250508",
+  "duration_sec": 1934,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "test",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        300.0,
+        600.0
+      ]
+    ],
+    "frames": 300,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "video_id": "ruTlP0EyRYM",
+  "url": "https://www.youtube.com/watch?v=ruTlP0EyRYM",
+  "title": "I LEARNED A NEW TRICK ON EKKO 😈",
+  "channel": "Nemesis 2",
+  "channel_url": "https://www.youtube.com/channel/UCCHTpCMyNkwxHj8sG7hwY_w",
+  "upload_date": "20261006",
+  "duration_sec": 1983,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        0.0,
+        60.0
+      ]
+    ],
+    "frames": 60,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

@@ -54,6 +54,25 @@ python tools/extract_frames.py data/videos/<id>.mp4 --info data/videos/<id>.info
 Видео лежит в `data/` (не в Git). Повторный запуск не перезаписывает
 существующие кадры и сохраняет заметки.
 
+## Игра / не игра (`not_game/`)
+
+Разметка роликов стримеров и других игр для головы «игра / не игра»
+(`tools/train_not_game.py`, подробности — `docs/not-game.md`):
+
+```
+not_game/
+  split.json                 какие ролики для обучения, какие отложены
+  <video_id>/source.json     источник, интервалы выборки кадров
+  <video_id>/labels.csv      start_sec, end_sec, label, kind, note
+```
+
+`label` — `game`, `not_game` или `skip` (переход, в обучение и оценку не
+входит); `kind` — подкласс: `lol_game_pov`, `lol_game_esports`,
+`lol_client`, `lol_loading`, `webcam`, `intro`, `other_game_tft` и т. д.
+Интервал — полуоткрытый `[start_sec, end_sec)`. Кадры не хранятся:
+`tools/build_not_game.py --url <id>` собирает их потоком в
+`data/not_game/` по интервалам из `source.json`.
+
 ## Раскладка `spectator-volibear-challenger`
 
 Единственная проверенная раскладка. Закрывает верхний счёт и значки

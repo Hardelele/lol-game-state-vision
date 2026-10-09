@@ -26,6 +26,12 @@ dataset notes are in Russian; the README is in English.
   given. `CoordNet` degrades 2–20× under the same changes. Frozen DINOv2-S
   features with the same head reach 73 units and are 2–4× slower. Details,
   tables and speed: [docs/patch-embeddings.md](docs/patch-embeddings.md).
+- **"Not a game" screens.** A small frame head on top of the frozen patch
+  model (`tools/train_not_game.py`) tells game frames from streamer
+  webcams, the LoL client, loading and intro screens and other games. On
+  held-out streams it finds 96% of non-game frames and drops 0.24% of game
+  frames (none of 5,877 spectator frames); coordinates are unchanged, the
+  patch weights are the same. Details: [docs/not-game.md](docs/not-game.md).
 - **Baseline.** `CoordNet` (`tools/coord_model.py`) maps the masked and
   cropped main view to a 32×32 heatmap over the map. It is kept as the
   baseline and can still be chosen in the live mode.
@@ -113,7 +119,8 @@ python tools/calibrate_projection.py --fit 58w57eJ5Qks olmTXkkUv58 --check zJvTS
 | Tool | Purpose |
 | --- | --- |
 | `patch_model.py`, `train_patches.py` | Patch model: world-scale input, per-patch embeddings and map votes, camera by consensus; training with random crops, masks and synthetic UI |
-| `probe_hud.py` | Robustness check of any coordinate model against mask, HUD, crop, resolution and partial-frame changes |
+| `probe_hud.py` | Robustness check of any coordinate model against mask, HUD, crop, resolution and partial-frame changes; share of frames the "not a game" head rejects |
+| `build_not_game.py`, `train_not_game.py` | Frames of streams and other games from a YouTube stream; the "game / not a game" frame head on top of the frozen patch model |
 | `bench_models.py` | Speed and memory of the models, GPU/CPU and the full live path |
 | `coord_model.py` | `CoordNet` baseline: encoder + heatmap head, soft targets, expected/peak point, spread |
 | `build_coords.py` | Dense dataset "frame → camera position" from a local file or a YouTube stream (`--url`) |
@@ -135,7 +142,8 @@ python tools/calibrate_projection.py --fit 58w57eJ5Qks olmTXkkUv58 --check zJvTS
 
 - `dataset/` (committed): HUD layouts and the projection (`layouts/`), the
   channel catalog (`sources/`), manifests of reference frames of six
-  matches (`videos/<id>/source.json`, `frames.csv`). The frames themselves
+  matches (`videos/<id>/source.json`, `frames.csv`), time-interval labels
+  "game / not a game" of streams (`not_game/`). The frames themselves
   are not distributed; they are rebuilt locally from the public videos. See
   [dataset/README.md](dataset/README.md).
 - `data/` (ignored): local inputs. `data/videos/<id>.info.json` (video
@@ -173,9 +181,11 @@ for a new variant instead of overwriting an existing run.
   or zoom level has not been tried. `CoordNet` is tied to the layout
   (removing temporary masks ×3 median error, black zones ×10, a ±8% crop
   ×4–9).
-- **No "not a game" screen yet.** The patch model's scene head does not
-  reject a frame that is UI from edge to edge (loading or intro screens);
-  inside a normal frame the consensus discards UI votes.
+- **"Not a game" is trained on few streams.** The frame head saw one
+  streamer's player view (Nemesis) and two other games; another streamer's
+  player view loses 4% of game frames, ARAM (a different map) is rejected
+  as not a game, and a client screen that shows the map preview passes as
+  game.
 - **One verified layout.** Only `spectator-volibear-challenger` (16:9) has
   been checked by eye; the mask scales with the frame but rejects other
   aspect ratios. Every new channel needs its own visual check.
@@ -192,8 +202,8 @@ for a new variant instead of overwriting an existing run.
 
 ## Later scope
 
-Negative "not a game" frames, a second
-channel layout. Then locating the player's champion, identifying champions and objects, reading
+A second channel layout, including a homography for the player's own view
+(streamer POV). Then locating the player's champion, identifying champions and objects, reading
 HP/mana, and tracking state across frames. An SNN comparison may be tried
 once a model transfers across layouts.
 

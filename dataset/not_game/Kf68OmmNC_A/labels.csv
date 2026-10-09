@@ -1,0 +1,16 @@
+start_sec,end_sec,label,kind,note
+0,24,game,lol_game_esports,"трансляция турнира: наблюдатель, HUD киберспорта, вебкамера стримера в углу"
+24,28,skip,title,надпись «Best of Worlds 2025» во весь кадр поверх игры
+28,30,game,lol_game_esports,трансляция турнира
+30,33,not_game,screenshot,скриншот поста из соцсети во весь кадр
+33,83,game,lol_game_esports,трансляция турнира
+83,86,not_game,broadcast_camera,"сцена турнира: игроки, камера зала"
+86,144,game,lol_game_esports,трансляция турнира
+144,145,skip,transition,смазанная склейка
+145,345,game,lol_game_esports,трансляция турнира
+345,351,not_game,broadcast_camera,зрители с плакатами
+351,356,not_game,broadcast_camera,камера на игрока
+356,458,game,lol_game_esports,трансляция турнира
+458,472,not_game,broadcast_camera,"камеры на игроков, рисунок чемпиона, закулисье"
+472,473,skip,transition,смазанная склейка
+473,724,game,lol_game_esports,трансляция турнира

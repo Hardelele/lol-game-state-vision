@@ -1,0 +1,6 @@
+start_sec,end_sec,label,kind,note
+0,25,not_game,lol_client,"клиент: выбор чемпиона, руны"
+25,27,not_game,photo,фото команды (монтаж)
+27,31,not_game,intro,заставка канала
+31,32,skip,transition,заставка → игра
+32,60,game,lol_game_pov,игра

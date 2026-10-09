@@ -1,0 +1,25 @@
+{
+  "video_id": "jwhkLs4EPOk",
+  "url": "https://www.youtube.com/watch?v=jwhkLs4EPOk",
+  "title": "The Most Consistent Way to Climb in TFT Right Now",
+  "channel": "BoxBoxBox",
+  "channel_url": "https://www.youtube.com/channel/UCTIIfiTPv4PhAR2OKXjT9mA",
+  "upload_date": "20260707",
+  "duration_sec": 1777,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "test",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        300.0,
+        600.0
+      ]
+    ],
+    "frames": 300,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}
