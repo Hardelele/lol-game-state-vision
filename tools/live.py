@@ -46,6 +46,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Callable, Protocol
 
 import cv2
 import numpy as np
@@ -77,6 +78,27 @@ TIMING_WINDOW = 200      # по скольким последним кадрам
 
 # ---------- модели ----------
 
+class Runner(Protocol):
+    """Что сеанс ждёт от модели: PatchInfer (patch_infer.py) или CoordInfer.
+
+    `prepare` — хранимая сцена → вход `predict`. `frame_prep` — подготовка
+    полного кадра на видеокарте: вызываемое «кадр → (вход predict, хранимая
+    сцена)» или None, и тогда сцена готовится на процессоре.
+    """
+
+    kind: str
+    label: str
+    trained_on: list[str]
+
+    def describe(self, scene_size) -> str: ...
+
+    def prepare(self, scene: Image.Image): ...
+
+    def frame_prep(self, frame_size, crop, boxes, store_size) -> Callable | None: ...
+
+    def predict(self, prep) -> tuple[dict, np.ndarray, dict]: ...
+
+
 class CoordInfer:
     """CoordNet: хранимая сцена → вход сети → ожидаемая точка тепловой карты."""
 
@@ -98,6 +120,10 @@ class CoordInfer:
         a = np.asarray(scene.resize(self.size, Image.BILINEAR),
                        dtype=np.float32) / 255.0
         return torch.from_numpy(a.transpose(2, 0, 1) * 2 - 1)[None]
+
+    def frame_prep(self, frame_size, crop, boxes, store_size) -> None:
+        """Подготовки кадра на видеокарте у CoordNet нет."""
+        return None
 
     @torch.no_grad()
     def predict(self, t: torch.Tensor):
@@ -276,7 +302,7 @@ class Session:
         ck = run_checkpoint(self.run)
         if not ck.is_file():
             return self._fail(f"нет модели runs/{self.run}/model.pt")
-        model = load_runner(ck, self.device)
+        model: Runner = load_runner(ck, self.device)
         self.kind, self.model_label = model.kind, model.label
         self.trained_on = list(model.trained_on)
         self.note = (f"{w}x{h}, {dur / 60:.0f} мин · "
@@ -285,9 +311,8 @@ class Session:
         # иначе на процессоре — обрезка видом, маска на малом, cv2 INTER_AREA
         # вместо PIL LANCZOS (~3 мс против ~17; ответ патчевой модели тот же
         # в пределах 0.3 ед.).
-        gpu_prep = (model.frame_prep((w, h), (cx0, cy0, cx1, cy1), boxes,
-                                     (STORE_W, store_h))
-                    if hasattr(model, "frame_prep") else None)
+        gpu_prep = model.frame_prep((w, h), (cx0, cy0, cx1, cy1), boxes,
+                                    (STORE_W, store_h))
         cboxes = [(max(x0, cx0) - cx0, max(y0, cy0) - cy0,
                    min(x1, cx1) - cx0, min(y1, cy1) - cy0)
                   for x0, y0, x1, y1 in boxes
@@ -361,7 +386,7 @@ class Session:
             self.state = State.STOPPED if self._stop.is_set() else State.ENDED
 
     def _emit(self, mask, scene: np.ndarray, prep, mini: Image.Image,
-              bw: int, bh: int, model, ms: dict) -> None:
+              bw: int, bh: int, model: Runner, ms: dict) -> None:
         """Один кадр: истина с миникарты, ответ модели, картинки в память.
 
         `ms` — уже набежавшее время кадра (распаковка; подготовка входа
