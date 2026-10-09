@@ -20,7 +20,13 @@
   чёрными; обрезка шире и уже на 8%;
 * кусок кадра — случайный вырез 30-50% площади произвольных пропорций;
 * другое разрешение — кадр 1280×720 и 960×540 вместо 1920×1080;
-* сцена 4:3 — из плотной области берётся центральный кусок 4:3.
+* сцена 4:3 — из плотной области берётся центральный кусок 4:3;
+* весь кадр — синтетический UI: игры на входе нет, координаты не
+  считаются, только доля кадров, отброшенных головой «игра / не игра».
+
+Если у патчевой модели есть голова «игра / не игра» (FrameHead), для
+каждого варианта печатается ещё доля отброшенных кадров: на игровых
+вариантах это ложные отбрасывания.
 
 Старая модель получает каждый вариант так, как его получила бы она:
 картинка приводится к её входу 384×200. Патчевая модель (patch_model.py)
@@ -106,6 +112,7 @@ class Variants:
             "res720": "кадр 1280x720",
             "res540": "кадр 960x540",
             "aspect43": "сцена 4:3 (центр плотной области)",
+            "ui_full": "весь кадр — синтетический UI (не игра)",
         }
 
     def _build(self, fr, boxes, crop, out_size, paste_ui=None, black_extra=None,
@@ -184,6 +191,12 @@ class Variants:
             size = (round((b[2] - b[0]) * st[0] / (self.crop[2] - self.crop[0])), st[1])
             img, op = self._build(fr, self.all, b, size)
             return img, scene_from_box(b, size, self.crop, st), op
+        if key == "ui_full":
+            # Кадр, где игры нет вовсе: координаты на нём смысла не имеют,
+            # проверяется только, отбрасывает ли его голова «игра / не игра».
+            from train_patches import synth_ui
+            ui = synth_ui(st[0], st[1], rng)
+            return Image.fromarray(ui), np.eye(3), np.zeros((st[1], st[0]), bool)
         raise KeyError(key)
 
 
@@ -244,6 +257,8 @@ class PatchModel:
         self.trained_on = ck.get("trained_on", [])
         self.h0, _ = load_projection()
         self.dev = dev
+        # Порог головы «игра / не игра»; None — у чекпоинта её нет.
+        self.threshold = self.net.frame_threshold if self.net.frame is not None else None
 
     def predict(self, imgs, mats, opens):
         arr = [np.asarray(im.convert("RGB")) for im in imgs]
@@ -256,7 +271,7 @@ def load_any(path: Path, dev: str):
     return (PatchModel if ck.get("kind") == "patch" else OldModel)(path, dev)
 
 
-def metrics(pred, gt, patches=None) -> dict:
+def metrics(pred, gt, patches=None, threshold=None) -> dict:
     e = np.linalg.norm(pred - gt, axis=1) * MAP_UNITS
     e = np.where(np.isnan(e), 1e5, e)
     out = {"n": int(len(e)), "median": float(np.median(e)), "mean": float(e.mean()),
@@ -268,6 +283,12 @@ def metrics(pred, gt, patches=None) -> dict:
         out["patch_n"] = int(len(pe))
         out["patch_median"] = float(np.median(pe)) if len(pe) else float("nan")
         out["patch_within500"] = float((pe < 500).mean()) if len(pe) else float("nan")
+        g = [q.get("game") for q in patches]
+        if g and g[0] is not None and threshold is not None:
+            g = np.array(g, dtype=float)
+            # Доля кадров, которые голова «игра / не игра» отбросила бы.
+            out["rejected"] = float((g < threshold).mean())
+            out["game_median"] = float(np.median(g))
     return out
 
 
@@ -352,13 +373,24 @@ def main() -> None:
         res[k] = {"kind": m.kind, "trained_on": m.trained_on, "variants": {}}
         for v in ["control"] + keys:
             p = np.concatenate(preds[k][v])
-            mt = metrics(p, gt, pats[k][v] if m.kind == "patch" else None)
+            mt = metrics(p, gt, pats[k][v] if m.kind == "patch" else None,
+                         getattr(m, "threshold", None))
+            if v == "ui_full":
+                # Игры на входе нет — ошибка координат не считается.
+                mt = {key: mt[key] for key in ("n", "rejected", "game_median") if key in mt}
+                res[k]["variants"][v] = mt
+                if "rejected" in mt:
+                    print(f"  {names[v]:48s} отброшено как «не игра» "
+                          f"{mt['rejected'] * 100:5.1f}%, медиана P(игра) {mt['game_median']:.3f}")
+                continue
             res[k]["variants"][v] = mt
             line = (f"  {names[v]:48s} медиана {mt['median']:6.0f} ед.  среднее "
                     f"{mt['mean']:6.0f}  >1000 ед. {mt['miss1000'] * 100:5.1f}%")
             if "patch_median" in mt:
                 line += (f"  | патч: медиана {mt['patch_median']:5.0f} ед., "
                          f"<500 ед. {mt['patch_within500'] * 100:4.1f}%")
+            if "rejected" in mt:
+                line += f"  | отброшено {mt['rejected'] * 100:4.1f}%"
             print(line)
     args.out.mkdir(parents=True, exist_ok=True)
     out = args.out / f"{args.video}{('-' + args.tag) if args.tag else ''}.json"
