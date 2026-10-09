@@ -231,7 +231,7 @@ runs/patches/cnn-split16-notgame/model.pt --tag notgame`: все 12
 
 ## Как использовать и повторить
 
-В коде: `load_patchnet` подхватывает голову сам (поле `frame_head` в
+В коде: `checkpoints.load_checkpoint` подхватывает голову сам (поле `frame_head` в
 чекпойнте; старый код его не читает, старый чекпойнт грузится новым кодом
 без головы). `predict_canvases` кладёт в ответ `info["game"]` — P(игра)
 кадра, `infer_images` — `game` у каждого кадра; кадр «не игра», если
