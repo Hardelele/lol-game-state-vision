@@ -34,8 +34,9 @@ import cv2
 import numpy as np
 from scipy.optimize import least_squares
 
-from paths import COORDS_DATA, PROJECTION
-from geometry import apply_h
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA, PROJECTION
+from lolvision.geometry import apply_h
 
 PATCH = 96
 

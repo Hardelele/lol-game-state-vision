@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from patch_model import (MAP_GRID, aggregate, aggregate_batch, decode_points,
+from lolvision.patch_model import (MAP_GRID, aggregate, aggregate_batch, decode_points,
                          scene_from_box, soft_target_sep)
 
 

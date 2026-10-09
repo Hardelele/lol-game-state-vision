@@ -53,16 +53,17 @@ import numpy as np
 import torch
 from PIL import Image
 
-from paths import DEFAULT_LAYOUT, RUNS, run_dir
-from checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
-from dataset_io import MINI_STORE, STORE_W
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import DEFAULT_LAYOUT, RUNS, run_dir
+from lolvision.checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
+from lolvision.dataset_io import MINI_STORE, STORE_W
 from video_stream import probe_url, frames as frame_stream
 from channels import check_fps, youtube_id
-from coord_model import expected_point, peak_point, spread
-from geometry import MAP_UNITS
-from mask_frames import crop_box, mask_boxes
-from minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box
-from patch_infer import PatchInfer
+from lolvision.coord_model import expected_point, peak_point, spread
+from lolvision.geometry import MAP_UNITS
+from lolvision.mask_frames import crop_box, mask_boxes
+from lolvision.minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box
+from lolvision.patch_infer import PatchInfer
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть

@@ -17,8 +17,8 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from coord_model import CoordNet
-from patch_model import PatchNet, FrameHead
+from lolvision.coord_model import CoordNet
+from lolvision.patch_model import PatchNet, FrameHead
 
 COORDNET_KEYS = ("encoder", "head", "input_size", "grid")
 

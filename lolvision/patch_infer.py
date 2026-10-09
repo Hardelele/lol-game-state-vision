@@ -27,7 +27,7 @@ import torch
 
 import torch.nn.functional as F
 
-from patch_model import (MAP_UNITS, UNITS_PER_PX, load_projection, rectify,
+from lolvision.patch_model import (MAP_UNITS, UNITS_PER_PX, load_projection, rectify,
                          canvases_post, to_world)
 
 
@@ -274,8 +274,8 @@ def _main() -> None:
     import argparse
     import csv
     from PIL import Image
-    from paths import COORDS_DATA
-    from checkpoints import load_checkpoint
+    from lolvision.paths import COORDS_DATA
+    from lolvision.checkpoints import load_checkpoint
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("model", type=Path)

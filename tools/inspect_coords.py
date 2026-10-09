@@ -32,9 +32,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from paths import COORDS_DATA, COORDS_RUNS, INSPECT, PROJECTION
-from checkpoints import read_checkpoint
-from geometry import MAP_UNITS, apply_h, load_projection
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA, COORDS_RUNS, INSPECT, PROJECTION
+from lolvision.checkpoints import read_checkpoint
+from lolvision.geometry import MAP_UNITS, apply_h, load_projection
 from inspect_pages import (NAV_OPEN, NAV_CLOSE, b64, heat_rgba, sync_nav, update_manifest,
                            write_index)
 

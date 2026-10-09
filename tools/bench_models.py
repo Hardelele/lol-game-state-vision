@@ -32,11 +32,12 @@ import cv2
 import numpy as np
 import torch
 
-from paths import CHECKS, DATASET_VIDEOS, DEFAULT_LAYOUT, VIDEOS
-from mask_frames import crop_box, mask_boxes
-from checkpoints import load_checkpoint
-from coord_model import GRID, expected_point
-from patch_model import (load_projection, rectify, scene_from_box,
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import CHECKS, DATASET_VIDEOS, DEFAULT_LAYOUT, VIDEOS
+from lolvision.mask_frames import crop_box, mask_boxes
+from lolvision.checkpoints import load_checkpoint
+from lolvision.coord_model import GRID, expected_point
+from lolvision.patch_model import (load_projection, rectify, scene_from_box,
                          decode_points, aggregate, aggregate_batch, cell_offsets,
                          count_params, UNITS_PER_PX)
 

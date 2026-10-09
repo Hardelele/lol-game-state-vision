@@ -22,8 +22,8 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
-from paths import NOT_GAME_LABELS
-from mask_frames import crop_box, keep_grid
+from lolvision.paths import NOT_GAME_LABELS
+from lolvision.mask_frames import crop_box, keep_grid
 
 STORE_W = 720       # ширина хранимой сцены; вход модели делается из неё
 MINI_STORE = 256    # сторона хранимой миникарты

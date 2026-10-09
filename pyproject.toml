@@ -4,7 +4,7 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["tools", "tests"]
+src = [".", "tools"]
 
 [tool.ruff.lint]
 # BLE и N включены, чтобы стоящие в коде `# noqa: BLE001` / `# noqa: N802`
@@ -18,5 +18,5 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["tools"]
+pythonpath = [".", "tools"]
 testpaths = ["tests"]

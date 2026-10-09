@@ -10,10 +10,10 @@ import numpy as np
 import pytest
 import torch
 
-from mask_frames import crop_box, mask_boxes
-from patch_infer import FramePrep, PatchInfer
-from patch_model import UNITS_PER_PX, load_projection
-from paths import DATASET
+from lolvision.mask_frames import crop_box, mask_boxes
+from lolvision.patch_infer import FramePrep, PatchInfer
+from lolvision.patch_model import UNITS_PER_PX, load_projection
+from lolvision.paths import DATASET
 
 LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 

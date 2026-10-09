@@ -29,7 +29,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from paths import COORDS_DATA
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA
 
 
 def validity_mask(root: Path, rows: list[dict], n: int = 60) -> np.ndarray:

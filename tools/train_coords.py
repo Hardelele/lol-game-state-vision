@@ -23,11 +23,12 @@ import torch
 import torch.nn.functional as F
 from concurrent.futures import ThreadPoolExecutor
 
-from paths import COORDS_DATA, COORDS_RUNS, TRAIN_LOG
-from geometry import MAP_UNITS
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA, COORDS_RUNS, TRAIN_LOG
+from lolvision.geometry import MAP_UNITS
 from runlog import tee_stdout
-from dataset_io import load_rows
-from coord_model import (CoordNet, GRID, soft_target, expected_point, peak_point,
+from lolvision.dataset_io import load_rows
+from lolvision.coord_model import (CoordNet, GRID, soft_target, expected_point, peak_point,
                          spread, count_params)
 
 

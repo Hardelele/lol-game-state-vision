@@ -42,10 +42,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from paths import DEFAULT_LAYOUT, NOT_GAME_DATA, VIDEOS
-from mask_frames import crop_box, mask_boxes
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import DEFAULT_LAYOUT, NOT_GAME_DATA, VIDEOS
+from lolvision.mask_frames import crop_box, mask_boxes
 from video_stream import probe_url, frames, have_nvdec
-from dataset_io import STORE_W
+from lolvision.dataset_io import STORE_W
 
 FULL_SIZE = (960, 540)
 FIELDS = ["video_id", "t_sec", "scene", "full"]

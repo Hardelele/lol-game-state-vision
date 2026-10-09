@@ -23,8 +23,9 @@ import torch
 from PIL import Image
 from torch import nn
 
-from checkpoints import load_checkpoint
-from coord_model import CoordNet
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.checkpoints import load_checkpoint
+from lolvision.coord_model import CoordNet
 
 # Тёплая шкала: тёмное — слабый отклик, светлое — сильный. Серая шкала хуже
 # читается на мелких картах признаков, а радуга искажает порядок величин.

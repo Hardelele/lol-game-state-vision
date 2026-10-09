@@ -59,14 +59,15 @@ import numpy as np
 import torch
 from PIL import Image
 
-from paths import COORDS_DATA, CHECKS, DEFAULT_LAYOUT, VIDEOS
-from mask_frames import crop_box, mask_boxes
-from checkpoints import load_checkpoint
-from coord_model import expected_point
-from geometry import MAP_UNITS
-from patch_model import load_projection, scene_from_box, infer_images
-from dataset_io import stored_keep
-from augment import synth_ui
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA, CHECKS, DEFAULT_LAYOUT, VIDEOS
+from lolvision.mask_frames import crop_box, mask_boxes
+from lolvision.checkpoints import load_checkpoint
+from lolvision.coord_model import expected_point
+from lolvision.geometry import MAP_UNITS
+from lolvision.patch_model import load_projection, scene_from_box, infer_images
+from lolvision.dataset_io import stored_keep
+from lolvision.augment import synth_ui
 
 W, H = 1920, 1080
 OPAQUE_NAMES = ("scoreboard_and_objective_icons", "team_and_intro_left",

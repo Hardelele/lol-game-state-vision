@@ -42,7 +42,7 @@
 нет, модель работает как раньше.
 
 Пример (проверка формы и геометрии):
-    python tools/patch_model.py
+    python -m lolvision.patch_model
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from coord_model import block, count_params     # блок свёрток с GroupNorm, как у CoordNet
-from geometry import MAP_UNITS, apply_h, load_projection
+from lolvision.coord_model import block, count_params     # блок свёрток с GroupNorm, как у CoordNet
+from lolvision.geometry import MAP_UNITS, apply_h, load_projection
 
 UNITS_PER_PX = 6.0     # вид сверху: столько игровых единиц на пиксель входа
 MAP_GRID = 64          # сетка карты у головы патча: ячейка ≈ 231 ед.

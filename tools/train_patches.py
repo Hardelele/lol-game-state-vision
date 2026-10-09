@@ -44,11 +44,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
-from paths import COORDS_DATA, RUNS, TRAIN_LOG, DEFAULT_LAYOUT
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA, RUNS, TRAIN_LOG, DEFAULT_LAYOUT
 from runlog import tee_stdout
-from dataset_io import load_rows, stored_keep
-from augment import synth_ui, color_gpu
-from patch_model import (PatchNet, ENCODERS, MAP_UNITS, UNITS_PER_PX, load_projection,
+from lolvision.dataset_io import load_rows, stored_keep
+from lolvision.augment import synth_ui, color_gpu
+from lolvision.patch_model import (PatchNet, ENCODERS, MAP_UNITS, UNITS_PER_PX, load_projection,
                          to_world, footprint, cell_offsets, soft_target_sep,
                          infer_images, count_params, decode_points)
 

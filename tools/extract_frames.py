@@ -17,7 +17,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from paths import DATASET, ROOT
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import DATASET, ROOT
 
 FIELDS = ["frame", "video_id", "t_sec", "timecode", "note"]
 

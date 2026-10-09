@@ -36,9 +36,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from mask_frames import apply_mask
-from paths import DATASET_VIDEOS, INSPECT, MINIMAP
-from geometry import MAP_UNITS
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.mask_frames import apply_mask
+from lolvision.paths import DATASET_VIDEOS, INSPECT, MINIMAP
+from lolvision.geometry import MAP_UNITS
 from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
 
 SCALES = (10, 20, 40, 80, 160, 320)

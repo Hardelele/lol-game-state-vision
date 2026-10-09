@@ -35,10 +35,11 @@ import explain_miss
 import inspect_pages
 import live
 import video_side
-from geometry import MAP_UNITS, apply_h, load_projection
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.geometry import MAP_UNITS, apply_h, load_projection
 from channels import youtube_id
-from checkpoints import checkpoint_kind, read_checkpoint
-from paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS, run_dir
+from lolvision.checkpoints import checkpoint_kind, read_checkpoint
+from lolvision.paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS, run_dir
 
 WEB = TOOLS / "webapp"
 

@@ -31,7 +31,8 @@ import threading
 import time
 from pathlib import Path
 
-from paths import (ROOT, TOOLS, SOURCES, CHANNELS as STORE, COORDS_DATA as COORDS,
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import (ROOT, TOOLS, SOURCES, CHANNELS as STORE, COORDS_DATA as COORDS,
                    VIDEOS, DEFAULT_LAYOUT, INGEST_LOGS)
 
 CATALOGS = (SOURCES / "champion-replay-channels.json",

@@ -27,11 +27,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from paths import COORDS_DATA
-from checkpoints import load_checkpoint
-from coord_model import GRID, expected_point, peak_point, spread
-from geometry import MAP_UNITS
-from dataset_io import Scenes, load_rows
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA
+from lolvision.checkpoints import load_checkpoint
+from lolvision.coord_model import GRID, expected_point, peak_point, spread
+from lolvision.geometry import MAP_UNITS
+from lolvision.dataset_io import Scenes, load_rows
 
 
 @torch.no_grad()

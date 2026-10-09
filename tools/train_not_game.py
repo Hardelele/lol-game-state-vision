@@ -50,13 +50,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from paths import COORDS_DATA, RUNS, DEFAULT_LAYOUT, NOT_GAME_DATA, NOT_GAME_LABELS
+import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolvision.paths import COORDS_DATA, RUNS, DEFAULT_LAYOUT, NOT_GAME_DATA, NOT_GAME_LABELS
 from runlog import tee_stdout
-from mask_frames import crop_box
-from checkpoints import load_checkpoint
-from patch_model import (load_projection, scene_from_box,
+from lolvision.mask_frames import crop_box
+from lolvision.checkpoints import load_checkpoint
+from lolvision.patch_model import (load_projection, scene_from_box,
                          infer_images, FrameHead, FRAME_SCALARS)
-from dataset_io import load_labels, label_at
+from lolvision.dataset_io import load_labels, label_at
 
 SPLIT = NOT_GAME_LABELS / "split.json"
 CACHE = RUNS / "not_game" / "cache"

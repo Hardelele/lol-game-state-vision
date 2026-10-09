@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from paths import PROJECTION
+from lolvision.paths import PROJECTION
 
 MAP_UNITS = 14800      # примерный размер карты League of Legends в игровых единицах
 
