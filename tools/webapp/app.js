@@ -4,6 +4,11 @@
 // доступны все кадры ролика, а не выборка.
 
 const $ = (id) => document.getElementById(id);
+// Всё, что пришло с YouTube или с диска (названия, каналы, имена прогонов),
+// попадает в разметку только через esc.
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;");
 const BIG = 0.133;   // промах больше половины вьюпорта считаем крупным
 const GOOD = 0.05;
 const UNSURE = 0.15; // разброс ответа, выше которого модель сомневается
@@ -78,7 +83,7 @@ async function boot() {
   S.proj = idx.projection && idx.projection.outline ? idx.projection : null;
   S.meta = idx.videos || {};
   S.mapUnits = idx.map_units;
-  $("run").innerHTML = S.runs.map((r) => `<option>${r.id}</option>`).join("");
+  $("run").innerHTML = S.runs.map((r) => `<option>${esc(r.id)}</option>`).join("");
   $("run").onchange = () => selectRun($("run").value);
   $("video").onchange = () => loadFrames($("video").value);
   $("keys").innerHTML = KEYS.map(([caps, d]) =>
@@ -131,7 +136,7 @@ async function selectRun(id) {
     const m = S.meta[v] || {};
     const tag = train.includes(v) ? "обучающий" : "ОТЛОЖЕННЫЙ";
     const who = [m.role, m.side].filter(Boolean).join(" ");
-    return `<option value="${v}">${tag} · ${who || v}</option>`;
+    return `<option value="${esc(v)}">${tag} · ${esc(who || v)}</option>`;
   }).join("");
   // По умолчанию открываем отложенный ролик: на обучающем смотреть нечего,
   // модель эти кадры видела.
@@ -598,9 +603,9 @@ function drawPipe() {
   });
   $("pipe").innerHTML = groups.map((g) =>
     `<div class="grp${g.ids.includes(S.stage) ? " cur" : ""}"><div>` +
-    g.ids.map((i) => `<button data-i="${i}" title="${S.stages[i].name}" class="` +
+    g.ids.map((i) => `<button data-i="${i}" title="${esc(S.stages[i].name)}" class="` +
       `${i === S.stage ? "cur" : i < S.stage ? "done" : ""}"></button>`).join("") +
-    `</div><span>${g.label}</span></div>`).join("");
+    `</div><span>${esc(g.label)}</span></div>`).join("");
   $("pipe").querySelectorAll("button").forEach((el) => {
     el.onclick = () => { S.stage = +el.dataset.i; S.chan = 0; drawPipe(); showStage(); };
   });
@@ -731,12 +736,12 @@ function showMeta(vid, train) {
   bits.push(train
     ? '<span class="warn">ОБУЧАЮЩИЙ · модель эти кадры видела</span>'
     : '<span class="held">ОТЛОЖЕННЫЙ · модель этих кадров не видела</span>');
-  if (m.title) bits.push(`<b>${m.title}</b>`);
-  if (m.role) bits.push(`роль ${m.role}`);
+  if (m.title) bits.push(`<b>${esc(m.title)}</b>`);
+  if (m.role) bits.push(`роль ${esc(m.role)}`);
   if (m.side && m.side !== "?") {
-    bits.push(`сторона ${m.side}${m.side_sure ? "" : " (вероятно)"}`);
+    bits.push(`сторона ${esc(m.side)}${m.side_sure ? "" : " (вероятно)"}`);
   }
-  bits.push(`<code>${vid}</code>`);
+  bits.push(`<code>${esc(vid)}</code>`);
   if (train) bits.push("числа ниже — это память, а не предсказание");
   $("vmeta").innerHTML = bits.join(" · ");
 }
@@ -757,9 +762,6 @@ const VROLES = ["Top", "Jungle", "Mid", "ADC", "Support"];
 
 const dur = (s) => (s == null ? "" :
   `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`);
-const esc = (s) => String(s == null ? "" : s)
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;");
 
 async function openChannels() {
   if (!CH.all.length) {
@@ -870,7 +872,7 @@ function drawVids() {
         : h && h.frames ? `<span class="tag have">в датасете · ${h.frames} кадров</span>`
           : h ? `<span class="tag dim">описание есть</span>` : "",
     ].join("");
-    return `<button class="vrow${v.id === CH.sel ? " cur" : ""}" data-id="${v.id}">` +
+    return `<button class="vrow${v.id === CH.sel ? " cur" : ""}" data-id="${esc(v.id)}">` +
       `<img loading="lazy" src="${esc(v.thumb || "")}" alt="">` +
       `<span class="vtxt"><span class="vt">${esc(v.title)}</span>` +
       `<span class="vtags">${tags}</span></span>` +
@@ -891,7 +893,7 @@ function selectVideo(id) {
   $("pYt").href = `https://www.youtube.com/watch?v=${id}`;
   // Плеер в iframe: ролик идёт с серверов YouTube, у нас он не оседает.
   $("ytbox").innerHTML =
-    `<iframe src="https://www.youtube-nocookie.com/embed/${id}?rel=0" ` +
+    `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?rel=0" ` +
     `title="ролик" allow="accelerometer; autoplay; clipboard-write; ` +
     `encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>`;
   const run = S.runs.find((r) => r.videos.includes(id));
@@ -958,7 +960,7 @@ function drawJobs(jobs) {
   $("jobs").innerHTML = `<div class="jhead">сборка кадров</div>` + jobs.map((j) =>
     `<div class="job ${j.state === "идёт" ? "run" : j.state === "готово" ? "ok" : "bad"}">` +
     `<div class="jtop"><code>${esc(j.id)}</code><i>${esc(j.state)}</i>` +
-    `<span class="grow"></span><i>${j.fps} кадр/с</i></div>` +
+    `<span class="grow"></span><i>${esc(j.fps)} кадр/с</i></div>` +
     `<pre>${esc(j.log)}</pre></div>`).join("");
 }
 
@@ -1058,7 +1060,7 @@ async function startLive(id, fps) {
   S.frames = [];
   S.pos = 0;
   // Выпадающий список ролика показывает поток, пока он открыт.
-  $("video").innerHTML = `<option value="${id}">ПОТОК · ${esc(d.title || id)}</option>`;
+  $("video").innerHTML = `<option value="${esc(id)}">ПОТОК · ${esc(d.title || id)}</option>`;
   $("holdout").className = "dot live";
   $("holdout").title = "поток: ролик читается с YouTube прямо сейчас";
   setMode("end");
