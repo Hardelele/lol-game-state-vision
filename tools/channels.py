@@ -25,6 +25,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -43,7 +44,7 @@ INGEST_LOGS = ROOT / "runs" / "ingest"
 
 FRESH = 6 * 3600          # сколько секунд считаем кеш списка годным
 ROLES = ("Top", "Jungle", "Mid", "ADC", "Bot", "Support")
-YT = ["python", "-m", "yt_dlp"]
+YT = [sys.executable, "-m", "yt_dlp"]
 
 
 def _run(args: list[str], timeout: float = 180) -> str:
@@ -296,7 +297,7 @@ def ingest(vid: str, fps: float = 1.0) -> dict:
     fh = logfile.open("w", encoding="utf-8")
     env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(ROOT / "tools")}
     proc = subprocess.Popen(
-        ["python", "-u", str(ROOT / "tools" / "build_coords.py"),
+        [sys.executable, "-u", str(ROOT / "tools" / "build_coords.py"),
          "--url", vid, "--layout", str(LAYOUT), "--fps", str(fps)],
         cwd=str(ROOT), stdout=fh, stderr=subprocess.STDOUT,
         env={**os.environ, **env})

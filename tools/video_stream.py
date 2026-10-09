@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import numpy as np
 def probe_url(url: str) -> tuple[int, int, float, str, dict]:
     """Размеры и длительность ролика без его скачивания."""
     out = subprocess.run(
-        ["python", "-m", "yt_dlp", "-f", "bv*[height<=1080]", "--skip-download",
+        [sys.executable, "-m", "yt_dlp", "-f", "bv*[height<=1080]", "--skip-download",
          "--dump-json", url],
         capture_output=True, text=True, encoding="utf-8", errors="replace")
     if out.returncode != 0:
@@ -73,7 +74,7 @@ def frames(video, w: int, h: int, fps: float, from_url: bool = False,
     puller = None
     if from_url:
         puller = subprocess.Popen(
-            ["python", "-m", "yt_dlp", "-f", "bv*[height<=1080]", "-o", "-",
+            [sys.executable, "-m", "yt_dlp", "-f", "bv*[height<=1080]", "-o", "-",
              "--quiet", "--no-warnings", str(video)],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=1 << 22)
         src, stdin = "pipe:0", puller.stdout
