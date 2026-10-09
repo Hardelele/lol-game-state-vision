@@ -1,0 +1,25 @@
+{
+  "video_id": "kdsPLSGYbFg",
+  "url": "https://www.youtube.com/watch?v=kdsPLSGYbFg",
+  "title": "NEW NIDALEE MID SETUP!",
+  "channel": "Nemesis 2",
+  "channel_url": "https://www.youtube.com/channel/UCCHTpCMyNkwxHj8sG7hwY_w",
+  "upload_date": "20261001",
+  "duration_sec": 1175,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        0.0,
+        90.0
+      ]
+    ],
+    "frames": 90,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

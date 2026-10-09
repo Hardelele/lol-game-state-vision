@@ -1,0 +1,25 @@
+{
+  "video_id": "l5Rkpik0iBA",
+  "url": "https://www.youtube.com/watch?v=l5Rkpik0iBA",
+  "title": "35+ ELIMS! mvp! NRG s0m CLOVE VALORANT RANKED GAMEPLAY [ FULL MATCH VOD ]",
+  "channel": "Valorant DAILY",
+  "channel_url": "https://www.youtube.com/channel/UCOR8JcMRg_cFKx0etV5zXBQ",
+  "upload_date": "20250617",
+  "duration_sec": 1993,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        300.0,
+        600.0
+      ]
+    ],
+    "frames": 300,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

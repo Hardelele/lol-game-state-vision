@@ -1,0 +1,10 @@
+{
+  "note": "Сплит по роликам. train — ролики, по которым учится голова «игра / не игра» и подбирается порог (перекрёстной проверкой по роликам); test — отложенные: другой стример, другие ролики Nemesis, другие ролики тех же игр и игра, которой при обучении не было (Dota 2). coords_test — 4 отложенных ролика data/coords исходной патч-модели; coords_train по умолчанию — её обучающие ролики (trained_on чекпоинта).",
+  "train": ["Pa8fH6tfZB0", "wnGVKhGg7ws", "kdsPLSGYbFg", "GyIFBJcdj0Y", "ruTlP0EyRYM",
+            "yue1jc4EwT4", "IgJCPlXnArU", "l5Rkpik0iBA"],
+  "test": ["LPQwQCkfnkg", "0wbA84XMpfA", "Kf68OmmNC_A", "syGd0OQPILw", "jwhkLs4EPOk",
+           "GwhY92K2JdU", "H1MH9LThtVk"],
+  "out_of_scope_kinds": ["lol_game_aram"],
+  "out_of_scope_note": "ARAM идёт на другой карте (Воющая бездна): модель координат её не знает, и для неё отбросить такой кадр правильно. Эти кадры размечены как игра, но в общие цифры не входят и показываются отдельной строкой.",
+  "coords_test": ["58w57eJ5Qks", "olmTXkkUv58", "5nBGNokOUDA", "4AIX8QtRid4"]
+}

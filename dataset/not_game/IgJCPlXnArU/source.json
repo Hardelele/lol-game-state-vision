@@ -1,0 +1,25 @@
+{
+  "video_id": "IgJCPlXnArU",
+  "url": "https://www.youtube.com/watch?v=IgJCPlXnArU",
+  "title": "How I FINALLY Hit TFT Challenger This Set...",
+  "channel": "scarra",
+  "channel_url": "https://www.youtube.com/channel/UCan_L4XHfSbCKaTCcntyLTQ",
+  "upload_date": "20260629",
+  "duration_sec": 1560,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        300.0,
+        600.0
+      ]
+    ],
+    "frames": 300,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

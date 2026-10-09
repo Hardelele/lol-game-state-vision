@@ -1,0 +1,29 @@
+{
+  "video_id": "wnGVKhGg7ws",
+  "url": "https://www.youtube.com/watch?v=wnGVKhGg7ws",
+  "title": "COACH NEMESIS - THE EMERALD LION NICKICH NEEDS HELP..",
+  "channel": "Nemesis 2",
+  "channel_url": "https://www.youtube.com/channel/UCCHTpCMyNkwxHj8sG7hwY_w",
+  "upload_date": "20260921",
+  "duration_sec": 5811,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        0.0,
+        150.0
+      ],
+      [
+        1440.0,
+        1980.0
+      ]
+    ],
+    "frames": 690,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

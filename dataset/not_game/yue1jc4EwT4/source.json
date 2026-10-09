@@ -1,0 +1,25 @@
+{
+  "video_id": "yue1jc4EwT4",
+  "url": "https://www.youtube.com/watch?v=yue1jc4EwT4",
+  "title": "SIDELANE KING AZIR & MY MIDLANE WORLDS CHAMP TIERLIST!",
+  "channel": "Nemesis 2",
+  "channel_url": "https://www.youtube.com/channel/UCCHTpCMyNkwxHj8sG7hwY_w",
+  "upload_date": "20261005",
+  "duration_sec": 2106,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        0.0,
+        60.0
+      ]
+    ],
+    "frames": 60,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}

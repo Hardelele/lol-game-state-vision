@@ -1,0 +1,25 @@
+{
+  "video_id": "H1MH9LThtVk",
+  "url": "https://www.youtube.com/watch?v=H1MH9LThtVk",
+  "title": "Luna 586 Last Hits Insane Farm Safe Lane: Rank 86 Immortal Match 7.41f",
+  "channel": "Dota 2 Files",
+  "channel_url": "https://www.youtube.com/channel/UCGZObtx_yQgd5W54F_78l6w",
+  "upload_date": "20261009",
+  "duration_sec": 2422,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "test",
+  "sampling": {
+    "fps": 1.0,
+    "ranges_sec": [
+      [
+        300.0,
+        600.0
+      ]
+    ],
+    "frames": 300,
+    "tool": "tools/build_not_game.py (поток, видео на диск не пишется)"
+  }
+}
