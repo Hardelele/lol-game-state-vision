@@ -53,6 +53,7 @@ from PIL import Image
 
 from paths import DEFAULT_LAYOUT, RUNS
 from checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
+from channels import check_fps, youtube_id
 from build_coords import STORE_W, probe_url, frames as frame_stream
 from coord_model import expected_point, peak_point, spread
 from geometry import MAP_UNITS
@@ -390,6 +391,7 @@ _reg = threading.Lock()
 def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
           start_sec: float = 0.0) -> dict:
     """Открыть сеанс. Одновременно работает один: распаковка занимает карту."""
+    vid, fps = youtube_id(vid), check_fps(fps)
     run = run or DEFAULT_RUN
     run_checkpoint(run)                  # путь вне runs/ отвергается сразу
     with _reg:
