@@ -86,12 +86,46 @@ async function boot() {
   wire();
   wireNet();
   wireChannels();
+  loadLiveModels();
   await selectRun(S.runs[0].id);
+}
+
+// Модели для потока — любые прогоны с model.pt, в том числе патчевые из
+// runs/patches, у которых нет сохранённых предсказаний и которых поэтому нет
+// в списке прогонов в шапке.
+async function loadLiveModels() {
+  const r = await fetch("/api/live-models").catch(() => null);
+  if (!r || !r.ok) return;
+  const d = await r.json();
+  S.liveModels = d.models || [];
+  const name = (m) => `${m.kind === "patch" ? "патч" : "CoordNet"} · ${m.id}`;
+  // Патчевые — первыми: это основная модель, CoordNet оставлен для сравнения.
+  const order = S.liveModels.slice().sort((a, b) =>
+    (a.kind === "patch" ? 0 : 1) - (b.kind === "patch" ? 0 : 1));
+  $("pModel").innerHTML = order.map((m) =>
+    `<option value="${esc(m.id)}">${esc(name(m))}</option>`).join("");
+  $("pModel").value = d.default;
+}
+
+// Ответа может не быть: патчевая модель без единого голоса (кадр не игры)
+// камеру не называет, и в строке кадра тогда null.
+const num = (v, n) => (Number.isFinite(v) ? v.toFixed(n) : "—");
+const isPatch = () => (S.live ? S.live.kind === "patch" : S.run && S.run.kind === "patch");
+
+// Разбор по слоям читает кадр с диска и умеет только CoordNet: в потоке и у
+// патчевой модели кнопка выключена, а не ведёт в ошибку.
+function netAvail() {
+  const why = S.live ? "в потоке недоступно: слои читаются из сохранённого кадра"
+    : isPatch() ? "у патчевой модели разбора по слоям нет" : "";
+  $("mNet").disabled = !!why;
+  $("mNet").title = why || "Tab";
+  if (why && S.mode === "net") setMode("end");
 }
 
 async function selectRun(id) {
   S.run = S.runs.find((r) => r.id === id);
   const train = S.run.trained_on || [];
+  netAvail();
   // В списке — человекочитаемая подпись, иначе виден только идентификатор.
   $("video").innerHTML = S.run.videos.map((v) => {
     const m = S.meta[v] || {};
@@ -190,17 +224,33 @@ function render() {
   $("heatimg").src = heatSrc(f);
   $("heatimg").style.display = S.heat ? "" : "none";
 
-  $("vErr").textContent = f.err.toFixed(3);
+  const answered = Number.isFinite(f.px);
+  $("vErr").textContent = answered ? f.err.toFixed(3) : "нет ответа";
   $("vErr").className = "big " + errClass(f.err);
-  $("vUnits").textContent = `${Math.round(f.err * S.mapUnits)} ед.`;
+  $("vUnits").textContent = answered ? `${Math.round(f.err * S.mapUnits)} ед.` : "";
   $("vTrue").textContent = `${f.cx.toFixed(3)}, ${f.cy.toFixed(3)}`;
-  $("vPred").textContent = `${f.px.toFixed(3)}, ${f.py.toFixed(3)}`;
-  $("vSpread").textContent = f.spread.toFixed(2);
+  $("vPred").textContent = `${num(f.px, 3)}, ${num(f.py, 3)}`;
+  // У патчевой модели разброс — СКО голосов патчей, тепло — их гистограмма;
+  // у CoordNet — разброс и само распределение его головы. Согласные голоса
+  // лежат в радиусе 0.025 карты, поэтому разброс патчей показан точнее.
+  const patch = isPatch();
+  $("vSpread").textContent = num(f.spread, patch ? 3 : 2);
   $("vSpread").className = f.spread >= UNSURE ? "mid" : "";
+  $("fSpread").title = patch ? "разброс голосов патчей вокруг ответа, доли карты"
+    : "разброс ответа";
+  $("heatimg").title = patch ? "куда голосуют патчи" : "распределение вероятности";
+  $("fAgree").classList.toggle("hidden", f.agree === undefined);
+  $("fScene").classList.toggle("hidden", f.scene === undefined);
+  if (f.agree !== undefined) $("vAgree").textContent = num(f.agree, 2);
+  if (f.scene !== undefined) {
+    $("vScene").textContent = `${num(f.scene, 2)} · ${f.votes} голосов`;
+    $("vScene").className = f.scene < 0.3 ? "mid" : "";
+  }
   $("vQ").textContent = f.q.toFixed(2);
   $("yt").href = `https://www.youtube.com/watch?v=${S.video}&t=${Math.round(f.t)}s`;
   $("why").href = `/explain/${S.run.id}/${S.video}/${f.i}.html`;
-  $("why").classList.toggle("hidden", !!S.live);
+  // Отчёт о промахе строится по слоям CoordNet из кадра на диске.
+  $("why").classList.toggle("hidden", !!S.live || patch);
   if (document.activeElement !== $("jump")) $("jump").value = fmtTime(f.t);
   $("posNo").textContent = `#${f.i}`;
   drawMap(f);
@@ -220,17 +270,20 @@ function drawMap(f) {
       .map((g, k) => `${k ? "L" : "M"}${g.cx.toFixed(4)},${g.cy.toFixed(4)}`).join("");
     s += `<path class="trail" d="${d}"/>`;
   }
+  const answered = Number.isFinite(f.px);
   if (out) {
     s += `<polygon class="out" points="${poly(out, f.cx, f.cy)}"/>`;
-    s += `<polygon class="pred" points="${poly(out, f.px, f.py)}"/>`;
+    if (answered) s += `<polygon class="pred" points="${poly(out, f.px, f.py)}"/>`;
     s += S.cells.map((c) =>
       `<polygon class="cellpoly" data-cell="${c.id}" points="${poly(c.pts, f.cx, f.cy)}"/>`
     ).join("");
   }
   s += `<circle class="t" cx="${f.cx}" cy="${f.cy}" r="0.012"/>`;
-  s += `<line class="cross" x1="${f.px - 0.02}" y1="${f.py}" x2="${f.px + 0.02}" y2="${f.py}"/>`;
-  s += `<line class="cross" x1="${f.px}" y1="${f.py - 0.02}" x2="${f.px}" y2="${f.py + 0.02}"/>`;
-  s += `<line class="link" x1="${f.cx}" y1="${f.cy}" x2="${f.px}" y2="${f.py}"/>`;
+  if (answered) {
+    s += `<line class="cross" x1="${f.px - 0.02}" y1="${f.py}" x2="${f.px + 0.02}" y2="${f.py}"/>`;
+    s += `<line class="cross" x1="${f.px}" y1="${f.py - 0.02}" x2="${f.px}" y2="${f.py + 0.02}"/>`;
+    s += `<line class="link" x1="${f.cx}" y1="${f.cy}" x2="${f.px}" y2="${f.py}"/>`;
+  }
   svg.innerHTML = s;
   hookCells(svg);
 }
@@ -472,7 +525,9 @@ function wire() {
     else if (l === "h" || l === "р") toggle("heat");
     else if (l === "t" || l === "е") toggle("trail");
     else if (k === "Tab") {
-      setMode(MODES[(MODES.indexOf(S.mode) + 1) % MODES.length]);
+      // Выключенный режим по слоям пропускается.
+      const ms = MODES.filter((x) => x !== "net" || !$("mNet").disabled);
+      setMode(ms[(ms.indexOf(S.mode) + 1) % ms.length]);
       e.preventDefault();
       return;
     }
@@ -979,16 +1034,22 @@ function wireChannels() {
 // видны через несколько секунд.
 
 async function startLive(id, fps) {
+  // Модель потока выбирается отдельно от прогона в шапке: там только
+  // оценённые прогоны, а поток умеет любой чекпоинт, в том числе патчевый.
+  const run = $("pModel").value || S.run.id;
   const r = await fetch("/api/live/start", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, run: S.run.id, fps: fps || 1 }),
+    body: JSON.stringify({ id, run, fps: fps || 1 }),
   });
   const d = await r.json();
   if (!r.ok) {
     $("jobs").innerHTML = `<div class="msg bad">${esc(d.error)}</div>`;
     return;
   }
-  S.live = { id, since: 0, state: d.state, title: d.title || id, speed: null };
+  const m = (S.liveModels || []).find((x) => x.id === run) || {};
+  S.live = { id, since: 0, state: d.state, title: d.title || id, speed: null,
+    run, kind: d.kind || m.kind,
+    trained_on: (d.kind ? d.trained_on : m.trained_on) || [] };
   S.follow = true;
   S.video = id;
   S.frames = [];
@@ -997,10 +1058,8 @@ async function startLive(id, fps) {
   $("video").innerHTML = `<option value="${id}">ПОТОК · ${esc(d.title || id)}</option>`;
   $("holdout").className = "dot live";
   $("holdout").title = "поток: ролик читается с YouTube прямо сейчас";
-  // Разбор по слоям требует кадра на диске, которого в потоке нет.
-  $("mNet").disabled = true;
-  $("mNet").title = "в потоке недоступно: слои читаются из сохранённого кадра";
   setMode("end");
+  netAvail();
   liveMeta();
   pollLive();
 }
@@ -1010,8 +1069,7 @@ async function stopLive() {
   const id = S.live.id;
   S.live = null;
   clearTimeout(S.liveTimer);
-  $("mNet").disabled = false;
-  $("mNet").title = "Tab";
+  netAvail();
   $("holdout").className = "dot";
   await fetch("/api/live/stop", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -1031,7 +1089,17 @@ async function pollLive() {
   S.live.note = d.note;
   S.live.title = d.title || S.live.title;
   S.live.duration = d.duration;
+  S.live.timing = d.timing;
+  // Тип и обучающие ролики сервер знает, только когда модель загружена.
+  if (d.kind) {
+    S.live.kind = d.kind;
+    S.live.model = d.model;
+    S.live.trained_on = d.trained_on || [];
+  }
   if (d.frames.length) {
+    // Кадр без ответа (ни одного голоса) считаем крупным промахом: так он
+    // виден на таймлайне и находится по N/P.
+    d.frames.forEach((f) => { if (f.err == null) f.err = 1; });
     const wasLast = S.pos >= S.frames.length - 1;
     S.frames = S.frames.concat(d.frames);
     S.live.since = d.count;
@@ -1046,21 +1114,30 @@ async function pollLive() {
   if (going) S.liveTimer = setTimeout(pollLive, 1200);
 }
 
-// Строка под шапкой в режиме потока: что смотрим, какой моделью и как быстро
-// идёт распаковка. Без неё непонятно, почему кадров пока мало.
+// Строка под шапкой в режиме потока: что смотрим, какой моделью, как быстро
+// идёт распаковка и сколько стоит кадр. Без неё непонятно, почему кадров
+// пока мало.
 function liveMeta() {
   const L = S.live;
   if (!L) return;
-  const train = (S.run.trained_on || []).includes(L.id);
+  const train = (L.trained_on || []).includes(L.id);
   const bits = [`<span class="live">ПОТОК · ${esc(L.state)}</span>`];
   bits.push(`<b>${esc(L.title)}</b>`);
-  bits.push(`модель <code>${esc(S.run.id)}</code>`);
+  bits.push(`модель <code>${esc(L.run)}</code>` +
+    (L.model ? ` <i>${esc(L.model)}</i>` : ""));
   if (S.frames.length) {
     const done = L.duration ? Math.min(100, Math.round(
       S.frames[S.frames.length - 1].t / L.duration * 100)) : null;
     bits.push(`${S.frames.length} кадров${done !== null ? ` · ${done}%` : ""}`);
   }
   if (L.speed) bits.push(`${L.speed}× реального времени`);
+  const T = L.timing;
+  if (T) {
+    bits.push(`<span title="медиана за последние ${T.n} кадров: подготовка ` +
+      `${T.prep} мс, сеть ${T.net}, голоса ${T.agg}, ответ ${T.out}; ` +
+      `ожидание кадра от распаковки ${T.decode} мс">кадр ${T.model_path} мс` +
+      (T.fps_model ? ` · ${T.fps_model} кадр/с` : "") + "</span>");
+  }
   if (train) bits.push('<span class="warn">этот ролик был в обучении</span>');
   bits.push('<button class="bare link" id="liveStop">остановить</button>');
   $("vmeta").innerHTML = bits.join(" · ");

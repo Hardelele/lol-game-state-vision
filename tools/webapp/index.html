@@ -70,7 +70,13 @@
     <div class="fact hl" data-lit="pred" title="ответ модели">
       <span class="plus">+</span><span id="vPred"></span>
     </div>
-    <div class="fact" title="разброс ответа"><i>разброс</i><span id="vSpread"></span></div>
+    <div class="fact" id="fSpread" title="разброс ответа"><i>разброс</i><span id="vSpread"></span></div>
+    <div class="fact hidden" id="fAgree"
+      title="доля веса голосов патчей, согласных с ответом (в радиусе ~370 ед.)">
+      <i>согласие</i><span id="vAgree"></span></div>
+    <div class="fact hidden" id="fScene"
+      title="доля патчей в следе кадра, которые модель считает сценой игры, и число голосующих патчей">
+      <i>сцена</i><span id="vScene"></span></div>
     <div class="fact" title="качество метки"><i>качество</i><span id="vQ"></span></div>
     <span class="grow"></span>
     <a id="why" class="out" target="_blank" rel="noopener" title="отчёт о том, почему модель промахнулась на этом кадре">разобрать ↗</a>
@@ -174,6 +180,8 @@
           <option value="1" selected>1 кадр/с</option>
           <option value="2">2 кадр/с</option>
         </select>
+        <select id="pModel" class="plain"
+          title="модель для потока: прогон с model.pt под runs/, тип берётся из чекпоинта"></select>
         <button class="pill go" id="pLive"
           title="смотреть ответ модели по этому ролику прямо сейчас: кадры идут потоком, на диск ничего не пишется">
           смотреть потоком ▶</button>

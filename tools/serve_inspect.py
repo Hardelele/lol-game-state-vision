@@ -60,7 +60,7 @@ def discover_runs() -> list[dict]:
             if f.exists():
                 meta = json.loads(f.read_text(encoding="utf-8"))
             rec = {"id": rid, "title": rid, "trained_on": meta.get("trained_on", []),
-                   "videos": []}
+                   "kind": model_kind(rid), "videos": []}
             out.append(rec)
         rec["videos"].append(d.name[len("predictions_"):-len(".csv")])
     for r in out:
@@ -113,10 +113,20 @@ def scene_file(vid: str, idx: int) -> Path:
     return DATA / vid / "scene" / f"{idx:06d}.jpg"
 
 
+def model_kind(run: str) -> str | None:
+    """Тип модели прогона («patch», «coordnet») или None, если чекпоинта нет."""
+    m = next((r for r in live.models() if r["id"] == run), None)
+    return m["kind"] if m else None
+
+
 def ckpt_of(run: str) -> str:
+    """Чекпоинт для разбора по слоям — он умеет только CoordNet."""
     p = RUNS / run / "model.pt"
     if not p.is_file():
         raise FileNotFoundError(f"нет чекпоинта {p}")
+    if model_kind(run) == "patch":
+        raise ValueError("разбор по слоям есть только у CoordNet, "
+                         "у патчевой модели его нет")
     return str(p)
 
 
@@ -258,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if p == "/api/live/start":
                 return self._json(live.start(
-                    body.get("id", ""), body.get("run") or "coords/full14",
+                    body.get("id", ""), body.get("run") or live.DEFAULT_RUN,
                     float(body.get("fps") or 1.0),
                     float(body.get("start") or 0.0)))
             if p == "/api/live/stop":
@@ -298,6 +308,10 @@ class Handler(BaseHTTPRequestHandler):
                     handle, (q.get("url") or [None])[0],
                     int((q.get("limit") or ["60"])[0]),
                     (q.get("refresh") or [""])[0] == "1"))
+            if p == "/api/live-models":
+                with _lock:
+                    return self._json({"models": live.models(),
+                                       "default": live.DEFAULT_RUN})
             m = re.fullmatch(r"/api/live/([\w-]+)", p)
             if m:
                 ses = live.get(m.group(1))
@@ -406,6 +420,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(body, "image/png", cache=86400)
         except FileNotFoundError:
             return self.fail(404, "нет данных")
+        except ValueError as exc:
+            return self.fail(400, str(exc))
         except Exception as exc:                                 # noqa: BLE001
             traceback.print_exc()
             return self.fail(500, f"{type(exc).__name__}: {exc}")
@@ -416,7 +432,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8732)
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--live-run", default=live.DEFAULT_RUN,
+                    help="прогон под runs/ для потока по умолчанию; тип "
+                         "модели (патчевая или CoordNet) берётся из чекпоинта")
     args = ap.parse_args()
+    live.DEFAULT_RUN = args.live_run
 
     runs = discover_runs()
     if not runs:
