@@ -3,7 +3,7 @@
 Тип берётся из ключей самого чекпоинта, а не из каталога прогона (CoordNet
 для сравнения лежит и в runs/patches):
 
-* патчевая модель (PatchNet.checkpoint в tools/patch_model.py) — "kind": "patch";
+* патчевая модель (PatchNet.checkpoint в lolvision/patch_model.py) — "kind": "patch";
 * CoordNet (tools/train_coords.py) — "encoder", "head", "input_size", "grid".
 
 Чекпоинт — pickle, то есть код (weights_only=False), поэтому читать можно

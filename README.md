@@ -9,7 +9,7 @@ dataset notes are in Russian; the README is in English.
 
 ## Current state
 
-- **Model.** The patch model (`tools/patch_model.py`, trained by
+- **Model.** The patch model (`lolvision/patch_model.py`, trained by
   `tools/train_patches.py`) is the current best. The input is warped through
   the screen → ground homography to a top-down view at a fixed world scale
   (6 game units per pixel), so the pixel count, resolution and aspect ratio
@@ -32,10 +32,10 @@ dataset notes are in Russian; the README is in English.
   held-out streams it finds 96% of non-game frames and drops 0.24% of game
   frames (none of 5,877 spectator frames); coordinates are unchanged, the
   patch weights are the same. Details: [docs/not-game.md](docs/not-game.md).
-- **Baseline.** `CoordNet` (`tools/coord_model.py`) maps the masked and
+- **Baseline.** `CoordNet` (`lolvision/coord_model.py`) maps the masked and
   cropped main view to a 32×32 heatmap over the map. It is kept as the
   baseline and can still be chosen in the live mode.
-- **Live mode.** `tools/live.py` reads a YouTube video as a stream and runs
+- **Live mode.** `lolstream/live.py` reads a YouTube video as a stream and runs
   the patch model with the "not a game" frame head (`runs/patches/cnn-split16-notgame` by default) on every sampled
   frame: camera point, vote spread, share of agreeing votes, share of
   "scene" patches and a heatmap of patch votes, next to the minimap label.
@@ -46,7 +46,7 @@ dataset notes are in Russian; the README is in English.
   as CUDA graphs: about 6 ms per frame from the decoded frame to the answer
   (≈165 frames/s on an RTX 5060 Ti; network 0.9 ms, votes 0.35 ms).
 - **Labels without people.** The target is read from the camera box on the
-  minimap of the same frame (`tools/minimap_camera.py`). The minimap is
+  minimap of the same frame (`lolvision/minimap_camera.py`). The minimap is
   masked out of the model input, so it is the source of the target, not a
   feature. Each match yields thousands of labelled frames.
 - **Data.** Spectator replays from the "Challenger Replays" YouTube network
@@ -54,8 +54,8 @@ dataset notes are in Russian; the README is in English.
   the stream and writes the cropped scene, the minimap crop and the camera
   position for every sampled frame. The dense set is local (`data/coords/`,
   not in Git).
-- **Inspection.** A local web app (`tools/serve_inspect.py` +
-  `tools/webapp/`) shows frames, predictions and heatmaps of evaluated runs,
+- **Inspection.** A local web app (`lolstream/serve_inspect.py` +
+  `lolstream/webapp/`, started by `tools/serve_inspect.py`) shows frames, predictions and heatmaps of evaluated runs,
   steps through the network layer by layer, explains single misses, browses
   channels, collects new videos and runs the model live on a stream.
 
@@ -81,11 +81,17 @@ is used when present (training, NVDEC video decoding).
 
 ```bash
 python -m pip install -r requirements.txt
+python -m pip install -e .        # optional: lolvision and lolstream importable anywhere
 ```
 
+The code is two packages and a set of scripts: `lolvision` (the model and
+its data), `lolstream` (YouTube streams, live mode and the viewer, built on
+`lolvision`) and the command-line tools in `tools/`. The scripts run with
+`python tools/<script>.py` with or without the editable install.
+
 Quick checks need no data or network ([requirements-dev.txt](requirements-dev.txt),
-settings in `pyproject.toml`): `python -m pytest -q` and
-`python -m ruff check tools tests`.
+settings in `pyproject.toml`): `python -m pytest -q` (including the package
+boundary check, `tests/test_boundary.py`) and `python -m ruff check .`.
 
 ```bash
 # 1. Dense dataset from a stream (nothing is downloaded), 1 frame per second
@@ -123,27 +129,52 @@ python tools/calibrate_projection.py --fit 58w57eJ5Qks olmTXkkUv58 --check zJvTS
 
 ## Tools
 
+Command-line scripts in `tools/`, run as `python tools/<script>.py`:
+
 | Tool | Purpose |
 | --- | --- |
-| `patch_model.py`, `train_patches.py` | Patch model: world-scale input, per-patch embeddings and map votes, camera by consensus; training with random crops, masks and synthetic UI |
+| `train_patches.py` | Patch model training with random crops, masks and synthetic UI |
 | `probe_hud.py` | Robustness check of any coordinate model against mask, HUD, crop, resolution and partial-frame changes; share of frames the "not a game" head rejects |
 | `build_not_game.py`, `train_not_game.py` | Frames of streams and other games from a YouTube stream; the "game / not a game" frame head on top of the frozen patch model |
 | `bench_models.py` | Speed and memory of the models, GPU/CPU and the full live path |
-| `coord_model.py` | `CoordNet` baseline: encoder + heatmap head, soft targets, expected/peak point, spread |
 | `build_coords.py` | Dense dataset "frame → camera position" from a local file or a YouTube stream (`--url`) |
-| `minimap_camera.py` | Camera box on the minimap → map coordinates; used by `build_coords.py` and `live.py`, and as a CLI over `dataset/videos/` |
-| `mask_frames.py` | HUD/minimap mask and the crop of the unmasked area by layout |
-| `train_coords.py` | Training; split by match or, with `--region`, by map area |
+| `minimap_camera.py` | Camera position from the minimap for the reference frames in `dataset/videos/` |
+| `mask_frames.py` | HUD/minimap mask applied to frames, for a visual check of a layout |
+| `train_coords.py` | `CoordNet` training; split by match or, with `--region`, by map area |
 | `eval_coords.py` | Per-video errors, predictions and heatmaps for the viewer, sanity controls |
 | `calibrate_view.py`, `calibrate_projection.py` | Measure the screen → map scale; fit the homography in `dataset/layouts/projection.json` |
+| `serve_inspect.py` | Starts the local web viewer (`lolstream/serve_inspect.py`) |
+| `explain_miss.py` | The report on a single miss as an HTML page (the viewer serves the same report) |
+| `patch_infer.py` | Patch model on stored dataset scenes: median error and per-stage timing |
+| `video_side.py` | Player role and side from the video descriptions |
+| `inspect_coords.py`, `inspect_patches.py` | Self-contained HTML pages: predictions of one video; which patch size identifies a place |
+| `extract_frames.py` | Full reference frames every N seconds into `dataset/videos/` |
+| `runlog.py`, `_bootstrap.py` | `train.log` next to the checkpoint; the repository root on `sys.path` for the scripts |
+
+`lolvision/` — the model and its data, no YouTube, network or server code:
+
+| Module | Purpose |
+| --- | --- |
+| `patch_model.py` | Patch model: world-scale input, per-patch embeddings and map votes, camera by consensus, "not a game" frame head (self-check: `python -m lolvision.patch_model`) |
+| `coord_model.py` | `CoordNet` baseline: encoder + heatmap head, soft targets, expected/peak point, spread |
+| `patch_infer.py` | Patch model on one frame for the live mode: frame preparation on the GPU, camera, vote spread and heatmap, share of "scene" patches |
+| `checkpoints.py` | The one place checkpoints are read; the model type comes from the checkpoint |
+| `geometry.py` | Map units and the screen → ground homography |
+| `mask_frames.py` | HUD/minimap mask and the crop of the unmasked area by layout |
+| `minimap_camera.py` | Camera box on the minimap → map coordinates (the label source) |
+| `dataset_io.py`, `augment.py` | Reading the built datasets; training augmentations and synthetic UI |
+| `paths.py` | Directory layout of the repository; defaults for the scripts and `lolstream` |
+
+`lolstream/` — training and checking on YouTube videos, built on `lolvision`:
+
+| Module | Purpose |
+| --- | --- |
+| `video_stream.py` | A local file or a YouTube video as a stream of frames (yt-dlp, ffmpeg, NVDEC) |
+| `live.py` | Live mode: frames from a stream → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk |
+| `channels.py`, `video_side.py` | Channel catalog, video lists, ingest jobs; player role and side from the video description |
 | `serve_inspect.py`, `webapp/` | Local web viewer (standard library HTTP server, plain HTML/JS) |
 | `activations.py`, `explain_miss.py` | Layer-by-layer activations and the report on a single miss, served by the viewer |
-| `live.py` | Live mode: frames from a stream → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk |
-| `patch_infer.py` | Patch model on one frame for the live mode: camera, vote spread and heatmap, share of "scene" patches |
-| `channels.py`, `video_side.py` | Channel catalog, video lists, ingest jobs; player role and side from the video description |
-| `inspect_coords.py`, `inspect_patches.py`, `inspect_pages.py` | Self-contained HTML pages: predictions of one video; which patch size identifies a place |
-| `extract_frames.py` | Full reference frames every N seconds into `dataset/videos/` |
-| `paths.py`, `runlog.py` | Directory layout; `train.log` next to the checkpoint |
+| `inspect_pages.py` | Shared frame of the static HTML pages in `runs/inspect/`, heatmap palette |
 
 ## Repository layout
 
@@ -158,7 +189,8 @@ python tools/calibrate_projection.py --fit 58w57eJ5Qks olmTXkkUv58 --check zJvTS
   `data/coords/` (the dense dataset), `data/channels/` (custom channels and
   the cached video lists).
 - `runs/` (ignored): everything the tools produce.
-- Directory layout is defined once in `tools/paths.py`; tool defaults
+- `lolvision/`, `lolstream/`, `tools/`, `tests/`: code, see [Tools](#tools).
+- Directory layout is defined once in `lolvision/paths.py`; tool defaults
   resolve from the repository root.
 
 ### `runs/` layout
@@ -171,8 +203,8 @@ python tools/calibrate_projection.py --fit 58w57eJ5Qks olmTXkkUv58 --check zJvTS
 | `runs/checks/bench_models/` | Speed measurements | `bench_models.py` |
 | `runs/inspect/` | Self-contained HTML pages with a shared `index.html`, miss reports | `inspect_coords.py`, `inspect_patches.py`, `explain_miss.py` |
 | `runs/minimap/` | Camera position read from the minimap for `dataset/videos/` frames | `minimap_camera.py` |
-| `runs/ingest/` | Logs of dataset builds started from the viewer | `channels.py` |
-| `runs/checks/<topic>/` | One-off visual checks: masks, minimap box | `mask_frames.py`, ad hoc |
+| `runs/ingest/` | Logs of dataset builds started from the viewer | `lolstream/channels.py` |
+| `runs/checks/<topic>/` | One-off visual checks: masks, minimap box | `tools/mask_frames.py`, ad hoc |
 
 A run directory is self-contained: training writes its own `train.log` next
 to the checkpoint, and evaluation writes into the checkpoint's directory by
