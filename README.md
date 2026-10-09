@@ -4,6 +4,9 @@ Reading game state from League of Legends gameplay videos, using only the
 main game view. The current task: tell where the camera is on the map from
 a single frame, with the HUD and the minimap masked out.
 
+This is a research project, not a product. Code comments, docstrings and the
+dataset notes are in Russian; the README is in English.
+
 ## Current state
 
 - **Model.** `CoordNet` (`tools/coord_model.py`) is a small CNN that maps
@@ -24,12 +27,11 @@ a single frame, with the HUD and the minimap masked out.
   `tools/webapp/`) shows frames, predictions and heatmaps of evaluated runs,
   steps through the network layer by layer, explains single misses, browses
   channels, collects new videos and runs the model live on a stream.
-- **In progress (#740).** CoordNet turned out to depend on the HUD mask, the
+- **In progress.** CoordNet turned out to depend on the HUD mask, the
   crop and the position on screen (see [Limitations](#limitations-and-open-problems)).
   The next model is built from patch embeddings that do not depend on the
-  HUD, the resolution or the position in the frame. It is developed in the
-  `feat/patch-embeddings` branch; its results will go to
-  `docs/patch-embeddings.md` (planned, not yet in this branch).
+  HUD, the resolution or the position in the frame; see
+  [docs/patch-embeddings.md](docs/patch-embeddings.md).
 
 ## Pipeline
 
@@ -46,10 +48,14 @@ YouTube channel catalog ─► build_coords.py ─► data/coords/<video>/{scene
                                   serve_inspect.py (web app, live mode on a stream)
 ```
 
-Run the tools from the repository root. They need Python 3.12 with
-`torch`, `numpy`, `Pillow`, `opencv-python`, `scipy` and `yt-dlp`, and
-`ffmpeg`/`ffprobe` on `PATH`. A CUDA GPU is used when present (training,
-video decoding). There is no pinned requirements file yet.
+Run the tools from the repository root with Python 3.12. Install the
+dependencies from [requirements.txt](requirements.txt) (it explains how to
+get a CUDA build of PyTorch) and put `ffmpeg`/`ffprobe` on `PATH`. A CUDA GPU
+is used when present (training, NVDEC video decoding).
+
+```bash
+python -m pip install -r requirements.txt
+```
 
 ```bash
 # 1. Dense dataset from a stream (nothing is downloaded), 1 frame per second
@@ -97,8 +103,10 @@ python tools/calibrate_projection.py --fit 58w57eJ5Qks olmTXkkUv58 --check zJvTS
 ## Repository layout
 
 - `dataset/` (committed): HUD layouts and the projection (`layouts/`), the
-  channel catalog (`sources/`), full reference frames of six matches
-  (`videos/`). See [dataset/README.md](dataset/README.md).
+  channel catalog (`sources/`), manifests of reference frames of six
+  matches (`videos/<id>/source.json`, `frames.csv`). The frames themselves
+  are not distributed; they are rebuilt locally from the public videos. See
+  [dataset/README.md](dataset/README.md).
 - `data/` (ignored): local inputs. `data/videos/<id>.info.json` (video
   metadata, plus the video itself when processed from a file),
   `data/coords/` (the dense dataset), `data/channels/` (custom channels and
@@ -130,7 +138,7 @@ for a new variant instead of overwriting an existing run.
   removing temporary masks raised the median error ×3, black zones of
   another layout ×10, shifting the crop by ±8% ×4–9. A model trained on
   one layout cannot be expected to transfer to another channel, HUD scale
-  or resolution. This is the reason for the patch-embedding model (#740).
+  or resolution. This is the reason for the patch-embedding model .
 - **One verified layout.** Only `spectator-volibear-challenger` (16:9) has
   been checked by eye; the mask scales with the frame but rejects other
   aspect ratios. Every new channel needs its own visual check.
@@ -165,9 +173,27 @@ have been imported here.
 
 ## Conventions
 
-- Keep source videos and other bulky local data in `data/` (ignored).
-  Reference frames and layouts live in `dataset/` and are committed.
+- Keep source videos, frames and other bulky local data out of Git:
+  `data/` and `dataset/videos/*/frames/` are ignored. Layouts and manifests
+  live in `dataset/` and are committed.
 - Keep generated artifacts, model weights and experiment outputs outside
   Git; common paths and formats are covered by `.gitignore`.
 - Commit source code, configuration and documentation as the
   implementation is added.
+
+## License
+
+The code and the project's own annotations are licensed under the
+[Apache License 2.0](LICENSE). Third-party content and dependencies are
+described in [NOTICE.md](NOTICE.md); no video frames or footage are
+distributed with this repository.
+
+## Legal
+
+LoL Game State Vision was created under Riot Games' "Legal Jibber Jabber"
+policy using assets owned by Riot Games. Riot Games does not endorse or
+sponsor this project. League of Legends is a trademark of Riot Games, Inc.;
+this project is not affiliated with Riot Games.
+
+Questions, problems and removal requests from the authors of referenced
+videos: open an issue.

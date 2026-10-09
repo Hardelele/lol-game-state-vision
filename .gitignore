@@ -13,6 +13,9 @@
 *.onnx
 *.engine
 
+# Frames rebuilt locally from the public videos (not distributed)
+/dataset/videos/*/frames/
+
 # Source videos and yt-dlp sidecars, wherever they end up
 *.mp4
 *.mkv

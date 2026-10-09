@@ -2,18 +2,22 @@
 
 ## What the license covers
 
-[LICENSE](LICENSE) (MIT) covers the source code in `tools/` and the project's
-own annotations and metadata in `dataset/`: labels and notes in
+Copyright 2026 Vladislav Lapshin.
+
+[LICENSE](LICENSE) (Apache License 2.0) covers the source code in `tools/` and
+the project's own annotations and metadata in `dataset/`: notes in
 `frames.csv`, `source.json`, HUD layouts in `dataset/layouts/` and the channel
 catalogue in `dataset/sources/`.
 
-It does **not** cover the video frames (`dataset/videos/*/frames/*.jpg`) or
-anything else captured from third-party videos. Those are stills from public
-YouTube videos; the rights belong to Riot Games and to the authors of the
-videos listed in each `source.json`. They are included only as research
-samples for a non-commercial project, are not relicensed here, and may be
-removed. If you hold rights to any of this material and want it removed,
-open an issue.
+## Video frames are not distributed
+
+The repository contains no frames or other footage from third-party videos.
+`dataset/videos/<id>/` keeps only the manifest — the source video ID,
+sampling parameters and timestamps — and the frames are rebuilt locally from
+the public video (see `dataset/README.md`). Rights to that footage belong to
+Riot Games and to the authors of the videos listed in each `source.json`.
+If you hold rights to any material referenced here and want it removed, open
+an issue.
 
 ## Riot Games
 
