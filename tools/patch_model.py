@@ -493,7 +493,21 @@ def predict_canvases(model: PatchNet, x01: torch.Tensor, valid: torch.Tensor,
     подсказка модели). Ответ: камеры (B, 2), доля согласия (B,), и по
     патчам — точки, смещения, веса, доля следа.
     """
-    emb, lo, sc = model(x01)
+    cams, agree, info = canvases_post(model, *model(x01), valid, q0, units,
+                                      radius, min_valid)
+    return cams.cpu().numpy(), agree.cpu().numpy(), info
+
+
+def canvases_post(model: PatchNet, emb: torch.Tensor, lo: torch.Tensor,
+                  sc: torch.Tensor, valid: torch.Tensor, q0: torch.Tensor,
+                  units: float = UNITS_PER_PX, radius: float = 0.025,
+                  min_valid: float = 0.5):
+    """Выходы сети → камеры, согласие и сведения о патчах, всё на устройстве.
+
+    Вынесено из predict_canvases, чтобы live мог записать этот же код в
+    CUDA graph (там нельзя выгружать на процессор посреди пути). Без
+    синхронизаций с процессором и с постоянными формами.
+    """
     b, g2, h, w = lo.shape
     s = model.stride
     vf = F.avg_pool2d(valid[:, None].float(), s, s)[:, 0, :h, :w]
@@ -512,7 +526,7 @@ def predict_canvases(model: PatchNet, x01: torch.Tensor, valid: torch.Tensor,
         # Голова крошечная — считаем её в fp32 и вне autocast.
         with torch.autocast(q0.device.type, enabled=False):
             info["game"] = torch.sigmoid(model.frame(info["frame_feat"].float()))
-    return cams.cpu().numpy(), agree.cpu().numpy(), info
+    return cams, agree, info
 
 
 @torch.no_grad()

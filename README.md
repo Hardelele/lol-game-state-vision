@@ -41,7 +41,10 @@ dataset notes are in Russian; the README is in English.
   "scene" patches and a heatmap of patch votes, next to the minimap label.
   Any run with a `model.pt` can be picked; the model type is read from the
   checkpoint. On the stream the patch model gives the same points as on
-  the stored dataset scenes (median difference 2 units).
+  the stored dataset scenes (median difference 2 units). With a GPU the
+  frame is prepared on the GPU and the network plus vote aggregation run
+  as CUDA graphs: about 6 ms per frame from the decoded frame to the answer
+  (≈165 frames/s on an RTX 5060 Ti; network 0.9 ms, votes 0.35 ms).
 - **Labels without people.** The target is read from the camera box on the
   minimap of the same frame (`tools/minimap_camera.py`). The minimap is
   masked out of the model input, so it is the source of the target, not a
