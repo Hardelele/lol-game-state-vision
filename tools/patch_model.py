@@ -363,6 +363,11 @@ class PatchNet(nn.Module):
         логиты карты (B, G², h, w), логит «сцена» (B, h, w)."""
         return self.head(self.encoder(x01))
 
+    @property
+    def frame_dim(self) -> int:
+        """Размер признаков кадра (frame_features): эмбеддинг + FRAME_SCALARS."""
+        return self.head.embed.out_channels + len(FRAME_SCALARS)
+
     def trainable(self):
         return [p for p in self.parameters() if p.requires_grad]
 

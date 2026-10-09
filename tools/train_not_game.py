@@ -290,7 +290,6 @@ def run(args) -> None:
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     t_start = time.perf_counter()
     model = load_patchnet(args.model, dev)
-    model.frame_dim = model.head.embed.out_channels + len(FRAME_SCALARS)
     base = torch.load(args.model, map_location="cpu", weights_only=False)
     split = json.loads(args.split.read_text(encoding="utf-8"))
     coords_train = split.get("coords_train") or base.get("trained_on", [])
