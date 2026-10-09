@@ -1,0 +1,20 @@
+# Python 3.12. Versions are the ones the tools were last run with.
+#
+# PyTorch: the plain PyPI wheel is CPU-only on Windows. For CUDA 12.8 install
+# torch first from the PyTorch index, then the rest:
+#   python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+#   python -m pip install -r requirements.txt
+#
+# Not installed by pip, must be on PATH: ffmpeg and ffprobe (frame extraction,
+# streaming ingest; NVDEC is used when ffmpeg reports the `cuda` hwaccel).
+
+torch==2.11.0
+numpy==2.4.2
+pillow==12.1.1
+# cv2: train_coords.py, calibrate_projection.py
+opencv-python-headless==4.13.0.92
+# scipy.optimize.least_squares: calibrate_projection.py
+scipy==1.17.0
+# YouTube ingest: build_coords.py --url, live.py, channels.py.
+# YouTube changes often; an outdated yt-dlp is the usual cause of failures.
+yt-dlp==2026.8.19
