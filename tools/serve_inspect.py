@@ -279,7 +279,8 @@ def ingest(h) -> None:
 @route("GET", r"/api/live-models")
 def live_models(h) -> None:
     with _lock:
-        h._json({"models": live.models(), "default": live.DEFAULT_RUN})
+        h._json({"models": live.models(h.server.live_run),
+                 "default": h.server.live_run})
 
 
 @route("GET", r"/api/live/([\w-]+)")
@@ -293,7 +294,7 @@ def live_status(h, vid: str) -> None:
 @route("POST", r"/api/live/start")
 def live_start(h) -> None:
     b = h.body
-    h._json(live.start(b.get("id", ""), b.get("run") or live.DEFAULT_RUN,
+    h._json(live.start(b.get("id", ""), b.get("run") or h.server.live_run,
                        b.get("fps") or 1.0, float(b.get("start") or 0.0)))
 
 
@@ -519,10 +520,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class Server(ThreadingHTTPServer):
-    """HTTP-сервер смотрелки со списком имён, по которым к нему можно прийти."""
+    """HTTP-сервер смотрелки: имена, по которым к нему можно прийти, и
+    прогон для потока по умолчанию."""
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, live_run: str = live.DEFAULT_RUN):
         super().__init__((host, port), Handler)
+        self.live_run = live_run
         names = {"127.0.0.1", "localhost", "[::1]",
                  f"[{host}]" if ":" in host else host}
         self.hosts = {n.lower() for n in names} | {f"{n}:{port}".lower()
@@ -539,7 +542,6 @@ def main() -> None:
                     help="прогон под runs/ для потока по умолчанию; тип "
                          "модели (патчевая или CoordNet) берётся из чекпоинта")
     args = ap.parse_args()
-    live.DEFAULT_RUN = args.live_run
 
     runs = discover_runs()
     if not runs:
@@ -550,7 +552,7 @@ def main() -> None:
     if not projection():
         print("внимание: нет dataset/layouts/projection.json — "
               "трапеция видимой области и сетка ячеек не будут показаны")
-    srv = Server(args.host, args.port)
+    srv = Server(args.host, args.port, args.live_run)
     print(f"\nсмотрелка на http://{args.host}:{args.port}  (Ctrl+C — остановить)")
     try:
         srv.serve_forever()

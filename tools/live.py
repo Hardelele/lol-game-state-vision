@@ -125,11 +125,12 @@ def load_runner(path: Path, device: str):
 _kinds: dict[str, tuple[float, dict]] = {}
 
 
-def models() -> list[dict]:
+def models(default: str = DEFAULT_RUN) -> list[dict]:
     """Все прогоны с model.pt, годные для потока, с типом модели.
 
     Тип читается из самого чекпоинта, а не из каталога (CoordNet для
     сравнения лежит и в runs/patches), и запоминается до смены файла.
+    `default` — какой прогон пометить моделью по умолчанию.
     """
     out = []
     for p in sorted(RUNS.rglob("model.pt")):
@@ -149,7 +150,7 @@ def models() -> list[dict]:
                               else "CoordNet"),
                     "trained_on": list(ck.get("trained_on", []))}
             hit = _kinds[rid] = (mt, info)
-        out.append({"id": rid, **hit[1], "default": rid == DEFAULT_RUN})
+        out.append({"id": rid, **hit[1], "default": rid == default})
     return out
 
 
