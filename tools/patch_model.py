@@ -61,6 +61,12 @@ from geometry import MAP_UNITS, apply_h, load_projection
 
 UNITS_PER_PX = 6.0     # вид сверху: столько игровых единиц на пиксель входа
 MAP_GRID = 64          # сетка карты у головы патча: ячейка ≈ 231 ед.
+# Энкодеры PatchNet: свой CNN или замороженный DINOv2 из torch.hub (имя —
+# точка входа hub, оно же лежит в поле "encoder" чекпоинта).
+DINO_ARCHS = ("dinov2_vits14", "dinov2_vitb14", "dinov2_vitl14", "dinov2_vitg14",
+              "dinov2_vits14_reg", "dinov2_vitb14_reg", "dinov2_vitl14_reg",
+              "dinov2_vitg14_reg")
+ENCODERS = ("cnn",) + DINO_ARCHS
 
 
 # ---------------------------------------------------------------- геометрия
@@ -315,6 +321,10 @@ class FrameHead(nn.Module):
 class PatchNet(nn.Module):
     def __init__(self, encoder: str = "cnn", dim: int = 128):
         super().__init__()
+        if encoder not in ENCODERS:
+            # Иначе любая строка ушла бы в torch.hub как имя архитектуры.
+            raise ValueError(f"неизвестный энкодер {encoder!r}; допустимы: "
+                             f"{', '.join(ENCODERS)}")
         self.kind = encoder
         self.encoder = CNNEncoder() if encoder == "cnn" else DinoEncoder(encoder)
         self.stride = self.encoder.stride
@@ -329,6 +339,11 @@ class PatchNet(nn.Module):
         """x01: (B, 3, H, W) в [0, 1]. Ответ: эмбеддинги (B, D, h, w),
         логиты карты (B, G², h, w), логит «сцена» (B, h, w)."""
         return self.head(self.encoder(x01))
+
+    @property
+    def frame_dim(self) -> int:
+        """Размер признаков кадра (frame_features): эмбеддинг + FRAME_SCALARS."""
+        return self.head.embed.out_channels + len(FRAME_SCALARS)
 
     def trainable(self):
         return [p for p in self.parameters() if p.requires_grad]
@@ -407,6 +422,10 @@ def aggregate(cand: np.ndarray, w: np.ndarray, radius: float = 0.025):
     правильными; затем по этим союзникам берётся взвешенная медиана по
     каждой оси. Это RANSAC с полным перебором гипотез: патчей сотни, и
     полный перебор дешевле случайного.
+
+    В пути модели работает aggregate_batch; эта версия — эталон для неё:
+    совпадение проверяет tests/test_patch_model.py, скорость сравнивает
+    tools/bench_models.py.
     """
     if len(cand) == 0 or w.sum() <= 0:
         return np.array([np.nan, np.nan]), 0.0

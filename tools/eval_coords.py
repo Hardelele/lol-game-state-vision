@@ -31,7 +31,7 @@ from paths import COORDS_DATA
 from checkpoints import load_checkpoint
 from coord_model import GRID, expected_point, peak_point, spread
 from geometry import MAP_UNITS
-from train_coords import Scenes, load_rows
+from dataset_io import Scenes, load_rows
 
 
 @torch.no_grad()

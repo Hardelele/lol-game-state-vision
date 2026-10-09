@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import time
 from pathlib import Path
@@ -22,13 +21,12 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image
-from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 
 from paths import COORDS_DATA, COORDS_RUNS, TRAIN_LOG
 from geometry import MAP_UNITS
 from runlog import tee_stdout
+from dataset_io import load_rows
 from coord_model import (CoordNet, GRID, soft_target, expected_point, peak_point,
                          spread, count_params)
 
@@ -70,45 +68,6 @@ def augment_gpu(x: torch.Tensor, gen: torch.Generator) -> torch.Tensor:
     b = torch.rand(n, 1, 1, 1, device=dev, generator=gen) * 0.3 - 0.15
     m = x.mean(dim=(1, 2, 3), keepdim=True)
     return ((x - m) * c + m + b).clamp_(-1.0, 1.0)
-
-
-class Scenes(Dataset):
-    def __init__(self, rows: list[dict], root: Path, size: tuple[int, int],
-                 augment: bool = False):
-        self.rows, self.root, self.size, self.augment = rows, root, size, augment
-
-    def __len__(self):
-        return len(self.rows)
-
-    def __getitem__(self, i):
-        r = self.rows[i]
-        with Image.open(self.root / r["scene"]) as im:
-            a = np.asarray(im.convert("RGB").resize(self.size, Image.BILINEAR),
-                           dtype=np.float32) / 255.0
-        x = a.transpose(2, 0, 1) * 2 - 1
-        if self.augment:
-            # Только яркость и контраст. Сдвиг кадра сдвигает и настоящее
-            # положение камеры, поэтому без пересчёта метки он её ломает.
-            g = np.random.default_rng()
-            m = x.mean()
-            x = np.clip((x - m) * g.uniform(0.85, 1.15) + m + g.uniform(-0.15, 0.15),
-                        -1, 1)
-        return (torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)),
-                torch.tensor(float(r["cx"])), torch.tensor(float(r["cy"])))
-
-
-def load_rows(ids: list[str], root: Path, min_q: float) -> list[dict]:
-    rows = []
-    for vid in ids:
-        f = root / f"{vid}.csv"
-        if not f.exists():
-            raise SystemExit(f"нет манифеста {f} — сначала tools/build_coords.py")
-        all_r = list(csv.DictReader(f.open(encoding="utf-8")))
-        keep = [r for r in all_r if float(r["quality"]) >= min_q]
-        print(f"  {vid}: {len(keep)} из {len(all_r)} кадров "
-              f"(отброшено по качеству детекции {len(all_r) - len(keep)})")
-        rows += keep
-    return rows
 
 
 @torch.no_grad()

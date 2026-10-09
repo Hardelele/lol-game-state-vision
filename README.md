@@ -83,6 +83,10 @@ is used when present (training, NVDEC video decoding).
 python -m pip install -r requirements.txt
 ```
 
+Quick checks need no data or network ([requirements-dev.txt](requirements-dev.txt),
+settings in `pyproject.toml`): `python -m pytest -q` and
+`python -m ruff check tools tests`.
+
 ```bash
 # 1. Dense dataset from a stream (nothing is downloaded), 1 frame per second
 python tools/build_coords.py --url ibUVbSX7ARU \

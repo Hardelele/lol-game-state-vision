@@ -25,11 +25,13 @@ LAYOUTS = DATASET / "layouts"          # раскладки HUD
 DEFAULT_LAYOUT = LAYOUTS / "spectator-volibear-challenger.json"   # раскладка наблюдателя
 PROJECTION = LAYOUTS / "projection.json"   # calibrate_projection.py: сцена → карта
 SOURCES = DATASET / "sources"          # каталоги каналов
+NOT_GAME_LABELS = DATASET / "not_game" # метки «игра / не игра» по интервалам
 
 DATA = ROOT / "data"
 COORDS_DATA = DATA / "coords"          # build_coords.py: кадры сцены, миникарты, CSV
 VIDEOS = DATA / "videos"               # ролики и их .info.json от yt-dlp
 CHANNELS = DATA / "channels"           # channels.py: кеш списков роликов каналов
+NOT_GAME_DATA = DATA / "not_game"      # build_not_game.py: кадры стримов
 
 RUNS = ROOT / "runs"
 COORDS_RUNS = RUNS / "coords"          # модель координат камеры

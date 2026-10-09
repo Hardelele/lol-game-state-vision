@@ -40,11 +40,13 @@ CoordNet (tools/coord_model.py). Новый чекпоинт патчевой м
 
 from __future__ import annotations
 
+import enum
 import io
 import json
 import threading
 import time
 from pathlib import Path
+from typing import Callable, Protocol
 
 import cv2
 import numpy as np
@@ -53,14 +55,14 @@ from PIL import Image
 
 from paths import DEFAULT_LAYOUT, RUNS
 from checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
-from build_coords import STORE_W, probe_url, frames as frame_stream
+from dataset_io import MINI_STORE, STORE_W
+from video_stream import probe_url, frames as frame_stream
 from coord_model import expected_point, peak_point, spread
 from geometry import MAP_UNITS
 from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box
 from patch_infer import PatchInfer
 
-MINI_STORE = 256
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
@@ -72,6 +74,27 @@ TIMING_WINDOW = 200      # по скольким последним кадрам
 
 
 # ---------- модели ----------
+
+class Runner(Protocol):
+    """Что сеанс ждёт от модели: PatchInfer (patch_infer.py) или CoordInfer.
+
+    `prepare` — хранимая сцена → вход `predict`. `frame_prep` — подготовка
+    полного кадра на видеокарте: вызываемое «кадр → (вход predict, хранимая
+    сцена)» или None, и тогда сцена готовится на процессоре.
+    """
+
+    kind: str
+    label: str
+    trained_on: list[str]
+
+    def describe(self, scene_size) -> str: ...
+
+    def prepare(self, scene: Image.Image): ...
+
+    def frame_prep(self, frame_size, crop, boxes, store_size) -> Callable | None: ...
+
+    def predict(self, prep) -> tuple[dict, np.ndarray, dict]: ...
+
 
 class CoordInfer:
     """CoordNet: хранимая сцена → вход сети → ожидаемая точка тепловой карты."""
@@ -93,6 +116,10 @@ class CoordInfer:
         a = np.asarray(scene.resize(self.size, Image.BILINEAR),
                        dtype=np.float32) / 255.0
         return torch.from_numpy(a.transpose(2, 0, 1) * 2 - 1)[None]
+
+    def frame_prep(self, frame_size, crop, boxes, store_size) -> None:
+        """Подготовки кадра на видеокарте у CoordNet нет."""
+        return None
 
     @torch.no_grad()
     def predict(self, t: torch.Tensor):
@@ -157,6 +184,38 @@ def models() -> list[dict]:
 
 # ---------- сеанс ----------
 
+class State(enum.Enum):
+    """Состояние сеанса. Логика сравнивает члены, а наружу (в JSON поля
+    state) уходит подпись `label`: её показывает и с ней сравнивает
+    webapp/app.js."""
+
+    PREPARING = "preparing"
+    PROBING = "probing"
+    RUNNING = "running"
+    STOPPED = "stopped"
+    ENDED = "ended"
+    FAILED = "failed"
+
+    @property
+    def label(self) -> str:
+        return STATE_LABELS[self]
+
+    @property
+    def active(self) -> bool:
+        """Сеанс ещё работает (или вот-вот начнёт)."""
+        return self in (State.PREPARING, State.PROBING, State.RUNNING)
+
+
+STATE_LABELS = {
+    State.PREPARING: "готовлюсь",
+    State.PROBING: "спрашиваю YouTube",
+    State.RUNNING: "идёт",
+    State.STOPPED: "остановлено",
+    State.ENDED: "ролик кончился",
+    State.FAILED: "сбой",
+}
+
+
 class Session:
     """Один ролик, читаемый потоком. Живёт в памяти, пока его не закрыли."""
 
@@ -171,7 +230,7 @@ class Session:
         self.kind = ""
         self.model_label = ""
         self.trained_on: list[str] = []
-        self.state = "готовлюсь"
+        self.state = State.PREPARING
         self.note = ""
         self.duration = 0.0
         self.title = ""
@@ -190,7 +249,7 @@ class Session:
             tail = self.rows[-TIMING_WINDOW:]
         el = time.time() - self.started
         seen = (self.start + n / self.fps) if n else self.start
-        return {"id": self.vid, "run": self.run, "state": self.state,
+        return {"id": self.vid, "run": self.run, "state": self.state.label,
                 "kind": self.kind, "model": self.model_label,
                 "trained_on": self.trained_on, "timing": timing(tail),
                 "note": self.note, "fps": self.fps, "start": self.start,
@@ -206,7 +265,7 @@ class Session:
     # ---------- работа ----------
 
     def _fail(self, why: str) -> None:
-        self.state, self.note = "сбой", why
+        self.state, self.note = State.FAILED, why
 
     def _run(self) -> None:
         try:
@@ -217,7 +276,7 @@ class Session:
     def _work(self) -> None:
         layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
         url = f"https://www.youtube.com/watch?v={self.vid}"
-        self.state = "спрашиваю YouTube"
+        self.state = State.PROBING
         w, h, dur, _, info = probe_url(url)
         self.duration, self.title = dur, info.get("title") or self.vid
 
@@ -230,7 +289,7 @@ class Session:
         ck = run_checkpoint(self.run)
         if not ck.is_file():
             return self._fail(f"нет модели runs/{self.run}/model.pt")
-        model = load_runner(ck, self.device)
+        model: Runner = load_runner(ck, self.device)
         self.kind, self.model_label = model.kind, model.label
         self.trained_on = list(model.trained_on)
         self.note = (f"{w}x{h}, {dur / 60:.0f} мин · "
@@ -239,9 +298,8 @@ class Session:
         # иначе на процессоре — обрезка видом, маска на малом, cv2 INTER_AREA
         # вместо PIL LANCZOS (~3 мс против ~17; ответ патчевой модели тот же
         # в пределах 0.3 ед.).
-        gpu_prep = (model.frame_prep((w, h), (cx0, cy0, cx1, cy1), boxes,
-                                     (STORE_W, store_h))
-                    if hasattr(model, "frame_prep") else None)
+        gpu_prep = model.frame_prep((w, h), (cx0, cy0, cx1, cy1), boxes,
+                                    (STORE_W, store_h))
         cboxes = [(max(x0, cx0) - cx0, max(y0, cy0) - cy0,
                    min(x1, cx1) - cx0, min(y1, cy1) - cy0)
                   for x0, y0, x1, y1 in boxes
@@ -253,7 +311,7 @@ class Session:
                 a[y0:y1, x0:x1] = 0
             return cv2.resize(a, (STORE_W, store_h), interpolation=cv2.INTER_AREA)
 
-        self.state = "идёт"
+        self.state = State.RUNNING
 
         # Размер рамки вьюпорта постоянен внутри ролика, но по первому кадру
         # его не оценить: в начале заставка. Копим первые кадры, оцениваем по
@@ -311,11 +369,11 @@ class Session:
             for m, s, p, mi, t in warm:
                 self._emit(m, s, p, mi, bw, bh, model, t)
 
-        if self.state == "идёт":
-            self.state = "остановлено" if self._stop.is_set() else "ролик кончился"
+        if self.state is State.RUNNING:
+            self.state = State.STOPPED if self._stop.is_set() else State.ENDED
 
     def _emit(self, mask, scene: np.ndarray, prep, mini: Image.Image,
-              bw: int, bh: int, model, ms: dict) -> None:
+              bw: int, bh: int, model: Runner, ms: dict) -> None:
         """Один кадр: истина с миникарты, ответ модели, картинки в память.
 
         `ms` — уже набежавшее время кадра (распаковка; подготовка входа
@@ -405,7 +463,7 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
                 break
             _sessions.pop(old_id).stop()
         old = _sessions.get(vid)
-        if old and old.state in ("идёт", "готовлюсь", "спрашиваю YouTube"):
+        if old and old.state.active:
             if old.run == run:
                 return old.status()
             old.stop()                   # тот же ролик, но другой моделью
@@ -425,6 +483,6 @@ def stop(vid: str) -> None:
 
 
 def listing() -> list[dict]:
-    return [{"id": s.vid, "state": s.state, "count": len(s.rows),
+    return [{"id": s.vid, "state": s.state.label, "count": len(s.rows),
              "run": s.run, "kind": s.kind, "title": s.title}
             for s in _sessions.values()]

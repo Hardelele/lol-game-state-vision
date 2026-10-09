@@ -26,6 +26,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from paths import VIDEOS
@@ -36,7 +37,7 @@ ROLES = ("Top", "Jungle", "Mid", "ADC", "Bot", "Support")
 def fetch_info(vid: str) -> dict:
     """Описание без скачивания самого ролика."""
     out = subprocess.run(
-        ["python", "-m", "yt_dlp", "--skip-download", "--dump-json",
+        [sys.executable, "-m", "yt_dlp", "--skip-download", "--dump-json",
          f"https://www.youtube.com/watch?v={vid}"],
         capture_output=True, text=True, encoding="utf-8", errors="replace")
     if out.returncode != 0:

@@ -50,13 +50,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from paths import COORDS_DATA, RUNS, DEFAULT_LAYOUT
+from paths import COORDS_DATA, RUNS, DEFAULT_LAYOUT, NOT_GAME_DATA, NOT_GAME_LABELS
 from runlog import tee_stdout
 from mask_frames import crop_box
 from checkpoints import load_checkpoint
 from patch_model import (load_projection, scene_from_box,
                          infer_images, FrameHead, FRAME_SCALARS)
-from build_not_game import NOT_GAME_DATA, NOT_GAME_LABELS, load_labels, label_at
+from dataset_io import load_labels, label_at
 
 SPLIT = NOT_GAME_LABELS / "split.json"
 CACHE = RUNS / "not_game" / "cache"
@@ -290,7 +290,6 @@ def run(args) -> None:
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     t_start = time.perf_counter()
     model, base = load_checkpoint(args.model, dev, "patch")
-    model.frame_dim = model.head.embed.out_channels + len(FRAME_SCALARS)
     split = json.loads(args.split.read_text(encoding="utf-8"))
     coords_train = split.get("coords_train") or base.get("trained_on", [])
     coords_test = split["coords_test"]
