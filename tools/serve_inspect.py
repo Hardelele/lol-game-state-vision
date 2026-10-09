@@ -81,9 +81,25 @@ def discover_runs() -> list[dict]:
     return list(out.values())
 
 
-@lru_cache(maxsize=32)
+# Кеши ниже держат разобранные файлы, а ключом служит ещё и время их
+# изменения: после повторной проверки модели или забора нового ролика при
+# работающем сервере отдаётся новое, а не то, что прочитано при старте.
+
+def _mtime(p: Path) -> int | None:
+    """Время изменения файла или каталога; None — его нет."""
+    try:
+        return p.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
 def frames_of(run: str, vid: str) -> list[dict]:
     path = run_dir(run) / f"predictions_{vid}.csv"
+    return _frames(path, _mtime(path))
+
+
+@lru_cache(maxsize=32)
+def _frames(path: Path, mtime: int | None) -> list[dict]:
     rows = []
     for r in csv.DictReader(path.open(encoding="utf-8")):
         rows.append({
@@ -99,15 +115,20 @@ def frames_of(run: str, vid: str) -> list[dict]:
 
 
 @lru_cache(maxsize=8)
-def heatmaps_of(run: str, vid: str):
-    z = np.load(run_dir(run) / f"heatmaps_{vid}.npz")
+def _heatmaps(path: Path, mtime: int | None):
+    z = np.load(path)
     idx = {int(v): k for k, v in enumerate(z["idx"])}
     return z["heatmaps"].astype(np.float32), idx
 
 
-@lru_cache(maxsize=4096)
 def heat_png(run: str, vid: str, idx: int, size: int = 320) -> bytes:
-    hm, pos = heatmaps_of(run, vid)
+    path = run_dir(run) / f"heatmaps_{vid}.npz"
+    return _heat_png(path, _mtime(path), idx, size)
+
+
+@lru_cache(maxsize=4096)
+def _heat_png(path: Path, mtime: int | None, idx: int, size: int) -> bytes:
+    hm, pos = _heatmaps(path, mtime)
     return inspect_pages.heat_png(hm[pos[idx]], size)
 
 
@@ -159,13 +180,18 @@ def net_stages(run: str, vid: str, idx: int) -> list[dict]:
     return out
 
 
-@lru_cache(maxsize=1)
 def video_meta() -> dict:
     """Название, роль и сторона по каждому ролику.
 
     Без этого в интерфейсе виден только идентификатор вида 4AIX8QtRid4, и
     невозможно понять ни что за матч, ни участвовал ли он в обучении.
+    Перечитывается, когда в data/videos появился или пропал файл.
     """
+    return _video_meta(_mtime(VIDEOS))
+
+
+@lru_cache(maxsize=1)
+def _video_meta(mtime: int | None) -> dict:
     out = {}
     for p in sorted(VIDEOS.glob("*.info.json")):
         vid = p.stem.replace(".info", "")
@@ -178,9 +204,13 @@ def video_meta() -> dict:
     return out
 
 
-@lru_cache(maxsize=1)
 def projection() -> dict:
-    if not PROJECTION.exists():
+    return _projection(_mtime(PROJECTION))
+
+
+@lru_cache(maxsize=1)
+def _projection(mtime: int | None) -> dict:
+    if mtime is None:
         return {}
     Hm, (W, H) = load_projection()
     return {"scene_size": [W, H], "homography": Hm.tolist(),
