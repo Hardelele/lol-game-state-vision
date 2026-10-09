@@ -13,6 +13,13 @@
 *.onnx
 *.engine
 
+# Source videos and yt-dlp sidecars, wherever they end up
+*.mp4
+*.mkv
+*.webm
+*.part
+*.info.json
+
 # Python environments and caches
 .venv/
 venv/
@@ -32,6 +39,13 @@ __pycache__/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+
+# Local agent sessions and worktrees
+.claude/
 
 # Артефакты браузерной проверки интерфейса
 .playwright-mcp/
