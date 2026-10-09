@@ -53,7 +53,7 @@ from PIL import Image
 
 from paths import ROOT
 from activations import load_model
-from build_coords import probe_url, frames as frame_stream
+from video_stream import probe_url, frames as frame_stream
 from coord_model import expected_point, peak_point, spread
 from mask_frames import crop_box, mask_boxes
 from minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box

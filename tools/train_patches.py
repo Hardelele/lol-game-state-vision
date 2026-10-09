@@ -12,7 +12,7 @@
 * хранимая сцена 720×372 (уже замаскированная) + маска «здесь сцена»
   той же раскладки;
 * 0-4 случайных прямоугольника поверх: чёрные или синтетический UI
-  (панели, текст, полоски, значки — см. synth_ui). Настоящий HUD
+  (панели, текст, полоски, значки — см. augment.synth_ui). Настоящий HUD
   трансляции сюда намеренно не берётся: его полосы и есть то, чем
   probe_hud.py проверяет устойчивость, и учить на них — подглядывать;
 * случайный вырез любых пропорций (0.4-4) и площади (15-80% кадра;
@@ -35,7 +35,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import string
 import time
 from pathlib import Path
 
@@ -47,79 +46,14 @@ from torch.utils.data import Dataset, DataLoader
 
 from paths import COORDS_DATA, RUNS, TRAIN_LOG, DATASET
 from runlog import tee_stdout
-from mask_frames import crop_box, keep_grid
-from train_coords import load_rows
+from dataset_io import load_rows, stored_keep
+from augment import synth_ui, color_gpu
 from patch_model import (PatchNet, MAP_UNITS, UNITS_PER_PX, load_projection,
                          to_world, footprint, cell_offsets, soft_target_sep,
                          infer_images, count_params, decode_points)
 
 LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 PATCH_RUNS = RUNS / "patches"
-
-
-def stored_keep(layout: dict, full=(1920, 1080), store=(720, 372)) -> np.ndarray:
-    """Маска «здесь сцена» в пикселях хранимой сцены (bool, H×W)."""
-    k = keep_grid(full, layout)
-    x0, y0, x1, y1 = crop_box(full, layout, "dense")
-    k = k[y0:y1, x0:x1].astype(np.uint8) * 255
-    return cv2.resize(k, store, interpolation=cv2.INTER_NEAREST) > 127
-
-
-# ------------------------------------------------------------- синтетический UI
-
-_FONTS = (cv2.FONT_HERSHEY_SIMPLEX, cv2.FONT_HERSHEY_DUPLEX,
-          cv2.FONT_HERSHEY_PLAIN, cv2.FONT_HERSHEY_COMPLEX,
-          cv2.FONT_HERSHEY_TRIPLEX)
-_CHARS = string.ascii_letters + string.digits + "  /:%+-"
-
-
-def synth_ui(w: int, h: int, rng: np.random.Generator) -> np.ndarray:
-    """Случайная «панель интерфейса» (h, w, 3) uint8.
-
-    Не копия чьего-то HUD, а его общие черты: тёмная подложка с градиентом,
-    рамка, строки текста, полоски здоровья/маны, квадратные значки. Этого
-    достаточно, чтобы модель училась отличать нарисованное поверх игры от
-    самой игры, не запоминая конкретную трансляцию.
-    """
-    w, h = max(int(w), 2), max(int(h), 2)
-    c0 = rng.integers(0, 70, 3)
-    c1 = np.clip(c0 + rng.integers(-30, 60, 3), 0, 255)
-    t = np.linspace(0, 1, h)[:, None, None]
-    img = (c0[None, None] * (1 - t) + c1[None, None] * t).repeat(w, 1)
-    if rng.random() < 0.5:
-        img = img + rng.normal(0, rng.uniform(2, 14), (h, w, 1))
-    img = np.clip(img, 0, 255).astype(np.uint8)
-    img = np.ascontiguousarray(img)
-    gold = tuple(int(v) for v in rng.integers(120, 230, 3))
-    if rng.random() < 0.7:
-        cv2.rectangle(img, (0, 0), (w - 1, h - 1), gold, int(rng.integers(1, 4)))
-    for _ in range(int(rng.integers(0, 6))):            # значки
-        s = int(rng.integers(6, max(7, min(h, w) // 2 + 1)))
-        x, y = int(rng.integers(0, max(1, w - s))), int(rng.integers(0, max(1, h - s)))
-        col = tuple(int(v) for v in rng.integers(0, 255, 3))
-        if rng.random() < 0.5:
-            cv2.rectangle(img, (x, y), (x + s, y + s), col, -1)
-            cv2.rectangle(img, (x, y), (x + s, y + s), gold, 1)
-        else:
-            cv2.circle(img, (x + s // 2, y + s // 2), s // 2, col, -1)
-    for _ in range(int(rng.integers(0, 4))):            # полоски
-        bw = int(rng.integers(max(2, w // 6), max(3, w)))
-        bh = int(rng.integers(2, max(3, h // 8 + 3)))
-        x, y = int(rng.integers(0, max(1, w - bw))), int(rng.integers(0, max(1, h - bh)))
-        col = [(40, 200, 60), (200, 40, 40), (50, 110, 230), (230, 200, 60)][
-            int(rng.integers(0, 4))]
-        cv2.rectangle(img, (x, y), (x + bw, y + bh), (10, 10, 10), -1)
-        cv2.rectangle(img, (x, y), (x + int(bw * rng.uniform(0.1, 1)), y + bh), col, -1)
-    for _ in range(int(rng.integers(0, 7))):            # текст
-        n = int(rng.integers(2, 16))
-        txt = "".join(rng.choice(list(_CHARS), n))
-        sc = float(rng.uniform(0.3, 1.3))
-        col = tuple(int(v) for v in (rng.integers(170, 256, 3) if rng.random() < 0.7
-                                     else rng.integers(0, 256, 3)))
-        org = (int(rng.integers(0, max(1, w - 10))), int(rng.integers(8, max(9, h))))
-        cv2.putText(img, txt, org, _FONTS[int(rng.integers(0, len(_FONTS)))], sc, col,
-                    int(rng.integers(1, 3)), cv2.LINE_AA)
-    return img
 
 
 # ------------------------------------------------------------- набор данных
@@ -195,16 +129,6 @@ class PatchSamples(Dataset):
         return (torch.from_numpy(out).permute(2, 0, 1), torch.from_numpy(val),
                 torch.tensor(q0, dtype=torch.float32), torch.tensor(units, dtype=torch.float32),
                 torch.tensor([float(r["cx"]), float(r["cy"])]))
-
-
-def color_gpu(x: torch.Tensor) -> torch.Tensor:
-    """Яркость, контраст и баланс каналов; x в [0, 1]."""
-    n, dev = x.shape[0], x.device
-    c = torch.rand(n, 1, 1, 1, device=dev) * 0.4 + 0.8
-    b = torch.rand(n, 1, 1, 1, device=dev) * 0.16 - 0.08
-    g = torch.rand(n, 3, 1, 1, device=dev) * 0.12 + 0.94
-    m = x.mean(dim=(1, 2, 3), keepdim=True)
-    return ((x - m) * c + m + b).mul_(g).clamp_(0, 1)
 
 
 def patch_loss(model, x, val, q0, units, cam, sigma: float, scene_w: float,

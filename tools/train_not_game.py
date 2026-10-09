@@ -55,7 +55,7 @@ from runlog import tee_stdout
 from mask_frames import crop_box
 from patch_model import (load_patchnet, load_projection, scene_from_box,
                          infer_images, FrameHead, FRAME_SCALARS)
-from build_not_game import NOT_GAME_DATA, NOT_GAME_LABELS, load_labels, label_at
+from dataset_io import NOT_GAME_DATA, NOT_GAME_LABELS, load_labels, label_at
 
 SPLIT = NOT_GAME_LABELS / "split.json"
 LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"

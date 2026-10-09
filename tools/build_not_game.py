@@ -43,11 +43,11 @@ import numpy as np
 from PIL import Image
 
 from paths import DATA, DATASET
+from dataset_io import NOT_GAME_DATA
 from mask_frames import crop_box, mask_boxes
-from build_coords import probe_url, frames, have_nvdec, STORE_W
+from video_stream import probe_url, frames, have_nvdec
+from build_coords import STORE_W
 
-NOT_GAME_DATA = DATA / "not_game"
-NOT_GAME_LABELS = DATASET / "not_game"
 LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 FULL_SIZE = (960, 540)
 FIELDS = ["video_id", "t_sec", "scene", "full"]
@@ -68,23 +68,6 @@ def load_manifest(path: Path) -> dict[float, dict]:
     if not path.exists():
         return {}
     return {float(r["t_sec"]): r for r in csv.DictReader(path.open(encoding="utf-8"))}
-
-
-def load_labels(vid: str, root: Path = NOT_GAME_LABELS) -> list[dict]:
-    """Интервалы разметки ролика: start_sec, end_sec, label, kind, note."""
-    p = root / vid / "labels.csv"
-    rows = list(csv.DictReader(p.open(encoding="utf-8")))
-    for r in rows:
-        r["start_sec"], r["end_sec"] = float(r["start_sec"]), float(r["end_sec"])
-    return rows
-
-
-def label_at(intervals: list[dict], t: float) -> tuple[str, str]:
-    """Метка и подкласс для момента t; вне разметки — ("", "")."""
-    for r in intervals:
-        if r["start_sec"] <= t < r["end_sec"]:
-            return r["label"], r["kind"]
-    return "", ""
 
 
 def main() -> None:

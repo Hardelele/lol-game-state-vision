@@ -64,6 +64,8 @@ from mask_frames import crop_box, mask_boxes
 from coord_model import CoordNet, GRID, expected_point
 from train_coords import MAP_UNITS
 from patch_model import load_patchnet, load_projection, scene_from_box, infer_images
+from dataset_io import stored_keep
+from augment import synth_ui
 
 LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
 W, H = 1920, 1080
@@ -194,7 +196,6 @@ class Variants:
         if key == "ui_full":
             # Кадр, где игры нет вовсе: координаты на нём смысла не имеют,
             # проверяется только, отбрасывает ли его голова «игра / не игра».
-            from train_patches import synth_ui
             ui = synth_ui(st[0], st[1], rng)
             return Image.fromarray(ui), np.eye(3), np.zeros((st[1], st[0]), bool)
         raise KeyError(key)
@@ -337,7 +338,6 @@ def main() -> None:
                     pats[k][v].extend(pt)
             imgs.clear(); mats.clear(); ops.clear()
 
-    from train_patches import stored_keep
     keep = stored_keep(layout, store=var.store)
     saved = False
     n_buf = 0

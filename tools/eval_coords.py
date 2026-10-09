@@ -29,7 +29,8 @@ from torch.utils.data import DataLoader
 
 from paths import COORDS_DATA
 from coord_model import CoordNet, GRID, expected_point, peak_point, spread
-from train_coords import Scenes, load_rows, MAP_UNITS
+from dataset_io import Scenes, load_rows
+from train_coords import MAP_UNITS
 
 
 def load_model(path: Path, dev: str):
