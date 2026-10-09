@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import channels
-import live
+from lolstream import channels
+from lolstream import live
 
 
 def test_live_labels_unchanged():

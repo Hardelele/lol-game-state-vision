@@ -29,19 +29,18 @@ from urllib.parse import urlparse, unquote, parse_qs
 
 import numpy as np
 
-import activations as act
-import channels
-import explain_miss
-import inspect_pages
-import live
-import video_side
-import _bootstrap  # noqa: F401 — корень репозитория в sys.path
+from lolstream import activations as act
+from lolstream import channels
+from lolstream import explain_miss
+from lolstream import inspect_pages
+from lolstream import live
+from lolstream import video_side
 from lolvision.geometry import MAP_UNITS, apply_h, load_projection
-from channels import youtube_id
+from lolstream.channels import youtube_id
 from lolvision.checkpoints import checkpoint_kind, read_checkpoint
-from lolvision.paths import COORDS_DATA, PROJECTION, RUNS, TOOLS, VIDEOS, run_dir
+from lolvision.paths import COORDS_DATA, PROJECTION, RUNS, VIDEOS, run_dir
 
-WEB = TOOLS / "webapp"
+WEB = Path(__file__).resolve().parent / "webapp"   # статика интерфейса, данные пакета
 
 # Общей блокировки на маршрутах нет: кеши ниже потокобезопасны (lru_cache в
 # худшем случае посчитает одно и то же дважды), чтение файлов и сборка

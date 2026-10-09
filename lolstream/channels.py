@@ -31,9 +31,8 @@ import threading
 import time
 from pathlib import Path
 
-import _bootstrap  # noqa: F401 — корень репозитория в sys.path
 from lolvision.paths import (ROOT, TOOLS, SOURCES, CHANNELS as STORE, COORDS_DATA as COORDS,
-                   VIDEOS, DEFAULT_LAYOUT, INGEST_LOGS)
+                             VIDEOS, DEFAULT_LAYOUT, INGEST_LOGS)
 
 CATALOGS = (SOURCES / "champion-replay-channels.json",
             SOURCES / "top-player-channels.json")
@@ -340,7 +339,9 @@ def ingest(vid: str, fps: float = 1.0) -> dict:
             return {"id": vid, "state": JobState.ALREADY_RUNNING.label}
     INGEST_LOGS.mkdir(parents=True, exist_ok=True)
     logfile = INGEST_LOGS / f"{vid}.log"
-    env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": str(TOOLS)}
+    # Сборщик — скрипт из tools/: корень репозитория он добавляет себе сам
+    # (tools/_bootstrap.py), PYTHONPATH ему не нужен.
+    env = {"PYTHONIOENCODING": "utf-8"}
     # Дочерний процесс держит свою копию дескриптора лога, наша не нужна.
     with logfile.open("w", encoding="utf-8") as fh:
         proc = subprocess.Popen(
@@ -365,7 +366,7 @@ def video_info(vid: str) -> dict:
     Сторона есть только в описании, и достаётся она сетевым запросом, поэтому
     ответ кешируется. Ролики, уже взятые в датасет, читаются с диска.
     """
-    import video_side
+    from lolstream import video_side
 
     local = VIDEOS / f"{vid}.info.json"
     cached = INFO / f"{vid}.json"

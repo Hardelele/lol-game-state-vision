@@ -45,7 +45,7 @@ from PIL import Image
 import _bootstrap  # noqa: F401 — корень репозитория в sys.path
 from lolvision.paths import DEFAULT_LAYOUT, NOT_GAME_DATA, VIDEOS
 from lolvision.mask_frames import crop_box, mask_boxes
-from video_stream import probe_url, frames, have_nvdec
+from lolstream.video_stream import probe_url, frames, have_nvdec
 from lolvision.dataset_io import STORE_W
 
 FULL_SIZE = (960, 540)

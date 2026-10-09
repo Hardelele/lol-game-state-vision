@@ -36,7 +36,7 @@ import _bootstrap  # noqa: F401 — корень репозитория в sys.p
 from lolvision.paths import COORDS_DATA, COORDS_RUNS, INSPECT, PROJECTION
 from lolvision.checkpoints import read_checkpoint
 from lolvision.geometry import MAP_UNITS, apply_h, load_projection
-from inspect_pages import (NAV_OPEN, NAV_CLOSE, b64, heat_rgba, sync_nav, update_manifest,
+from lolstream.inspect_pages import (NAV_OPEN, NAV_CLOSE, b64, heat_rgba, sync_nav, update_manifest,
                            write_index)
 
 # Видимая область берётся из калиброванной проекции (tools/calibrate_projection.py):

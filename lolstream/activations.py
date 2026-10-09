@@ -23,7 +23,6 @@ import torch
 from PIL import Image
 from torch import nn
 
-import _bootstrap  # noqa: F401 — корень репозитория в sys.path
 from lolvision.checkpoints import load_checkpoint
 from lolvision.coord_model import CoordNet
 

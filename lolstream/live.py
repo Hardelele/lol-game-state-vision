@@ -53,12 +53,11 @@ import numpy as np
 import torch
 from PIL import Image
 
-import _bootstrap  # noqa: F401 — корень репозитория в sys.path
 from lolvision.paths import DEFAULT_LAYOUT, RUNS, run_dir
 from lolvision.checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
 from lolvision.dataset_io import MINI_STORE, STORE_W
-from video_stream import probe_url, frames as frame_stream
-from channels import check_fps, youtube_id
+from lolstream.video_stream import probe_url, frames as frame_stream
+from lolstream.channels import check_fps, youtube_id
 from lolvision.coord_model import expected_point, peak_point, spread
 from lolvision.geometry import MAP_UNITS
 from lolvision.mask_frames import crop_box, mask_boxes

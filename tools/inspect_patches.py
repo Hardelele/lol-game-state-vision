@@ -40,7 +40,7 @@ import _bootstrap  # noqa: F401 — корень репозитория в sys.p
 from lolvision.mask_frames import apply_mask
 from lolvision.paths import DATASET_VIDEOS, INSPECT, MINIMAP
 from lolvision.geometry import MAP_UNITS
-from inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
+from lolstream.inspect_pages import NAV_OPEN, NAV_CLOSE, b64, sync_nav, update_manifest, write_index
 
 SCALES = (10, 20, 40, 80, 160, 320)
 CELL = 150          # сторона показа кусочка на странице

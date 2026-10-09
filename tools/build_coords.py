@@ -38,7 +38,7 @@ from lolvision.paths import COORDS_DATA, VIDEOS
 from lolvision.mask_frames import crop_box, mask_boxes
 from lolvision.minimap_camera import MM, white_mask, find_box, estimate_box
 from lolvision.dataset_io import MINI_STORE, STORE_W
-from video_stream import probe_url, probe, have_nvdec, frames
+from lolstream.video_stream import probe_url, probe, have_nvdec, frames
 
 
 

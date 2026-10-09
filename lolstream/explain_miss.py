@@ -34,11 +34,10 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-import _bootstrap  # noqa: F401 — корень репозитория в sys.path
 from lolvision.checkpoints import load_checkpoint
 from lolvision.coord_model import grid_centers
 from lolvision.paths import COORDS_DATA, RUNS, INSPECT
-from inspect_pages import b64
+from lolstream.inspect_pages import b64
 from lolvision.geometry import MAP_UNITS
 NEAR = 0.035          # «рядом» по карте, в долях карты
 POOL = 48             # сколько кадров берём в каждое облако

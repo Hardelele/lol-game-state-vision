@@ -29,7 +29,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import _bootstrap  # noqa: F401 — корень репозитория в sys.path
 from lolvision.paths import VIDEOS
 
 ROLES = ("Top", "Jungle", "Mid", "ADC", "Bot", "Support")
