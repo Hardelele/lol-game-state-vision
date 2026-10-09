@@ -1,8 +1,9 @@
 # Dev tools on top of requirements.txt: tests (tests/, CPU; one test needs CUDA
 # and is skipped without it) and the linter. Config is in pyproject.toml.
 #   python -m pip install -r requirements.txt -r requirements-dev.txt
+# or, with the project itself in editable mode: python -m pip install -e .[dev]
 #   python -m pytest -q
-#   python -m ruff check tools tests
+#   python -m ruff check .
 
 pytest==9.1.1
 ruff==0.16.10

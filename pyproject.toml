@@ -1,5 +1,36 @@
-# Только настройки инструментов: проект не ставится как пакет, скрипты
-# запускаются как `python tools/<script>.py` и импортируют друг друга из tools/.
+# Два пакета и скрипты к ним:
+# * lolvision — модель и данные (геометрия, модели, чекпоинты, ответ по кадру,
+#   маска HUD, метка с миникарты, чтение наборов);
+# * lolstream — ролики YouTube поверх модели: поток кадров, live, каналы,
+#   забор в датасет, сервер смотрелки (статика webapp/ — данные пакета);
+# * tools/ — командная строка, `python tools/<script>.py`; в пакет не входят и
+#   без установки находят пакеты через tools/_bootstrap.py.
+#
+# Установка для разработки: `python -m pip install -e .` (зависимости — из
+# requirements.txt; CUDA-сборку PyTorch ставить до этого, см. там же).
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lol-game-state-vision"
+version = "0.1.0"
+description = "Camera position on the League of Legends map from a single frame"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.12"
+dynamic = ["dependencies", "optional-dependencies"]
+
+[tool.setuptools]
+packages = ["lolvision", "lolstream"]
+
+[tool.setuptools.package-data]
+lolstream = ["webapp/*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+optional-dependencies = {dev = {file = ["requirements-dev.txt"]}}
 
 [tool.ruff]
 target-version = "py312"

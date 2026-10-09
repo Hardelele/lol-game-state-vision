@@ -32,6 +32,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+build/
+*.egg-info/
 
 # Local environment configuration
 .env
