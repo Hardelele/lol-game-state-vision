@@ -83,9 +83,11 @@ python tools/eval_coords.py runs/coords/heatmap/model.pt olmTXkkUv58 zJvTSjEnKNE
 python tools/serve_inspect.py
 
 # Patch model: train, check robustness to HUD changes, measure speed
-python tools/train_patches.py --encoder cnn --train 58w57eJ5Qks ibUVbSX7ARU     --test olmTXkkUv58 zJvTSjEnKNE --epochs 40 --eval-every 4 --out runs/patches/cnn
+python tools/train_patches.py --encoder cnn --train 58w57eJ5Qks ibUVbSX7ARU \
+    --test olmTXkkUv58 zJvTSjEnKNE --epochs 40 --eval-every 4 --out runs/patches/cnn
 python tools/probe_hud.py 58w57eJ5Qks runs/patches/cnn/model.pt --tag cnn
-python tools/bench_models.py --patch runs/patches/cnn/model.pt     --out runs/checks/bench_models/bench.json
+python tools/bench_models.py --coordnet runs/coords/heatmap/model.pt \
+    --patch runs/patches/cnn/model.pt --out runs/checks/bench_models/bench.json
 ```
 
 The full commands and the 16/4 split behind the reported numbers are in
