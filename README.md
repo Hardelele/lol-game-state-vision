@@ -62,6 +62,8 @@ DeeperLeague remains a reference for a possible future minimap module. Its READM
 
 pyLoL, LeagueAI, and lol-vision remain secondary references for future game-state extraction work.
 
+A wider survey of GitHub projects and papers on ML for League of Legends (plus TFT and Wild Rift) lives in [docs/github-lol-ml-index.md](docs/github-lol-ml-index.md).
+
 ## Repository status and conventions
 
 The first video is in the dataset: 94 frames sampled every 15 seconds from one spectator replay, labeled `top` / `not_top` / `unknown` (see [dataset/README.md](dataset/README.md)). Frame extraction (`tools/extract_frames.py`) and HUD/minimap masking (`tools/mask_frames.py`) are implemented; splits, models, and inference are not yet.
