@@ -33,49 +33,34 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 
 import _bootstrap  # noqa: F401
 from lolvision.paths import DATASET, DEFAULT_LAYOUT, RUNS
+from lolvision.scene_kind import (FEAT_DIM, IN_H, IN_W, Head, dino_features, fuse, load_dino,
+                                  to_input)
 from runlog import tee_stdout
 from train_not_game import SPLIT, not_game_rows
 from train_scene_kind import CLASSES, confusion, load_overlays, scene_class, show, weights
 
-IN_W, IN_H = 392, 224
 CACHE = RUNS / "scene_kind" / "cache"
-MEAN = torch.tensor((0.485, 0.456, 0.406)).view(1, 3, 1, 1)
-STD = torch.tensor((0.229, 0.224, 0.225)).view(1, 3, 1, 1)
-
-
-def load_dino(arch: str = "dinov2_vits14", dev: str = "cuda"):
-    repo = Path.home() / ".cache" / "torch" / "hub" / "facebookresearch_dinov2_main"
-    vit = (torch.hub.load(str(repo), arch, source="local") if repo.exists()
-           else torch.hub.load("facebookresearch/dinov2", arch))
-    return vit.to(dev).eval()
 
 
 @torch.no_grad()
-def dino_features(vit, paths: list[Path], dev: str, batch: int = 32) -> np.ndarray:
+def batch_features(vit, paths: list[Path], dev: str, batch: int = 32) -> np.ndarray:
+    """Признаки как в live (lolvision.scene_kind.to_input): кадр → 392×224 на видеокарте."""
     out = []
     for j in range(0, len(paths), batch):
-        ims = [np.asarray(Image.open(p).convert("RGB").resize((IN_W, IN_H), Image.BILINEAR))
-               for p in paths[j:j + batch]]
-        x = torch.from_numpy(np.stack(ims)).to(dev).permute(0, 3, 1, 2).float() / 255
-        x = (x - MEAN.to(dev)) / STD.to(dev)
-        f = vit.forward_features(x)
-        cls = f["x_norm_clstoken"]
-        pt = f["x_norm_patchtokens"].transpose(1, 2).reshape(len(ims), -1, IN_H // 14, IN_W // 14)
-        grid = F.adaptive_avg_pool2d(pt, 3).flatten(2).transpose(1, 2)      # (B, 9, C)
-        feat = torch.cat([cls[:, None], pt.mean((2, 3))[:, None], grid], 1).flatten(1)
-        out.append(feat.float().cpu().numpy())
-    return np.concatenate(out) if out else np.zeros((0, 11 * 384), np.float32)
+        x = torch.cat([to_input(np.asarray(Image.open(p).convert("RGB")), dev)
+                       for p in paths[j:j + batch]])
+        out.append(dino_features(vit, x).cpu().numpy())
+    return np.concatenate(out) if out else np.zeros((0, FEAT_DIM), np.float32)
 
 
 def cached(vit, rows: list[dict], dev: str) -> np.ndarray:
     """Признаки по ролику с кэшем (ключ — путь кадра)."""
-    out = np.zeros((len(rows), 11 * vit.embed_dim), np.float32)
+    out = np.zeros((len(rows), FEAT_DIM), np.float32)
     by: dict[str, list[int]] = {}
     for i, r in enumerate(rows):
         by.setdefault(r["video_id"], []).append(i)
@@ -87,7 +72,7 @@ def cached(vit, rows: list[dict], dev: str) -> np.ndarray:
             have = dict(zip(z["k"].tolist(), z["f"]))
         need = [i for i in idx if str(rows[i]["full"]) not in have]
         if need:
-            f = dino_features(vit, [rows[i]["full"] for i in need], dev)
+            f = batch_features(vit, [rows[i]["full"] for i in need], dev)
             for i, v in zip(need, f):
                 have[str(rows[i]["full"])] = v
             cp.parent.mkdir(parents=True, exist_ok=True)
@@ -121,18 +106,6 @@ def stream_rows(vids: list[str]) -> list[dict]:
             r["cls"] = CLASSES.index(scene_class(r, ov))
             rows.append(r)
     return rows
-
-
-class Head(nn.Module):
-    def __init__(self, cin: int, k: int, hidden: int = 256):
-        super().__init__()
-        self.register_buffer("mu", torch.zeros(cin))
-        self.register_buffer("sd", torch.ones(cin))
-        self.net = nn.Sequential(nn.Dropout(0.3), nn.Linear(cin, hidden), nn.ReLU(inplace=True),
-                                 nn.Dropout(0.3), nn.Linear(hidden, k))
-
-    def forward(self, x):
-        return self.net((x - self.mu) / self.sd)
 
 
 def fit(x, y, w, dev, epochs=200, seed=0) -> Head:
@@ -216,7 +189,7 @@ def run(args) -> None:
     p_game = patch_p_game(args.patch_model, te, dev)
     thr = p_game.pop("threshold")
     pg = np.array([p_game.get(i, 1.0) for i in range(len(te))])
-    fused = np.where((pred == 0) & (pg < thr), CLASSES.index("other"), pred)
+    fused = np.array([fuse(int(c), g, thr) for c, g in zip(pred, pg)])
     out_kinds = set(split.get("out_of_scope_kinds", []))
     ins = np.array([r["kind"] not in out_kinds for r in te])
     c = confusion(y_te[ins], pred[ins])

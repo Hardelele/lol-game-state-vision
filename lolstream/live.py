@@ -64,6 +64,7 @@ from lolvision.mask_frames import crop_box, mask_boxes
 from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
                                       find_box_clipped, estimate_box)
 from lolvision.patch_infer import PatchInfer
+from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -71,7 +72,11 @@ WARM_Q = 0.4             # «рамка видна»: качество при р
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
-STAGES = ("decode", "prep", "net", "agg", "out")
+STAGES = ("decode", "prep", "net", "agg", "kind", "out")
+# Тип сцены (игра / Tab / магазин / клиент / загрузка / не League, scene_kind.py)
+# меняется медленно, а DINO стоит ~10 мс: считаем его примерно KIND_HZ раз в
+# секунду потока, между этим берём прошлый ответ.
+KIND_HZ = 2.0
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 
 
@@ -311,6 +316,14 @@ class Session:
                 a[y0:y1, x0:x1] = 0
             return cv2.resize(a, (STORE_W, store_h), interpolation=cv2.INTER_AREA)
 
+        kind_model = None
+        if KIND_HEAD.is_file():
+            kind_model = SceneKind(KIND_HEAD, self.device)
+            self.note += " · тип сцены"
+        kind_every = max(1, round(self.fps / KIND_HZ))
+        kind_p = None
+        n_frame = 0
+
         self.state = State.RUNNING
 
         # Размер рамки вьюпорта постоянен внутри ролика, но по первому кадру
@@ -344,6 +357,12 @@ class Session:
                 prep = model.prepare(Image.fromarray(scene))
             ms = {"decode": (t1 - t0) * 1000,
                   "prep": (time.perf_counter() - t2) * 1000}
+            if kind_model is not None and n_frame % kind_every == 0:
+                t3 = time.perf_counter()
+                kind_p = kind_model.probs(fr)
+                ms["kind"] = (time.perf_counter() - t3) * 1000
+            ms["kind_p"] = kind_p
+            n_frame += 1
 
             if bw is None:
                 warm.append((mask, scene, prep, mini, ms))
@@ -400,6 +419,15 @@ class Session:
         for k in ("votes", "is_game"):
             if k in out:
                 row[k] = out[k]
+        kp = ms.pop("kind_p", None)
+        if kp is not None:
+            # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
+            # без её подтверждения — не наша карта или чужая игра.
+            c = int(np.argmax(kp))
+            if KIND_CLASSES[c] == "game" and row.get("is_game") is False:
+                c = KIND_CLASSES.index("other")
+            row["kind"] = KIND_CLASSES[c]
+            row["kind_p"] = round(float(kp[int(np.argmax(kp))]), 3)
         sj = _jpeg(Image.fromarray(scene), 85)
         mj = _jpeg(mini.resize((MINI_STORE, MINI_STORE)), 82)
         ms["out"] = (time.perf_counter() - t0) * 1000

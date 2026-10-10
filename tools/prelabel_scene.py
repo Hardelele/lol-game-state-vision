@@ -25,7 +25,8 @@ from PIL import Image, ImageDraw
 
 import _bootstrap  # noqa: F401
 from lolvision.paths import NOT_GAME_DATA, RUNS
-from scene_kind_dino import Head, cached, load_dino
+from lolvision.scene_kind import Head, load_dino
+from scene_kind_dino import cached
 from train_scene_kind import CLASSES
 
 OUT = RUNS / "scene_kind" / "prelabel"

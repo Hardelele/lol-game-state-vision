@@ -32,6 +32,12 @@ dataset notes are in Russian; the README is in English.
   held-out streams it finds 96% of non-game frames and drops 0.24% of game
   frames (none of 5,877 spectator frames); coordinates are unchanged, the
   patch weights are the same. Details: [docs/not-game.md](docs/not-game.md).
+- **Scene type.** Frozen DINOv2-S over the whole frame plus a small head
+  (`lolvision/scene_kind.py`, `tools/scene_kind_dino.py`) says what is on
+  screen: game, game with the scoreboard (Tab) or the shop open, LoL
+  client, loading screen or not LoL; the not-game head above confirms the
+  Rift. On held-out streams 98.4% of frames are right (Tab 98.7% recall,
+  99.3% precision). Live writes it to `kind` about twice a second.
 - **Baseline.** `CoordNet` (`lolvision/coord_model.py`) maps the masked and
   cropped main view to a 32×32 heatmap over the map. It is kept as the
   baseline and can still be chosen in the live mode.
