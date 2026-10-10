@@ -70,7 +70,7 @@ WARMUP_MAX = 120         # дольше не ждём: оцениваем по �
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
-DEFAULT_RUN = "patches/cnn-split16-notgame"
+DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
 STAGES = ("decode", "prep", "net", "agg", "out")
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 

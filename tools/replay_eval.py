@@ -36,7 +36,7 @@ from lolvision.minimap_camera import MM, estimate_box, find_box, find_box_clippe
 from lolvision.paths import DATASET, RUNS
 
 LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
-MODEL = RUNS / "patches" / "cnn-split16-notgame" / "model.pt"
+MODEL = RUNS / "patches" / "cnn-split16-v2-notgame" / "model.pt"
 OUT = RUNS / "replay_eval"
 # Область поиска линий рамки на экране реплея 1920×1080 (миникарта с запасом).
 REGION = (1650, 804, 1914, 1072)
