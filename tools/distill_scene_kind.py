@@ -48,7 +48,7 @@ def pool_rows(split: dict) -> list[dict]:
     have = {str(r["full"]) for r in rows}
     for man in sorted(NOT_GAME_DATA.glob("*.csv")):
         vid = man.stem
-        if vid in test or vid in split["train"]:
+        if vid.endswith(".mined") or vid in test or vid in split["train"]:   # журнал mine_frames
             continue
         for r in csv.DictReader(man.open(encoding="utf-8")):
             p = NOT_GAME_DATA / r["full"]

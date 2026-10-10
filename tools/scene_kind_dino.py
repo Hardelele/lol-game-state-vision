@@ -31,6 +31,7 @@ import json
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -98,12 +99,30 @@ def spectator_rows(vid: str) -> list[dict]:
     return out
 
 
+BLACK_DARK, BLACK_SHARE = 20, 0.9
+
+
+def is_black(path: Path) -> bool:
+    """Почти чёрный кадр (затемнение на переходе, видна разве что вебкамера):
+    ≥ 90% пикселей темнее 20. У экранов загрузки и игры таких 9–32%."""
+    g = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    return g is not None and float((g < BLACK_DARK).mean()) >= BLACK_SHARE
+
+
 def stream_rows(vids: list[str]) -> list[dict]:
+    """Кадры роликов с метками классов. Затемнения внутри интервалов
+    разметки (перед загрузкой, после матча) — «other», подкласс black:
+    иначе модель учит «чёрный кадр → загрузка», потому что затемнение почти
+    всегда стоит прямо перед экраном загрузки."""
     rows = []
     for v in vids:
         ov = load_overlays(v)
         for r in not_game_rows(v):
-            r["cls"] = CLASSES.index(scene_class(r, ov))
+            if r["full"] is not None and is_black(r["full"]):
+                r["y"], r["kind"] = 0, "black"
+                r["cls"] = CLASSES.index("other")
+            else:
+                r["cls"] = CLASSES.index(scene_class(r, ov))
             rows.append(r)
     return rows
 
