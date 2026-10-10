@@ -81,6 +81,12 @@ U_REG = 4.0                 # ед./px холста для регистраци�
 GAPS = (1, 2)               # пары i→i+1 и i→i+2: второе — для замыкания
 MIN_OVERLAP = 0.25          # доля видимой области холста, общая у пары
 PX = MAP_UNITS / MM         # шаг метки: один пиксель миникарты 256, ед.
+# Рисуемая область миникарты в сетке 256 при обрезке labelling.minimap
+# раскладки: левее x = 9 и выше y = 14 — тёмная рамка интерфейса, где линии
+# рамки камеры не рисуются (замер по профилю белых пикселей, 58w57eJ5Qks);
+# правый и нижний край карты обрезкой срезаны (≈9 и ≈4 px натива).
+DRAW_X0, DRAW_Y0 = 9, 14
+CLIP_PENALTY = 0.3
 
 
 def all_videos() -> list[str]:
@@ -364,8 +370,14 @@ def find_box_clipped(mask: np.ndarray, bw: int, bh: int, min_vis: float = 0.5
     """
     n = mask.shape[0]
     px, py = bw // 2, bh // 2
-    pm = np.pad(mask, ((py, py + 1), (px, px + 1)))
-    inside = np.pad(np.ones_like(mask), ((py, py + 1), (px, px + 1)))
+    # Где рамка вообще может быть видна: слева и сверху обрезка миникарты
+    # захватывает тёмную рамку интерфейса (рисуемая область начинается с
+    # x = DRAW_X0, y = DRAW_Y0 сетки 256), справа и снизу обрезка, наоборот,
+    # срезает край карты — рамка уходит за край кадра обрезки.
+    vis_area = np.zeros_like(mask)
+    vis_area[DRAW_Y0:, DRAW_X0:] = 1
+    pm = np.pad(mask * vis_area, ((py, py + 1), (px, px + 1)))
+    inside = np.pad(vis_area, ((py, py + 1), (px, px + 1)))
 
     def scores(m):
         N, M = m.shape
@@ -379,11 +391,14 @@ def find_box_clipped(mask: np.ndarray, bw: int, bh: int, min_vis: float = 0.5
 
     sc, vis = scores(pm), scores(inside)
     per = 2 * (bw + bh)
-    norm = np.where(vis >= min_vis * per, sc / np.maximum(vis, 1), -1)
+    # Штраф за невидимую часть: иначе короткий обрывок рамки у края с парой
+    # случайных светлых пикселей побеждает почти целую рамку.
+    norm = np.where(vis >= min_vis * per,
+                    sc / np.maximum(vis, 1) - CLIP_PENALTY * (1 - vis / per), -1)
     y, x = np.unravel_index(int(norm.argmax()), norm.shape)
     x0, y0 = int(x) - px, int(y) - py
     clipped = bool(vis[y, x] < per)
-    return x0, y0, float(norm[y, x]), clipped
+    return x0, y0, float(sc[y, x] / max(vis[y, x], 1)), clipped
 
 
 def minimap_video(vid: str) -> str:
@@ -424,6 +439,11 @@ def minimap_video(vid: str) -> str:
                     "at_bound": int(x in (0, MM - bw - 1) or y in (0, MM - bh - 1)),
                     "kx": round((kx + bw / 2) / MM, 5), "ky": round((ky + bh / 2) / MM, 5),
                     "kq": round(kq, 3), "clipped": int(clip),
+                    # Зона края: рамка обрезана или вплотную к границе, где
+                    # обрезка возможна. Здесь метки бывают сдвинуты целой
+                    # серией, и как опора траектории они не годятся.
+                    "edge": int(clip or x in (0, MM - bw - 1) or y in (0, MM - bh - 1)
+                                or x <= DRAW_X0 + 1 or y <= DRAW_Y0 + 1),
                     "same_as_label": int(abs((x + bw / 2) / MM - float(r["cx"])) < 1e-3
                                          and abs((y + bh / 2) / MM - float(r["cy"])) < 1e-3),
                     "sx": round(cx / MM, 5) if np.isfinite(cx) else "",
@@ -792,6 +812,7 @@ def load_mini(vid: str, n: int) -> dict:
     """Пересчитанная рамка (mini/<ролик>.csv): обрезка, субпиксель, размер."""
     out = {"S": np.full((n, 2), np.nan), "K": np.full((n, 2), np.nan),
            "at_bound": np.zeros(n, bool), "clipped": np.zeros(n, bool),
+           "edge": np.zeros(n, bool),
            "w": np.full(n, np.nan), "h": np.full(n, np.nan), "box": None}
     p = OUT / "mini" / f"{vid}.csv"
     if not p.exists():
@@ -804,6 +825,7 @@ def load_mini(vid: str, n: int) -> dict:
         out["K"][i] = (float(r["kx"]) * MAP_UNITS, float(r["ky"]) * MAP_UNITS)
         out["at_bound"][i] = r["at_bound"] == "1"
         out["clipped"][i] = r["clipped"] == "1"
+        out["edge"][i] = r.get("edge") == "1"
         out["w"][i] = float(r["w"]) if r["w"] != "" else np.nan
         out["h"][i] = float(r["h"]) if r["h"] != "" else np.nan
     return out
@@ -824,7 +846,7 @@ def analyze(vids: list[str], args) -> dict:
         q = np.array([float(r["quality"]) for r in rows])
         mini = load_mini(vid, n)
         okq = q >= args.min_quality
-        anch = okq & ~mini["at_bound"]
+        anch = okq & ~mini["edge"]
         edges, st = edges_ok(read_csv(OUT / "reg" / f"{vid}.csv"), n,
                              args.ncc_min, args.margin_min, args.close_tol)
         data[vid] = (rows, lab, q, okq, anch, mini, edges, st)
@@ -857,7 +879,7 @@ def analyze(vids: list[str], args) -> dict:
         S, K = mini["S"], mini["K"]
         T, Tl, comp, tsig = trajectory(n, edges, A, lab, anch, sig_e,
                                        args.sig_label, args.c_rob)
-        anchS = okq & np.isfinite(S).all(1) & ~mini["clipped"]
+        anchS = okq & np.isfinite(S).all(1) & ~mini["edge"]
         TS, TSl, _, _ = trajectory(n, edges, A, S, anchS, sig_e,
                                    args.sig_label / 2, args.c_rob)
         pred = np.full((n, 2), np.nan)
@@ -876,6 +898,7 @@ def analyze(vids: list[str], args) -> dict:
         for i, r in enumerate(rows):
             f = {"video_id": vid, "idx": i, "t_sec": r["t_sec"], "quality": q[i],
                  "at_bound": int(mini["at_bound"][i]), "clipped": int(mini["clipped"][i]),
+                 "edge": int(mini["edge"][i]),
                  "anchor": int(anch[i]),
                  "lx": lab[i, 0], "ly": lab[i, 1], "kx": K[i, 0], "ky": K[i, 1],
                  "sx": S[i, 0], "sy": S[i, 1],
@@ -883,7 +906,8 @@ def analyze(vids: list[str], args) -> dict:
                  "tx": Tl[i, 0], "ty": Tl[i, 1], "t_sigma": tsig[i], "chain": comp[i],
                  "tsx": TSl[i, 0], "tsy": TSl[i, 1], "vx": vel[i, 0], "vy": vel[i, 1],
                  "box_w": mini["w"][i], "box_h": mini["h"][i]}
-            frames.append({k: (round(float(v), 2) if isinstance(v, (float, np.floating))
+            frames.append({k: (round(float(v), 3 if k == "quality" else 2)
+                               if isinstance(v, (float, np.floating))
                                and np.isfinite(v) else
                                ("" if isinstance(v, (float, np.floating)) else v))
                            for k, v in f.items()})
@@ -902,6 +926,7 @@ def analyze(vids: list[str], args) -> dict:
                 dm.append(pred[j] - pred[i] - ad)
         per_video[vid] = {
             "frames": n, "quality_ok": int(okq.sum()), "at_bound": int((okq & mini["at_bound"]).sum()),
+            "edge": int((okq & mini["edge"]).sum()),
             "pairs_gap1": st["gap1"], "accepted_gap1": st["accepted_gap1"],
             "pairs": st["pairs"], "accepted": st["accepted"], "weak_peak": st["weak_peak"],
             "in_trajectory": int((okq & (comp > 0)).sum()),
@@ -949,13 +974,14 @@ def stats_from_frames(allf: list[dict]) -> dict:
         good = q >= 0.4
         atb = col("at_bound", rows) > 0
         clip = col("clipped", rows) > 0
+        edge = col("edge", rows) > 0
         L, K, S, M, T, TS = (xy(a, rows) for a in ("l", "k", "s", "m", "t", "ts"))
         V = xy("v", rows)
         intr = np.isfinite(T).all(1)
-        base = good & intr & ~atb                 # обычные кадры с траекторией
+        base = good & intr & ~edge                # внутренние кадры с траекторией
         eL = np.linalg.norm(L - T, axis=1)
         d = {"frames_q04": int(good.sum()), "at_bound_q04": int((good & atb).sum()),
-             "clipped_q04": int((good & clip).sum()),
+             "clipped_q04": int((good & clip).sum()), "edge_q04": int((good & edge).sum()),
              "in_traj_q04": int((good & intr).sum()),
              "traj_sigma_axis": pct(col("t_sigma", rows)[good & intr], (50, 90))}
         d["label"] = {"n": int(base.sum()), "radial": pct(eL[base]),
@@ -981,12 +1007,18 @@ def stats_from_frames(allf: list[dict]) -> dict:
             lag.append(round(float(-np.sum(v[m] * r[m]) / np.sum(v[m] ** 2)), 4))
         d["label"]["lag_sec_from_velocity"] = lag
         d["label"]["speed_med"] = pct(np.linalg.norm(V[ok], axis=1), (50, 90))
-        # прижатые к краю метки: смещение относительно траектории
-        b2 = good & intr & atb
-        d["at_bound"] = {"n": int(b2.sum()), "radial": pct(eL[b2]),
-                         "gt100": share(eL[b2], 100),
-                         "clip_aware_radial": pct(np.linalg.norm(K - T, axis=1)[b2]),
-                         "subpixel_radial": pct(np.linalg.norm(S - T, axis=1)[b2])}
+        # Зона края: траектория здесь продолжена от внутренних опор сдвигами
+        # сцены, своих опор у неё нет — сравнение честное.
+        b2 = good & intr & edge
+        eK0 = np.linalg.norm(K - T, axis=1)
+        eS0 = np.linalg.norm(S - T, axis=1)
+        d["edge_zone"] = {"n": int(b2.sum()), "at_bound_n": int((b2 & atb).sum()),
+                          "label": pct(eL[b2]), "label_gt100": share(eL[b2], 100),
+                          "label_gt200": share(eL[b2], 200),
+                          "clip_aware": pct(eK0[b2]), "clip_aware_gt200": share(eK0[b2], 200),
+                          "subpixel": pct(eS0[b2]), "subpixel_gt200": share(eS0[b2], 200),
+                          "at_bound_label": pct(eL[b2 & atb]),
+                          "at_bound_clip_aware": pct(eK0[b2 & atb])}
         eK = np.linalg.norm(K - T, axis=1)
         eS = np.linalg.norm(S - T, axis=1)
         allg = good & intr
@@ -995,9 +1027,10 @@ def stats_from_frames(allf: list[dict]) -> dict:
             "label": pct(eL[allg]), "label_gt200": share(eL[allg], 200),
             "clip_aware": pct(eK[allg]), "clip_aware_gt200": share(eK[allg], 200),
             "subpixel": pct(eS[allg]), "subpixel_gt200": share(eS[allg], 200),
-            "subpixel_axis_sd": robust_sd((S - T)[allg & ~clip])}
+            "subpixel_axis_sd": robust_sd((S - T)[allg & ~edge]),
+            "subpixel_interior": pct(eS[allg & ~edge])}
         eSS = np.linalg.norm(S - TS, axis=1)
-        okS = good & np.isfinite(TS).all(1) & ~clip
+        okS = good & np.isfinite(TS).all(1) & ~edge
         d["subpixel_vs_own_traj"] = {"n": int(okS.sum()), "radial": pct(eSS[okS]),
                                      "axis_sd": robust_sd((S - TS)[okS])}
         if np.isfinite(M).any():
@@ -1019,10 +1052,20 @@ def stats_from_frames(allf: list[dict]) -> dict:
                           "traj_axis_sd_model_vs_traj": robust_sd((M - T)[sub]),
                           "traj_bias_model_vs_traj": np.nanmedian((M - T)[sub], 0).round(1).tolist(),
                           "not_game_frames": int(np.nansum(col("game", rows)[hasm] < 0.5))}
-            nb = sub & ~atb
-            d["model"]["traj_not_bound_n"] = int(nb.sum())
-            d["model"]["traj_not_bound_vs_label"] = pct(eM["label"][nb])
-            d["model"]["traj_not_bound_vs_traj"] = pct(eM["traj"][nb])
+            nb = sub & ~edge
+            ez = sub & edge
+            d["model"]["traj_edge_n"] = int(ez.sum())
+            d["model"]["traj_edge_vs_label"] = pct(eM["label"][ez])
+            d["model"]["traj_edge_vs_traj"] = pct(eM["traj"][ez])
+            d["model"]["traj_edge_vs_clip_aware"] = pct(eM["clip_aware"][ez])
+            d["model"]["traj_interior_n"] = int(nb.sum())
+            d["model"]["traj_interior_vs_label"] = pct(eM["label"][nb])
+            d["model"]["traj_interior_vs_subpixel"] = pct(eM["subpixel"][nb])
+            d["model"]["traj_interior_vs_traj"] = pct(eM["traj"][nb])
+            d["model"]["interior_all_vs_label"] = pct(eM["label"][hasm & ~edge])
+            d["model"]["interior_all_vs_subpixel"] = pct(eM["subpixel"][hasm & ~edge])
+            d["model"]["edge_all_vs_label"] = pct(eM["label"][hasm & edge])
+            d["model"]["edge_all_n"] = int((hasm & edge).sum())
         out[tag] = d
     return out
 
