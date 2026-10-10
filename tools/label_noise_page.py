@@ -17,14 +17,14 @@
   с учётом обрезки краем миникарты (label_noise.find_box_clipped), расходится
   с меткой больше чем на 200 ед.: кто прав в этой группе.
 
-Для каждого кадра: хранимая сцена (то, что видит модель), миникарта целиком
-и увеличенный участок с рамками гипотез (метка, модель, траектория,
-субпиксельная рамка) и следом кадра по гомографии для каждой гипотезы,
-плюс ход x/y за ±10 с. Вердикт: «права метка», «права модель», «обе
-верны», «обе мимо», «не разобрать» — хранится в localStorage, выгружается в
-CSV/JSON в формате dataset/label_noise/verdicts.csv (см. dataset/README.md).
-Вердикты агента (dataset/label_noise/verdicts_agent.csv), если есть,
-показаны отдельной пометкой и в выгрузку человека не попадают.
+Страница слепая: гипотез на ней не видно. Человек ставит рамку размера
+ролика туда, где на увеличенной миникарте белая рамка игры (рамка может
+выходить за край), а вердикт считается сам по расстоянию до метки и
+модели: совпала — ближе 1.5 пикселя миникарты 256. Так глаз не путается в
+пяти квадратах и не подстраивается под подсказку. Положение и вердикт
+хранятся в localStorage и выгружаются в CSV в формате
+dataset/label_noise/verdicts.csv (см. dataset/README.md). Вердикт агента
+(dataset/label_noise/verdicts_agent.csv) показывается только после ответа.
 
 Пример:
     python tools/label_noise_page.py
@@ -147,17 +147,6 @@ def hyps(r: dict) -> dict:
     return out
 
 
-def series(rows: list[dict], i: int, k: int = 10) -> dict:
-    lo, hi = max(0, i - k), min(len(rows), i + k + 1)
-    s = {"t0": lo, "i": i}
-    for name, (a, b) in {"label": ("lx", "ly"), "model": ("mx", "my"),
-                         "traj": ("tx", "ty")}.items():
-        s[name] = [[round(f(rows[j][a]), 1) if np.isfinite(f(rows[j][a])) else None,
-                    round(f(rows[j][b]), 1) if np.isfinite(f(rows[j][b])) else None]
-                   for j in range(lo, hi)]
-    return s
-
-
 def _font(size: int = 14):
     for name in ("arial.ttf", "DejaVuSans.ttf"):
         try:
@@ -247,7 +236,6 @@ def main() -> None:
     for n, p in enumerate(picks):
         r = p["row"]
         v, i = r["video_id"], int(r["idx"])
-        man = frames[v]
         scene = Image.open(COORDS_DATA / v / "scene" / f"{i:06d}.jpg").convert("RGB")
         mini = Image.open(COORDS_DATA / v / "mini" / f"{i:06d}.jpg").convert("RGB")
         h = hyps(r)
@@ -257,7 +245,7 @@ def main() -> None:
             "key": f"{v}:{i}", "video_id": v, "idx": i, "t_sec": r["t_sec"],
             "stratum": p["stratum"], "also_random": bool(p.get("also_random")),
             "score": p["score"], "quality": f(r["quality"]), "game": r.get("game", ""),
-            "hyp": h, "box": box, "series": series(man, i),
+            "hyp": h, "box": box,
             "scene": b64(scene, 80), "mini": b64(mini, 90),
             "agent": ({"verdict": a["verdict"], "note": a.get("note", "")} if a else None),
         })
@@ -274,9 +262,7 @@ def main() -> None:
         w.writerows(key_rows)
 
     page = PAGE.replace("__DATA__", json.dumps({
-        "items": items, "fp": fp.round(1).tolist(), "px": PX, "mm": MM,
-        "colors": COLORS, "names": NAMES,
-        "summary": {"A": summ["A"]}}, ensure_ascii=False))
+        "items": items, "px": PX, "mm": MM}, ensure_ascii=False))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(page, encoding="utf-8")
     print(f"кадров {len(items)} (страты: "
@@ -288,194 +274,325 @@ def main() -> None:
 PAGE = r"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Шум меток: ключевые кадры</title>
+<title>Шум меток: рамка вслепую</title>
 <style>
- :root { color-scheme: dark; }
+ :root { color-scheme: dark; --bg:#14161a; --panel:#1b1e24; --line:#2a2e36; --text:#e8e8ea;
+         --dim:#9aa0aa; --mine:#00ffa6; }
  * { box-sizing:border-box; }
- body { margin:0; padding:20px 16px 60px; background:#14161a; color:#e8e8ea;
+ body { margin:0; padding:16px; background:var(--bg); color:var(--text);
         font:14px/1.45 system-ui,Segoe UI,sans-serif; }
- .wrap { max-width:1500px; margin:0 auto; }
- h1 { font-size:20px; margin:0 0 4px; }
- .lead { color:#9aa0aa; margin-bottom:14px; max-width:1000px; }
- .bar { position:sticky; top:0; z-index:5; background:#14161a; padding:8px 0;
-        border-bottom:1px solid #2a2e36; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
- button, select { background:#20242b; color:#e8e8ea; border:1px solid #3a3f49;
-        border-radius:6px; padding:5px 10px; font:inherit; cursor:pointer; }
- button:hover { border-color:#5a7bf0; }
- button.on { background:#2d4fd0; border-color:#5a7bf0; }
- .card { background:#1a1d23; border:1px solid #2a2e36; border-radius:10px;
-         padding:12px; margin:14px 0; }
- .card.done { border-color:#2f6b45; }
- .head { display:flex; gap:12px; flex-wrap:wrap; align-items:baseline; margin-bottom:8px; }
- .head b { font-size:15px; }
- .tag { font-size:12px; padding:1px 7px; border-radius:9px; background:#2a2e36; color:#cfd4dc; }
- .tag.model_vs_label { background:#3b2a52; } .tag.label_vs_traj { background:#523a2a; }
- .tag.random { background:#2a4a3a; } .tag.clip_vs_label { background:#4a4a2a; }
- .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
- .scene { max-width:100%; width:720px; border-radius:6px; }
- svg { background:#0c0d10; border-radius:6px; }
- .legend span { margin-right:12px; font-size:12px; }
- .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
- .nums { font:12px/1.5 ui-monospace,Consolas,monospace; color:#b9bec8; white-space:pre; }
- .verd { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; align-items:center; }
- .agent { font-size:12px; color:#e0b46a; }
- textarea { background:#101216; color:#e8e8ea; border:1px solid #3a3f49; border-radius:6px;
-            width:min(600px,100%); height:34px; font:inherit; }
- .hide { display:none; }
- code { background:#20242b; padding:1px 5px; border-radius:4px; }
+ .wrap { max-width:1280px; margin:0 auto; }
+ header { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+ h1 { font-size:18px; margin:0; }
+ .dim { color:var(--dim); }
+ select, button, input { background:#20242b; color:var(--text); border:1px solid #3a3f49;
+        border-radius:6px; padding:5px 10px; font:inherit; }
+ button { cursor:pointer; }
+ button.primary { background:#1f6f54; border-color:#2a9a74; }
+ .main { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; }
+ @media (max-width:900px) { .main { grid-template-columns:1fr; } }
+ #view { width:min(100%, calc(100vh - 130px)); aspect-ratio:1; background:#0c0d10;
+         border-radius:8px; display:block;
+         cursor:crosshair; touch-action:none; }
+ aside { display:flex; flex-direction:column; gap:12px; }
+ .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
+ .card img, .card canvas { width:100%; display:block; border-radius:4px; }
+ kbd { background:#2a2e36; border-radius:4px; padding:0 5px; font-size:12px; }
+ .keys { font-size:13px; color:var(--dim); line-height:1.8; }
+ .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+ #result { min-height:3em; }
+ .ok { color:#7dff7a; } .bad { color:#ff7a7a; }
+ progress { width:160px; }
 </style></head><body><div class="wrap">
-<h1>Шум меток с миникарты: ключевые кадры</h1>
-<div class="lead">Метка — центр белой рамки на миникарте (целый пиксель сетки 256, шаг ≈58 ед.).
-Модель — патчевая модель по сцене без миникарты. Траектория — положение камеры по сдвигам самой
-сцены между соседними кадрами, привязанное ко всем меткам цепочки сразу (своя метка кадра в
-неё почти не входит). Прямоугольники — рамка размера ролика в каждой гипотезе, тонкая трапеция —
-след полного кадра по гомографии (для метки и модели). Сравнивайте белую рамку игры с гипотезами
-и картинку сцены с местностью миникарты. Расхождения меньше пикселя миникарты (≈58 ед.) глазом
-не различить — для них честный вердикт «обе верны» или «не разобрать».
-Вердикты сохраняются в этом браузере; выгрузка — кнопками справа.</div>
-<div class="bar">
- <span>Страта:</span>
- <button data-f="all" class="on">все</button>
- <button data-f="model_vs_label">модель ↔ метка</button>
- <button data-f="label_vs_traj">метка ↔ траектория</button>
- <button data-f="clip_vs_label">рамка с обрезкой ↔ метка</button>
- <button data-f="random">случайные</button>
- <label><input type="checkbox" id="todo"> только без вердикта</label>
- <span id="count" style="color:#9aa0aa"></span>
+<header>
+ <h1>Где белая рамка камеры?</h1>
+ <span class="dim" id="count"></span>
+ <progress id="prog" max="1" value="0"></progress>
+ <select id="group">
+  <option value="must">минимум: случайные + край</option>
+  <option value="all">все кадры</option>
+  <option value="random">только случайные</option>
+  <option value="clip_vs_label">только край</option>
+  <option value="model_vs_label">модель ≠ метка</option>
+  <option value="label_vs_traj">метка ≠ траектория</option>
+ </select>
+ <label class="dim"><input type="checkbox" id="todo" checked> только без ответа</label>
  <span style="flex:1"></span>
- <button id="csv">CSV</button><button id="json">JSON</button>
- <button id="clear" title="стереть вердикты этого браузера">сброс</button>
+ <button id="csv">CSV</button>
+ <button id="clear">Стереть</button>
+</header>
+<div class="main">
+ <div>
+  <canvas id="view" width="720" height="720"></canvas>
+  <div class="row" style="margin-top:8px">
+   <button id="prev">← назад</button>
+   <button class="primary" id="ok">Готово <kbd>Enter</kbd></button>
+   <button id="skip">Не разобрать <kbd>N</kbd></button>
+   <input id="note" placeholder="заметка (необязательно)" style="flex:1;min-width:160px">
+  </div>
+ </div>
+ <aside>
+  <div class="card"><div class="dim" id="meta"></div></div>
+  <div class="card"><div class="dim" style="margin-bottom:4px">Миникарта целиком</div>
+   <canvas id="whole" width="256" height="256"></canvas></div>
+  <div class="card"><div class="dim" style="margin-bottom:4px">Сцена (что видит модель)</div>
+   <img id="scene" alt=""></div>
+  <div class="card" id="result"></div>
+  <div class="card keys">
+   Наведите зелёную рамку на белую рамку игры и кликните; её можно таскать.
+   Рамка может выходить за край миникарты.<br>
+   <kbd>←↑→↓</kbd> сдвиг ¼ px, с <kbd>Shift</kbd> — 1 px<br>
+   <kbd>Z</kbd> удерживать — спрятать свою рамку<br>
+   <kbd>колесо</kbd> масштаб · <kbd>S</kbd> сглаживание<br>
+   <kbd>Enter</kbd> готово · <kbd>N</kbd> не разобрать · <kbd>Backspace</kbd> назад
+  </div>
+ </aside>
 </div>
-<div id="list"></div>
-<div class="lead" style="margin-top:30px">Выгрузку CSV положить в
-<code>dataset/label_noise/verdicts.csv</code> (формат описан в <code>dataset/README.md</code>) и
-закоммитить. Вердикты агента лежат отдельно в <code>verdicts_agent.csv</code> и в выгрузку не входят.</div>
 </div>
 <script>
 const D = __DATA__;
-const KEY = "label_noise_verdicts_v1";
-const VERD = [["label","права метка"],["model","права модель"],["both_ok","обе верны"],
-              ["both_wrong","обе мимо"],["unclear","не разобрать"]];
+const KEY = "label_noise_place_v1";
+// Порог «гипотеза совпала с рамкой человека»: 1.5 пикселя миникарты 256.
+const TOL = 1.5 * D.px;
 let store = {};
 try { store = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { store = {}; }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} }
-const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc = s => String(s).replace(/[&<>"]/g,
+  c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 
-function mapSvg(it, win) {
-  // win: [x0, y0, size] в пикселях миникарты 256; точки: ед. / px + 0.5
-  const [x0, y0, s] = win, px = D.px;
-  const W = 420;
-  let g = `<svg width="${W}" height="${W}" viewBox="${x0} ${y0} ${s} ${s}">`;
-  g += `<image href="${it.mini}" x="0" y="0" width="${D.mm}" height="${D.mm}" style="image-rendering:${s <= 100 ? "pixelated" : "auto"}"/>`;
-  const sw = s / W;
-  for (const k of ["traj","clip","model","sub","label"]) {
-    const p = it.hyp[k]; if (!p) continue;
-    const cx = p[0] / px + 0.5, cy = p[1] / px + 0.5, c = D.colors[k];
-    const [bw, bh] = it.box;
-    g += `<rect x="${cx-bw/2}" y="${cy-bh/2}" width="${bw}" height="${bh}" fill="none" stroke="${c}" stroke-width="${(k=="label"?2.2:1.5)*sw}" stroke-dasharray="${k=="traj"?4*sw:0}"/>`;
-    g += `<circle cx="${cx}" cy="${cy}" r="${4*sw}" fill="none" stroke="${c}" stroke-width="${2*sw}"/>`;
-    if (k == "label" || k == "model") {
-      const pts = D.fp.map(q => `${cx + q[0]/px},${cy + q[1]/px}`).join(" ");
-      g += `<polygon points="${pts}" fill="none" stroke="${c}" stroke-opacity="0.7" stroke-width="${1*sw}"/>`;
-    }
-  }
-  return g + "</svg>";
+const view = document.getElementById("view"), ctx = view.getContext("2d");
+const whole = document.getElementById("whole"), wctx = whole.getContext("2d");
+const imgs = {};
+function img(src) {
+  if (!imgs[src]) { imgs[src] = new Image(); imgs[src].src = src; }
+  return imgs[src];
 }
 
-function chart(it) {
-  const s = it.series, W = 300, H = 90;
-  let out = "";
-  for (const ax of [0, 1]) {
-    const vals = [];
-    for (const k of ["label","model","traj"]) for (const v of s[k]) if (v[ax] != null) vals.push(v[ax]);
-    if (!vals.length) continue;
-    let lo = Math.min(...vals), hi = Math.max(...vals);
-    if (hi - lo < 200) { const m = (hi + lo) / 2; lo = m - 100; hi = m + 100; }
-    const n = s.label.length, X = j => 6 + j * (W - 12) / Math.max(n - 1, 1),
-          Y = v => H - 6 - (v - lo) / (hi - lo) * (H - 12);
-    let g = `<svg width="${W}" height="${H}"><text x="4" y="12" fill="#9aa0aa" font-size="11">${ax ? "y" : "x"}, диапазон ${Math.round(hi-lo)} ед.</text>`;
-    const ci = s.i - s.t0;
-    g += `<line x1="${X(ci)}" x2="${X(ci)}" y1="0" y2="${H}" stroke="#555"/>`;
-    const tr = s.traj.map((v, j) => v[ax] == null ? null : `${X(j)},${Y(v[ax])}`);
-    let seg = [];
-    for (const p of tr.concat([null])) { if (p) seg.push(p); else { if (seg.length > 1) g += `<polyline points="${seg.join(" ")}" fill="none" stroke="${D.colors.traj}" stroke-width="1.5"/>`; seg = []; } }
-    s.label.forEach((v, j) => { if (v[ax] != null) g += `<circle cx="${X(j)}" cy="${Y(v[ax])}" r="2.5" fill="${D.colors.label}"/>`; });
-    s.model.forEach((v, j) => { if (v[ax] != null) g += `<path d="M${X(j)-3},${Y(v[ax])-3}l6,6m0,-6l-6,6" stroke="${D.colors.model}"/>`; });
-    out += g + "</svg>";
-  }
-  return out;
+let list = [], pos = 0, it = null;
+let win = null;          // [x0, y0, size] окна в пикселях миникарты
+let mine = null;         // центр своей рамки, px миникарты (null — не поставлена)
+let hover = null, dragging = false, hide = false, smooth = false;
+
+// Ед. меток ↔ координаты миникарты: так же, как рамки рисовала прежняя
+// страница (пиксель k занимает [k, k+1], центр рамки — x + bw/2 + 0.5).
+const toPx = v => [v[0] / D.px + 0.5, v[1] / D.px + 0.5];
+const toUnits = p => [(p[0] - 0.5) * D.px, (p[1] - 0.5) * D.px];
+
+function inGroup(x, g) {
+  if (g === "all") return true;
+  if (g === "must") return x.stratum === "random" || x.also_random
+                            || x.stratum === "clip_vs_label";
+  if (g === "random") return x.stratum === "random" || x.also_random;
+  return x.stratum === g;
 }
-
-function dist(a, b) { return (a && b) ? Math.hypot(a[0]-b[0], a[1]-b[1]).toFixed(0) : "—"; }
-
-function card(it) {
-  const h = it.hyp, hs = Object.values(h);
-  // окно увеличения — вокруг середины всех гипотез, чтобы влезли все рамки
-  const c = [hs.reduce((a, p) => a + p[0], 0) / hs.length / D.px + 0.5,
-             hs.reduce((a, p) => a + p[1], 0) / hs.length / D.px + 0.5];
-  const v = store[it.key] || {};
-  const nums = `метка–модель ${dist(h.label, h.model)} ед.   метка–траектория ${dist(h.label, h.traj)}   модель–траектория ${dist(h.model, h.traj)}
-метка–субпиксель ${dist(h.label, h.sub)}   качество рамки ${it.quality.toFixed(2)}   P(игра) ${it.game === "" ? "—" : (+it.game).toFixed(2)}`;
-  const legend = ["label","model","traj","sub","clip"].filter(k => h[k]).map(k => `<span><i style="background:${D.colors[k]}"></i>${D.names[k]}</span>`).join("");
-  return `<div class="card ${v.verdict ? "done" : ""}" data-key="${it.key}" data-s="${it.stratum}">
-  <div class="head"><b>${esc(it.video_id)} · кадр ${it.idx} · ${it.t_sec} с</b>
-   <span class="tag ${it.stratum}">${it.stratum}${it.also_random ? " + random" : ""}</span>
-   <span class="tag">оценка ${it.score}</span>
-   <a href="https://www.youtube.com/watch?v=${esc(it.video_id)}&t=${Math.floor(+it.t_sec)}s" target="_blank" style="color:#8fb0ff">ролик</a>
-   ${it.agent ? `<span class="agent">агент: ${esc(it.agent.verdict)}${it.agent.note ? " — " + esc(it.agent.note) : ""}</span>` : ""}</div>
-  <div class="row"><img class="scene" src="${it.scene}" alt="">
-   <div>${mapSvg(it, [c[0]-50, c[1]-50, 100])}</div>
-   <div>${mapSvg(it, [0, 0, D.mm])}</div></div>
-  <div class="row" style="margin-top:6px"><div class="legend">${legend}</div></div>
-  <div class="row" style="margin-top:6px"><div class="nums">${nums}</div>${chart(it)}</div>
-  <div class="verd">${VERD.map(([k, t]) => `<button data-v="${k}" class="${v.verdict == k ? "on" : ""}">${t}</button>`).join("")}
-   <textarea placeholder="заметка">${esc(v.note || "")}</textarea></div></div>`;
-}
-
-let filt = "all";
-function render() {
+function rebuild(keepKey) {
+  const g = document.getElementById("group").value;
   const todo = document.getElementById("todo").checked;
-  const list = D.items.filter(it => (filt == "all" || it.stratum == filt || (filt == "random" && it.also_random))
-                                    && (!todo || !(store[it.key] || {}).verdict));
-  document.getElementById("list").innerHTML = list.map(card).join("");
-  const done = D.items.filter(it => (store[it.key] || {}).verdict).length;
-  document.getElementById("count").textContent = `показано ${list.length} · с вердиктом ${done} из ${D.items.length}`;
+  // Случайные первыми: по ним и считается доля ошибок.
+  const order = x => (x.stratum === "random" || x.also_random) ? 0
+                     : x.stratum === "clip_vs_label" ? 1 : 2;
+  list = D.items.filter(x => inGroup(x, g) && (!todo || !store[x.key] || x.key === keepKey))
+                .sort((a, b) => order(a) - order(b));
+  pos = Math.max(0, list.findIndex(x => x.key === keepKey));
+  show();
 }
-document.querySelectorAll(".bar [data-f]").forEach(b => b.onclick = () => {
-  filt = b.dataset.f; document.querySelectorAll(".bar [data-f]").forEach(x => x.classList.toggle("on", x == b)); render(); });
-document.getElementById("todo").onchange = render;
-document.getElementById("list").addEventListener("click", e => {
-  const b = e.target.closest("button[data-v]"); if (!b) return;
-  const key = b.closest(".card").dataset.key;
-  store[key] = Object.assign(store[key] || {}, {verdict: b.dataset.v}); save();
-  const cardEl = b.closest(".card"); cardEl.classList.add("done");
-  cardEl.querySelectorAll("button[data-v]").forEach(x => x.classList.toggle("on", x == b));
-  const done = D.items.filter(it => (store[it.key] || {}).verdict).length;
-  document.getElementById("count").textContent = document.getElementById("count").textContent.replace(/с вердиктом \d+/, "с вердиктом " + done);
-});
-document.getElementById("list").addEventListener("input", e => {
-  if (e.target.tagName != "TEXTAREA") return;
-  const key = e.target.closest(".card").dataset.key;
-  store[key] = Object.assign(store[key] || {}, {note: e.target.value}); save();
-});
-function rows() {
-  return D.items.filter(it => (store[it.key] || {}).verdict).map(it => ({
-    video_id: it.video_id, idx: it.idx, t_sec: it.t_sec, stratum: it.stratum,
-    also_random: it.also_random ? 1 : 0, verdict: store[it.key].verdict, note: store[it.key].note || ""}));
+
+function show() {
+  const all = D.items.filter(x => inGroup(x, document.getElementById("group").value));
+  const done = all.filter(x => store[x.key]).length;
+  document.getElementById("count").textContent = `готово ${done} из ${all.length}`;
+  const pr = document.getElementById("prog"); pr.max = all.length || 1; pr.value = done;
+  it = list[pos] || null;
+  if (!it) {
+    ctx.clearRect(0, 0, view.width, view.height);
+    ctx.fillStyle = "#9aa0aa"; ctx.font = "20px system-ui";
+    ctx.fillText("В этой группе всё отмечено. Выгрузите CSV.", 40, 60);
+    return;
+  }
+  const pts = ["label", "model", "clip"].filter(k => it.hyp[k]).map(k => toPx(it.hyp[k]));
+  const c = pts.length ? [pts.reduce((s, p) => s + p[0], 0) / pts.length,
+                          pts.reduce((s, p) => s + p[1], 0) / pts.length] : [128, 128];
+  // Окно с запасом: охватывает все гипотезы, но не подсказывает, где какая.
+  let span = 0;
+  for (const p of pts) span = Math.max(span, Math.abs(p[0] - c[0]), Math.abs(p[1] - c[1]));
+  const s = Math.max(90, 2 * span + it.box[0] + 24);
+  win = [c[0] - s / 2, c[1] - s / 2, s];
+  const st = store[it.key];
+  mine = st && st.x !== "" && st.x != null ? toPx([st.x, st.y]) : null;
+  document.getElementById("note").value = st ? st.note || "" : "";
+  document.getElementById("scene").src = it.scene;
+  document.getElementById("meta").innerHTML =
+    `${esc(it.video_id)} · ${esc(it.t_sec)} с · кадр ${pos + 1} из ${list.length}<br>` +
+    `<a style="color:#8fb0ff" target="_blank" href="https://www.youtube.com/watch?v=` +
+    `${esc(it.video_id)}&t=${Math.floor(+it.t_sec)}s">открыть ролик</a>`;
+  document.getElementById("result").innerHTML = st ? verdictHtml(it, st) : "";
+  draw();
 }
+
+function draw() {
+  if (!it) return;
+  const im = img(it.mini);
+  if (!im.complete) { im.onload = draw; return; }
+  const [x0, y0, s] = win, Z = view.width / s;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#2b2f38"; ctx.fillRect(0, 0, view.width, view.height);
+  ctx.imageSmoothingEnabled = smooth;
+  ctx.setTransform(Z, 0, 0, Z, -x0 * Z, -y0 * Z);
+  ctx.drawImage(im, 0, 0, D.mm, D.mm);
+  ctx.strokeStyle = "#555"; ctx.lineWidth = 1 / Z; ctx.strokeRect(0, 0, D.mm, D.mm);
+  const p = dragging || !mine ? (hover || mine) : mine;
+  if (p && !hide) {
+    const [bw, bh] = it.box;
+    ctx.strokeStyle = mine ? "#00ffa6" : "rgba(0,255,166,.55)";
+    ctx.lineWidth = 1.5 / Z;
+    ctx.strokeRect(p[0] - bw / 2, p[1] - bh / 2, bw, bh);
+    ctx.beginPath(); ctx.arc(p[0], p[1], 3 / Z, 0, 7); ctx.stroke();
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // Вся миникарта с окном.
+  wctx.imageSmoothingEnabled = true;
+  wctx.drawImage(im, 0, 0, 256, 256);
+  wctx.strokeStyle = "#00ffa6"; wctx.lineWidth = 1.5;
+  const k = 256 / D.mm; wctx.strokeRect(x0 * k, y0 * k, s * k, s * k);
+}
+
+function evPx(e) {
+  const r = view.getBoundingClientRect(), [x0, y0, s] = win;
+  return [x0 + (e.clientX - r.left) / r.width * s, y0 + (e.clientY - r.top) / r.height * s];
+}
+view.addEventListener("pointerdown", e => {
+  if (!it) return;
+  view.setPointerCapture(e.pointerId); dragging = true; mine = evPx(e); hover = mine; draw();
+});
+view.addEventListener("pointermove", e => {
+  if (!it) return;
+  hover = evPx(e);
+  if (dragging) mine = hover;
+  draw();
+});
+view.addEventListener("pointerup", () => { dragging = false; draw(); });
+view.addEventListener("pointerleave", () => { hover = null; draw(); });
+view.addEventListener("wheel", e => {
+  if (!it) return;
+  e.preventDefault();
+  const p = evPx(e), f = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+  const s = Math.min(256, Math.max(24, win[2] * f));
+  win = [p[0] - (p[0] - win[0]) * s / win[2], p[1] - (p[1] - win[1]) * s / win[2], s];
+  draw();
+}, {passive: false});
+
+function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+function judge(it, x, y) {
+  const me = [x, y], d = {};
+  for (const k of ["label", "model", "clip"]) if (it.hyp[k]) d[k] = dist(it.hyp[k], me);
+  const okL = d.label <= TOL, okM = d.model <= TOL;
+  const verdict = okL && okM ? "both_ok" : okL ? "label" : okM ? "model" : "both_wrong";
+  return {d, verdict};
+}
+const NAMES = {label: "метка", model: "модель", clip: "рамка с учётом края"};
+const VNAME = {both_ok: "обе верны", label: "права метка", model: "права модель",
+               both_wrong: "обе мимо", unclear: "не разобрать"};
+function verdictHtml(it, st) {
+  if (st.verdict === "unclear") return `<b>не разобрать</b>`;
+  const {d} = judge(it, st.x, st.y);
+  let h = `<b>${VNAME[st.verdict]}</b><br>`;
+  for (const k in d) {
+    const ok = d[k] <= TOL;
+    h += `<span class="${ok ? "ok" : "bad"}">${NAMES[k]}: ${Math.round(d[k])} ед.</span><br>`;
+  }
+  if (it.agent) h += `<span class="dim">агент: ${esc(it.agent.verdict)}</span>`;
+  return h;
+}
+
+function commit(verdict) {
+  if (!it) return;
+  const note = document.getElementById("note").value;
+  if (verdict === "unclear") {
+    store[it.key] = {x: "", y: "", verdict, note};
+  } else {
+    if (!mine) { flash("Сначала поставьте рамку кликом"); return; }
+    const [x, y] = toUnits(mine);
+    store[it.key] = {x: +x.toFixed(1), y: +y.toFixed(1), verdict: judge(it, x, y).verdict, note};
+  }
+  save();
+  const prev = it;
+  const todo = document.getElementById("todo").checked;
+  if (todo) { list.splice(pos, 1); } else { pos++; }
+  if (pos >= list.length) pos = Math.max(0, list.length - 1);
+  if (todo && !list.length) pos = 0;
+  show();
+  // Итог предыдущего кадра — только после ответа, чтобы не подсказывать.
+  document.getElementById("result").innerHTML =
+    `<div class="dim">предыдущий кадр:</div>` + verdictHtml(prev, store[prev.key]);
+}
+function flash(t) {
+  const r = document.getElementById("result");
+  r.innerHTML = `<span class="bad">${esc(t)}</span>`;
+}
+function back() {
+  const todo = document.getElementById("todo").checked;
+  if (todo) { document.getElementById("todo").checked = false; }
+  const key = it ? it.key : null;
+  rebuild(key);
+  if (pos > 0) { pos--; show(); }
+}
+
+document.getElementById("ok").onclick = () => commit();
+document.getElementById("skip").onclick = () => commit("unclear");
+document.getElementById("prev").onclick = back;
+document.getElementById("group").onchange = () => rebuild();
+document.getElementById("todo").onchange = () => rebuild(it && it.key);
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "checkbox") {
+    if (e.key === "Enter") { commit(); e.preventDefault(); }
+    return;
+  }
+  const step = e.shiftKey ? 1 : 0.25;
+  const mv = {ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step],
+              ArrowDown: [0, step]}[e.key];
+  if (mv && mine) { mine = [mine[0] + mv[0], mine[1] + mv[1]]; draw(); e.preventDefault(); }
+  else if (e.key === "Enter") { commit(); e.preventDefault(); }
+  else if (e.key === "n" || e.key === "N" || e.key === "т" || e.key === "Т") commit("unclear");
+  else if (e.key === "Backspace") { back(); e.preventDefault(); }
+  else if ((e.key === "z" || e.key === "Z" || e.key === "я" || e.key === "Я") && !hide) {
+    hide = true; draw();
+  }
+  else if (e.key === "s" || e.key === "S" || e.key === "ы" || e.key === "Ы") {
+    smooth = !smooth; draw();
+  }
+});
+document.addEventListener("keyup", e => {
+  if (["z", "Z", "я", "Я"].includes(e.key)) { hide = false; draw(); }
+});
+
 function download(name, text, type) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], {type})); a.download = name; a.click();
+  a.href = URL.createObjectURL(new Blob([text], {type}));
+  a.download = name; a.click();
 }
 document.getElementById("csv").onclick = () => {
-  const r = rows(), cols = ["video_id","idx","t_sec","stratum","also_random","verdict","note"];
-  const q = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
-  download("verdicts.csv", [cols.join(",")].concat(r.map(x => cols.map(c => q(x[c])).join(","))).join("\n") + "\n", "text/csv");
+  const cols = ["video_id", "idx", "t_sec", "stratum", "also_random", "x", "y",
+                "verdict", "note"];
+  const q = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"'
+                                         : String(v);
+  const rows = D.items.filter(x => store[x.key]).map(x => ({
+    video_id: x.video_id, idx: x.idx, t_sec: x.t_sec, stratum: x.stratum,
+    also_random: x.also_random ? 1 : 0, ...store[x.key]}));
+  const text = [cols.join(",")].concat(rows.map(r => cols.map(c => q(r[c] ?? "")).join(",")));
+  download("verdicts.csv", text.join("\n") + "\n", "text/csv");
 };
-document.getElementById("json").onclick = () => download("verdicts.json", JSON.stringify(rows(), null, 1), "application/json");
-document.getElementById("clear").onclick = () => { if (confirm("Стереть вердикты этого браузера?")) { store = {}; save(); render(); } };
-render();
-</script></body></html>
+document.getElementById("clear").onclick = () => {
+  // Без confirm(): двойной клик в течение 2 с.
+  const b = document.getElementById("clear");
+  if (b.dataset.armed) { store = {}; save(); delete b.dataset.armed; b.textContent = "Стереть";
+                         rebuild(); return; }
+  b.dataset.armed = 1; b.textContent = "Точно? ещё раз";
+  setTimeout(() => { delete b.dataset.armed; b.textContent = "Стереть"; }, 2000);
+};
+window.addEventListener("resize", draw);
+rebuild();
+</script>
+</body></html>
 """
 
 
