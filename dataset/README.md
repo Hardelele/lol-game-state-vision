@@ -15,6 +15,7 @@ dataset/
   layouts/<layout>.json        маска HUD и миникарты в долях кадра, рамка миникарты
   layouts/projection.json      гомография «пиксели сцены → смещение на карте»
   sources/                     каталог YouTube-каналов (см. sources/README.md)
+  label_noise/                 ручные вердикты «метка ↔ модель» по ключевым кадрам
   videos/<video_id>/
     source.json                источник, длительность, параметры выборки
     frames.csv                 frame, video_id, t_sec, timecode, note
@@ -72,6 +73,29 @@ not_game/
 Интервал — полуоткрытый `[start_sec, end_sec)`. Кадры не хранятся:
 `tools/build_not_game.py --url <id>` собирает их потоком в
 `data/not_game/` по интервалам из `source.json`.
+
+## Вердикты по шуму меток (`label_noise/`)
+
+Ручная проверка ключевых кадров «метка с миникарты ↔ модель ↔ траектория по
+сцене» (`tools/label_noise_page.py`, разбор — `docs/label-noise.md`):
+
+```
+label_noise/
+  verdicts.csv          вердикты человека (выгрузка CSV со страницы)
+  verdicts_agent.csv    предварительные вердикты агента — не ручная разметка
+```
+
+Колонки: `video_id, idx, t_sec, stratum, also_random, verdict, note`
+(у агента ещё `who`). `idx` — номер кадра плотного набора
+`data/coords/<video_id>.csv` (1 кадр/с, `t_sec` — секунда ролика).
+`stratum` — откуда кадр: `model_vs_label` (большое расхождение модели с
+меткой), `label_vs_traj` (большой остаток метки против траектории),
+`random` (равномерная выборка кадров отложенных роликов с качеством ≥ 0.4;
+`also_random = 1` — кадр другой страты, выпавший и в случайной). `verdict`:
+`label` — права метка, `model` — права модель, `both_ok` — обе верны (в
+пределах того, что видно глазом, ~1 пиксель миникарты), `both_wrong` — обе
+мимо, `unclear` — не разобрать. Набор кадров восстанавливается командой
+`python tools/label_noise_page.py` (seed фиксирован).
 
 ## Раскладка `spectator-volibear-challenger`
 
