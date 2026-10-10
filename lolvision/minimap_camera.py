@@ -70,6 +70,57 @@ def find_box(mask: np.ndarray, bw: int, bh: int) -> tuple[int, int, float]:
     return int(x), int(y), float(score[y, x]) / perimeter
 
 
+# Где на миникарте 256 (обрезка раскладки) игра вообще рисует рамку: слева
+# и сверху обрезка захватывает тёмный край интерфейса. Замер по Replay API
+# (#754): рамка обрезается по внешнему краю миникарты — 8.8 и 12.7 пикселя
+# сетки 256 от левого и верхнего края обрезки. Справа и снизу обрезка сама
+# срезает край карты, там рамка уходит за кадр обрезки.
+DRAW_X0, DRAW_Y0 = 9, 13
+MISS_WEIGHT = 0.3     # цена пропущенного пикселя рамки против найденного белого
+MIN_VISIBLE = 0.15    # минимальная видимая доля периметра
+
+
+def find_box_clipped(mask: np.ndarray, bw: int, bh: int) -> tuple[int, int, float, bool]:
+    """Положение рамки bw x bh, которая может выходить за край миникарты.
+
+    У края карты игра рисует рамку обрезанной: от неё остаются одна-две
+    линии и обрывки. find_box перебирает только положения целиком внутри и
+    такую рамку прижимает к краю или переносит на соседние светлые линии —
+    ошибка в сотни и тысячи единиц (docs/label-noise.md, docs/replay-api.md).
+    Здесь положения перебираются и за краем, а оценка — сумма по видимой
+    части периметра: белый пиксель +1, пропущенный −MISS_WEIGHT. Так длинная
+    целая линия весит больше короткого обрывка, а рамка, у которой видна
+    только нижняя линия, не проигрывает целой рамке, сдвинутой на неё.
+    Проверено против эталона Replay API: у края 0 ошибок больше 200 ед.
+    против 62% у find_box (на положениях камеры, достижимых в роликах).
+
+    Ответ — (x, y, качество, обрезана ли): x, y — левый верхний угол в сетке
+    миникарты, могут быть отрицательными или выходить за неё; качество, как
+    у find_box, — доля белых пикселей от полного периметра.
+    """
+    px, py = bw // 2, bh // 2
+    vis_area = np.zeros_like(mask)
+    vis_area[DRAW_Y0:, DRAW_X0:] = 1
+    pm = np.pad(mask * vis_area, ((py, py + 1), (px, px + 1)))
+    inside = np.pad(vis_area, ((py, py + 1), (px, px + 1)))
+
+    def perimeter_sums(m: np.ndarray) -> np.ndarray:
+        n_y, n_x = m.shape
+        cx = np.cumsum(np.pad(m, ((0, 0), (1, 0))), axis=1)
+        cy = np.cumsum(np.pad(m, ((1, 0), (0, 0))), axis=0)
+        xs, ys = n_x - bw - 1, n_y - bh - 1
+        hseg = cx[:, bw:bw + xs + 1] - cx[:, :xs + 1]
+        vseg = cy[bh:bh + ys + 1, :] - cy[:ys + 1, :]
+        return (hseg[:ys + 1, :] + hseg[bh:bh + ys + 1, :]
+                + vseg[:, :xs + 1] + vseg[:, bw:bw + xs + 1])
+
+    white, vis = perimeter_sums(pm), perimeter_sums(inside)
+    per = 2 * (bw + bh)
+    score = np.where(vis >= MIN_VISIBLE * per, white - MISS_WEIGHT * (vis - white), -np.inf)
+    y, x = np.unravel_index(int(score.argmax()), score.shape)
+    return int(x) - px, int(y) - py, float(white[y, x]) / per, bool(vis[y, x] < per)
+
+
 def estimate_box(masks: list[np.ndarray]) -> tuple[int, int]:
     """Подобрать размер рамки по ролику: берём размер с лучшим средним качеством."""
     best, size = -1.0, (int(BOX_W * MM), int(BOX_H * MM))
@@ -92,7 +143,7 @@ def read_video(video_dir: Path, layout: dict, sample: int = 12) -> list[dict]:
 
     out = []
     for r, m in zip(rows, masks):
-        x, y, q = find_box(m, bw, bh)
+        x, y, q, _ = find_box_clipped(m, bw, bh)
         out.append({
             "frame": Path(r["frame"]).stem,
             "t_sec": int(r["t_sec"]),

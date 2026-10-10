@@ -61,7 +61,8 @@ from lolstream.channels import check_fps, youtube_id
 from lolvision.coord_model import expected_point, peak_point, spread
 from lolvision.geometry import MAP_UNITS
 from lolvision.mask_frames import crop_box, mask_boxes
-from lolvision.minimap_camera import MM, BOX_W, BOX_H, white_mask, find_box, estimate_box
+from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
+                                      find_box_clipped, estimate_box)
 from lolvision.patch_infer import PatchInfer
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
@@ -380,7 +381,7 @@ class Session:
         сведение голосов и «ответ» — сжатие картинок и запись в сеанс.
         Метка с миникарты в путь модели не входит и не считается.
         """
-        x, y, q = find_box(mask, bw, bh)
+        x, y, q, _ = find_box_clipped(mask, bw, bh)
         cx, cy = (x + bw / 2) / MM, (y + bh / 2) / MM
 
         out, hm, mt = model.predict(prep)

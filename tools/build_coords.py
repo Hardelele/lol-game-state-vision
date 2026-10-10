@@ -36,7 +36,7 @@ from PIL import Image
 import _bootstrap  # noqa: F401 — корень репозитория в sys.path
 from lolvision.paths import COORDS_DATA, VIDEOS
 from lolvision.mask_frames import crop_box, mask_boxes
-from lolvision.minimap_camera import MM, white_mask, find_box, estimate_box
+from lolvision.minimap_camera import MM, white_mask, find_box_clipped, estimate_box
 from lolvision.dataset_io import MINI_STORE, STORE_W
 from lolstream.video_stream import probe_url, probe, have_nvdec, frames
 
@@ -137,7 +137,7 @@ def main() -> None:
 
     out = []
     for i, m in enumerate(masks):
-        x, y, q = find_box(m.astype(np.float32), bw, bh)
+        x, y, q, _ = find_box_clipped(m.astype(np.float32), bw, bh)
         out.append({"video_id": vid, "idx": i, "t_sec": round(i / args.fps, 2),
                     "cx": round((x + bw / 2) / MM, 4),
                     "cy": round((y + bh / 2) / MM, 4),

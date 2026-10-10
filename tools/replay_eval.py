@@ -6,7 +6,7 @@
   (масштаб, начало, остаток — должен быть на уровне долей пикселя);
 * ошибка метки, которую даёт нынешний поиск рамки (minimap_camera.find_box
   по миникарте 256, как в build_coords), и поиска с учётом обрезки краем
-  (label_noise.find_box_clipped);
+  (minimap_camera.find_box_clipped);
 * ошибка патчевой модели по сцене (как во входе при обучении).
 
 Эталон в пространстве меток: где был бы центр рамки, если читать её без
@@ -32,7 +32,7 @@ import _bootstrap  # noqa: F401
 from lolvision.dataset_io import STORE_W, stored_keep
 from lolvision.geometry import load_projection
 from lolvision.mask_frames import crop_box, mask_boxes
-from lolvision.minimap_camera import MM, estimate_box, find_box, white_mask
+from lolvision.minimap_camera import MM, estimate_box, find_box, find_box_clipped, white_mask
 from lolvision.paths import DATASET, RUNS
 
 LAYOUT = DATASET / "layouts" / "spectator-volibear-challenger.json"
@@ -154,7 +154,6 @@ def main() -> None:
     bw, bh = estimate_box(masks)
     L = np.array([[(x + bw / 2) / MM, (y + bh / 2) / MM]
                   for x, y, _ in (find_box(m, bw, bh) for m in masks)])
-    from label_noise import find_box_clipped
     K = np.array([[(x + bw / 2) / MM, (y + bh / 2) / MM]
                   for x, y, *_ in (find_box_clipped(m, bw, bh) for m in masks)])
 
