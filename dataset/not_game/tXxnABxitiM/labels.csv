@@ -1,0 +1,21 @@
+start_sec,end_sec,label,kind,note
+0,155,not_game,lol_client,китайский клиент: статистика после матча
+155,320,skip,transition,сайт статистики и клиент внутри чужого окна — неоднозначно
+320,330,not_game,lol_loading,экран загрузки (китайский клиент)
+330,1290,game,lol_game_pov,
+1290,1300,skip,game_end,конец матча
+1300,1330,not_game,lol_client,клиент в окне на рабочем столе
+1330,1335,not_game,stream_scene,рабочий стол
+1335,1420,game,lol_game_pov,
+1420,1425,skip,game_end,
+1425,1557,not_game,lol_client,клиент в окне и на весь кадр: статистика, лобби, выбор
+1557,1573,not_game,stream_scene,браузер
+1573,1720,not_game,lol_client,выбор чемпиона (в окне и на весь кадр)
+1720,1725,not_game,stream_scene,рабочий стол
+1725,1735,not_game,lol_loading,экран загрузки
+1735,3645,game,lol_game_pov,
+3645,3655,skip,game_end,баннер победы
+3655,3710,not_game,lol_client,клиент после матча (в окне и на весь кадр)
+3710,3755,not_game,stream_scene,рабочий стол и браузер
+3755,3785,not_game,stream_scene,сцена стрима
+3785,4790,not_game,other_game_rts,StarCraft: меню и игра

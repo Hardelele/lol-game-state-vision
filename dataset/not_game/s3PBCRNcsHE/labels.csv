@@ -1,0 +1,21 @@
+start_sec,end_sec,label,kind,note
+0,160,not_game,lol_client,выбор чемпиона и руны (KR клиент)
+160,1420,game,lol_game_pov,
+1420,1430,skip,game_end,конец матча
+1430,2150,not_game,lol_client,клиент: статистика, лобби, описание патча, очередь, выбор
+2150,2155,skip,black,затемнение
+2155,2170,not_game,lol_loading,экран загрузки
+2170,3235,game,lol_game_aram,ARAM с аугментами (Воющая бездна) — вне задачи
+3235,3245,skip,game_end,конец ARAM
+3245,3950,not_game,lol_client,клиент между играми
+3950,3960,skip,black,затемнение
+3960,5815,game,lol_game_pov,
+5815,5830,skip,game_end,конец матча
+5830,5950,not_game,lol_client,клиент: статистика, очередь, выбор
+5950,5960,not_game,lol_loading,экран загрузки
+5960,6650,game,lol_game_aram,ARAM на «Мясницком мосту» (Билджвотер) — вне задачи
+6650,6730,not_game,lol_client,клиент
+6730,6740,not_game,lol_loading,экран загрузки
+6740,7580,game,lol_game_aram,ARAM с аугментами — вне задачи
+7580,7590,skip,game_end,конец ARAM
+7590,7660,not_game,lol_client,клиент после матча

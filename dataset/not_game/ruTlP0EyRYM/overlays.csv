@@ -1,0 +1,4 @@
+start_sec,end_sec,kind,note
+21,23,shop,"tools/label_overlays.py, p >= 0.9"
+24,25,tab,"tools/label_overlays.py, p >= 0.9"
+41,44,tab,"tools/label_overlays.py, p >= 0.9"

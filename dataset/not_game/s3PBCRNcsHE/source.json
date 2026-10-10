@@ -1,0 +1,25 @@
+{
+  "video_id": "s3PBCRNcsHE",
+  "url": "https://www.youtube.com/watch?v=s3PBCRNcsHE",
+  "title": "260921 바이퍼 방송 다시보기 BLG viper full stream",
+  "channel": "이로노로",
+  "channel_url": "https://www.youtube.com/channel/UCEngrNWG5bKl1mzSRUSa7TA",
+  "upload_date": "20260921",
+  "duration_sec": 7658,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "format_id": "399",
+  "split": "test",
+  "sampling": {
+    "fps": 0.2,
+    "ranges_sec": [
+      [
+        0.0,
+        7658.0
+      ]
+    ],
+    "frames": 1532,
+    "tool": "tools/build_not_game.py (поток через прокси, видео на диск не пишется)"
+  }
+}

@@ -318,6 +318,27 @@ class FrameHead(nn.Module):
         return self.net((feat.float() - self.mu) / self.sd)[:, 0]
 
 
+class SceneHead(nn.Module):
+    """Признаки кадра (frame_features) → тип сцены: игра, Tab, магазин,
+    клиент, загрузка, не League (классы — в чекпоинте, поле scene_head).
+
+    Стоит рядом с FrameHead на тех же признаках: двоичный ответ «игра /
+    не игра» не меняется, а этот уточняет, что именно на экране
+    (tools/train_scene_kind.py, docs/not-game.md).
+    """
+
+    def __init__(self, cin: int, classes: list[str], hidden: int = 64):
+        super().__init__()
+        self.cin, self.hidden, self.classes = cin, hidden, list(classes)
+        self.register_buffer("mu", torch.zeros(cin))
+        self.register_buffer("sd", torch.ones(cin))
+        self.net = nn.Sequential(nn.Linear(cin, hidden), nn.ReLU(inplace=True),
+                                 nn.Dropout(0.2), nn.Linear(hidden, len(self.classes)))
+
+    def forward(self, feat: torch.Tensor) -> torch.Tensor:
+        return self.net((feat.float() - self.mu) / self.sd)
+
+
 class PatchNet(nn.Module):
     def __init__(self, encoder: str = "cnn", dim: int = 128):
         super().__init__()
@@ -334,6 +355,8 @@ class PatchNet(nn.Module):
         # чекпоинтов её нет, и тогда модель просто не отвечает на этот вопрос.
         self.frame: FrameHead | None = None
         self.frame_threshold = 0.5
+        # Тип сцены (SceneHead) — тоже необязательный, на тех же признаках.
+        self.scene_kind: SceneHead | None = None
 
     def forward(self, x01):
         """x01: (B, 3, H, W) в [0, 1]. Ответ: эмбеддинги (B, D, h, w),
@@ -353,7 +376,7 @@ class PatchNet(nn.Module):
         # головой кадра грузится и старым кодом (поле он не читает). Читает
         # чекпоинт checkpoints.load_checkpoint.
         sd = {k: v for k, v in self.state_dict().items()
-              if not k.startswith("encoder.vit.") and not k.startswith("frame.")}
+              if not k.startswith(("encoder.vit.", "frame.", "scene_kind."))}
         out = {"kind": "patch", "encoder": self.kind, "state": sd,
                "units_per_px": UNITS_PER_PX, "grid": self.grid,
                "dim": self.head.embed.out_channels}
@@ -363,6 +386,10 @@ class PatchNet(nn.Module):
                 "state": self.frame.state_dict(),
                 "threshold": float(self.frame_threshold),
                 "features": list(FRAME_SCALARS)}
+        if self.scene_kind is not None:
+            out["scene_head"] = {
+                "cin": self.scene_kind.cin, "hidden": self.scene_kind.hidden,
+                "classes": self.scene_kind.classes, "state": self.scene_kind.state_dict()}
         return out
 
 

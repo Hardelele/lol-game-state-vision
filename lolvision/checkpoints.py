@@ -18,7 +18,7 @@ import torch
 from torch import nn
 
 from lolvision.coord_model import CoordNet
-from lolvision.patch_model import PatchNet, FrameHead
+from lolvision.patch_model import PatchNet, FrameHead, SceneHead
 
 COORDNET_KEYS = ("encoder", "head", "input_size", "grid")
 
@@ -57,6 +57,10 @@ def _patchnet(ck: dict) -> PatchNet:
         m.frame = FrameHead(fh["cin"], fh.get("hidden", 64))
         m.frame.load_state_dict(fh["state"])
         m.frame_threshold = float(fh.get("threshold", 0.5))
+    sh = ck.get("scene_head")
+    if sh:
+        m.scene_kind = SceneHead(sh["cin"], sh["classes"], sh.get("hidden", 64))
+        m.scene_kind.load_state_dict(sh["state"])
     return m
 
 

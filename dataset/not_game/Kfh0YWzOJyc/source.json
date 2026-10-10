@@ -1,0 +1,25 @@
+{
+  "video_id": "Kfh0YWzOJyc",
+  "url": "https://www.youtube.com/watch?v=Kfh0YWzOJyc",
+  "title": "RANK 1 LEE SIN -  LETHALITY IS BACK",
+  "channel": "Truck Driver",
+  "channel_url": "https://www.youtube.com/channel/UC2G75vvDKJwEacdWuIw0efQ",
+  "upload_date": "20260817",
+  "duration_sec": 1288,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "format_id": "616",
+  "split": "test",
+  "sampling": {
+    "fps": 0.2,
+    "ranges_sec": [
+      [
+        0.0,
+        1288.0
+      ]
+    ],
+    "frames": 258,
+    "tool": "tools/build_not_game.py (поток через прокси, видео на диск не пишется)"
+  }
+}

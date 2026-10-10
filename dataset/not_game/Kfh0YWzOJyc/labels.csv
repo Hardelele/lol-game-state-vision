@@ -1,0 +1,4 @@
+start_sec,end_sec,label,kind,note
+0,1270,game,lol_game_pov,вся игра; магазин нового вида («Select an item to build»)
+1270,1280,skip,black,конец ролика, рабочий стол
+1280,1290,not_game,outro,концевая заставка

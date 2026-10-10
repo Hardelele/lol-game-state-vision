@@ -1,0 +1,25 @@
+{
+  "video_id": "tXxnABxitiM",
+  "url": "https://www.youtube.com/watch?v=tXxnABxitiM",
+  "title": "Dopa Full Stream | 2026/08/14 | English Subs | Part 6",
+  "channel": "high lightest",
+  "channel_url": "https://www.youtube.com/channel/UCgTSA9KUqLO1leeGzodRHEw",
+  "upload_date": "20260820",
+  "duration_sec": 4790,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "299",
+  "split": "train",
+  "sampling": {
+    "fps": 0.2,
+    "ranges_sec": [
+      [
+        0.0,
+        4790.0
+      ]
+    ],
+    "frames": 958,
+    "tool": "tools/build_not_game.py (поток через прокси, видео на диск не пишется)"
+  }
+}

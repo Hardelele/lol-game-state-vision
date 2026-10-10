@@ -1,0 +1,25 @@
+{
+  "video_id": "GVvwBSX0Vs0",
+  "url": "https://www.youtube.com/watch?v=GVvwBSX0Vs0",
+  "title": "Ruler fullstream 2026/03/31 || Ashe Varus Kai'sa Ambessa || Challenger Gameplay",
+  "channel": "Be Chall LoL",
+  "channel_url": "https://www.youtube.com/channel/UCGnIRSG92YU780UnCaOXbWQ",
+  "upload_date": "20260331",
+  "duration_sec": 5771,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "train",
+  "sampling": {
+    "fps": 0.2,
+    "ranges_sec": [
+      [
+        0.0,
+        5771.0
+      ]
+    ],
+    "frames": 1154,
+    "tool": "tools/build_not_game.py (поток через прокси, видео на диск не пишется)"
+  }
+}

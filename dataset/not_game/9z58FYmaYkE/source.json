@@ -1,0 +1,25 @@
+{
+  "video_id": "9z58FYmaYkE",
+  "url": "https://www.youtube.com/watch?v=9z58FYmaYkE",
+  "title": "100CS LEAD AT 12 MINUTES??? (FLAME HORIZON)",
+  "channel": "RamyAura",
+  "channel_url": "https://www.youtube.com/channel/UChk2Zu5h5yJ9BBD4VS-_chQ",
+  "upload_date": "20261004",
+  "duration_sec": 1830,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "split": "test",
+  "sampling": {
+    "fps": 0.2,
+    "ranges_sec": [
+      [
+        0.0,
+        1830.0
+      ]
+    ],
+    "frames": 366,
+    "tool": "tools/build_not_game.py (поток через прокси, видео на диск не пишется)"
+  }
+}

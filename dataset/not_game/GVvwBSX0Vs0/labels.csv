@@ -1,0 +1,13 @@
+start_sec,end_sec,label,kind,note
+0,40,not_game,lol_client,выбор чемпиона (KR клиент)
+40,45,skip,black,затемнение
+45,55,not_game,lol_loading,экран загрузки
+55,1555,game,lol_game_pov,
+1555,1565,skip,game_end,конец матча
+1565,1575,not_game,lol_client,клиент после матча (LP)
+1575,4485,game,lol_game_pov,
+4485,4495,skip,game_end,конец матча и затемнение
+4495,4525,not_game,lol_client,клиент после матча (LP, жетоны)
+4525,5755,game,lol_game_pov,
+5755,5760,skip,game_end,взрыв нексуса
+5760,5771,not_game,lol_client,экран чести с карточками игроков и LP — не загрузка

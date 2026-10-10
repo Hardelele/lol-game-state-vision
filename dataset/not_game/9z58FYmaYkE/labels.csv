@@ -1,0 +1,5 @@
+start_sec,end_sec,label,kind,note
+0,10,not_game,lol_loading,экран загрузки
+10,1790,game,lol_game_pov,
+1790,1800,skip,game_end,конец матча, таблица и надпись монтажа
+1800,1830,not_game,lol_client,экран чести и статистика (клиент в окне)
