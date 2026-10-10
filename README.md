@@ -246,7 +246,9 @@ for a new variant instead of overwriting an existing run.
 A second channel layout, including a homography for the player's own view
 (streamer POV). Then locating the player's champion, identifying champions and objects, reading
 HP/mana, and tracking state across frames. An SNN comparison may be tried
-once a model transfers across layouts.
+once a model transfers across layouts. The plan for that second (unit)
+model, its data sources and how it joins the camera model:
+[docs/entity-model-plan.md](docs/entity-model-plan.md).
 
 ## References
 
