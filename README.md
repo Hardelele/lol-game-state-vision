@@ -48,7 +48,9 @@ dataset notes are in Russian; the README is in English.
 - **Labels without people.** The target is read from the camera box on the
   minimap of the same frame (`tools/minimap_camera.py`). The minimap is
   masked out of the model input, so it is the source of the target, not a
-  feature. Each match yields thousands of labelled frames.
+  feature. Each match yields thousands of labelled frames. Label noise
+  (pixel rounding, the clipped box at the map edge) and how much of the
+  30 units it accounts for: [docs/label-noise.md](docs/label-noise.md).
 - **Data.** Spectator replays from the "Challenger Replays" YouTube network
   (`dataset/sources/`). `tools/build_coords.py` reads a video straight from
   the stream and writes the cropped scene, the minimap crop and the camera
