@@ -13,20 +13,20 @@
     "dataset_fit": "yes = full games with little editing; partial = usable after filtering (long VODs, mixed content, stale); no = clips, guides, spectator or broadcast"
   },
   "counts": {
-    "channels": 76,
+    "channels": 77,
     "by_region": {
       "KR": 29,
       "CN": 13,
       "VN": 2,
       "EUW": 12,
-      "NA": 15,
+      "NA": 16,
       "JP": 1,
       "TR": 1,
       "unknown": 3
     },
     "by_type": {
       "stream_vod": 23,
-      "full_game_pov": 19,
+      "full_game_pov": 20,
       "highlights": 5,
       "spectator": 8,
       "broadcast": 3,
@@ -35,7 +35,7 @@
       "guide": 3
     },
     "by_fit": {
-      "yes": 18,
+      "yes": 19,
       "partial": 41,
       "no": 17
     },
@@ -2100,6 +2100,33 @@
         "BT94AEqfsok"
       ],
       "notes": "Tournament broadcast highlights."
+    },
+    {
+      "handle": "@TFBladeReplays",
+      "url": "https://www.youtube.com/@TFBladeReplays",
+      "channel_id": "UCs-lRkbchxEwn3H_lIvRqPg",
+      "channel_title": "Unofficial TFBlade Matchups Library",
+      "player": "TF Blade",
+      "player_status": "NA streamer",
+      "region": "NA",
+      "language": "en",
+      "content_type": "full_game_pov",
+      "webcam": false,
+      "stream_overlay": true,
+      "hud": "standard",
+      "resolution": "1080p60",
+      "videos": "101 videos",
+      "subscribers": "788 subscribers",
+      "last_long_upload": "2026-10-10",
+      "typical_minutes": 25,
+      "source_tab": "videos",
+      "dataset_fit": "yes",
+      "example_video_ids": [
+        "8e0b4gjj9v8",
+        "6_Y-EIRadsE",
+        "sslOyBA_KB0"
+      ],
+      "notes": "Unofficial re-uploads of TFBlade stream games, one full game per video, titled '<champion> vs <opponent>. KDA. Patch'. Almost all Jax top (97 of 101), patches 26.11-26.18. Player HUD as in the game client; no webcam on storyboard frames, a small sponsor box with a QR code sometimes appears bottom-left. Added at the user's request (2026-10-10)."
     }
   ],
   "rejected": [
