@@ -65,6 +65,7 @@ from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
                                       find_box_clipped, estimate_box)
 from lolvision.patch_infer import PatchInfer
 from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
+from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -73,9 +74,11 @@ BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
 STAGES = ("decode", "prep", "net", "agg", "kind", "out")
-# Тип сцены (игра / Tab / магазин / клиент / загрузка / не League, scene_kind.py)
-# меняется медленно, а DINO стоит ~10 мс: считаем его примерно KIND_HZ раз в
-# секунду потока, между этим берём прошлый ответ.
+# Тип сцены (игра / Tab / магазин / клиент / загрузка / не League). Своя сеть,
+# дистиллированная из DINO (scene_net.py), стоит ~1.6 мс с уменьшением кадра —
+# считаем на каждом кадре. Если её нет, работает сам DINO (scene_kind.py,
+# ~14 мс) — тогда примерно KIND_HZ раз в секунду потока, между этим берём
+# прошлый ответ.
 KIND_HZ = 2.0
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 
@@ -316,11 +319,14 @@ class Session:
                 a[y0:y1, x0:x1] = 0
             return cv2.resize(a, (STORE_W, store_h), interpolation=cv2.INTER_AREA)
 
-        kind_model = None
-        if KIND_HEAD.is_file():
-            kind_model = SceneKind(KIND_HEAD, self.device)
+        kind_model, kind_every = None, 1
+        if KIND_NET.is_file():
+            kind_model = SceneNetRunner(KIND_NET, self.device)
             self.note += " · тип сцены"
-        kind_every = max(1, round(self.fps / KIND_HZ))
+        elif KIND_HEAD.is_file():
+            kind_model = SceneKind(KIND_HEAD, self.device)
+            kind_every = max(1, round(self.fps / KIND_HZ))
+            self.note += " · тип сцены (DINO)"
         kind_p = None
         n_frame = 0
 

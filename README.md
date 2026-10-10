@@ -37,7 +37,10 @@ dataset notes are in Russian; the README is in English.
   screen: game, game with the scoreboard (Tab) or the shop open, LoL
   client, loading screen or not LoL; the not-game head above confirms the
   Rift. On held-out streams 98.4% of frames are right (Tab 98.7% recall,
-  99.3% precision). Live writes it to `kind` about twice a second.
+  99.3% precision). Live runs a small CNN distilled from it
+  (`lolvision/scene_net.py`, three students, 98.15%, 1.8 ms per frame with
+  the resize, versus 14 ms for DINO) and writes `kind` on every frame.
+  `tools/mine_frames.py` uses it to keep only useful frames from a stream.
 - **Baseline.** `CoordNet` (`lolvision/coord_model.py`) maps the masked and
   cropped main view to a 32×32 heatmap over the map. It is kept as the
   baseline and can still be chosen in the live mode.
