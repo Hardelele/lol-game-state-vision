@@ -39,7 +39,7 @@ const S = {
   // панель данными уже не того кадра или этапа.
   netSeq: 0, chanSeq: 0,
   // Поток: кадры приходят по мере распаковки ролика, а не лежат готовыми.
-  live: null, follow: true, screen: true,
+  live: null, follow: true, screen: true, names: true, champs: true,
 };
 
 // Пояснение к этапу: что именно здесь происходит и на что смотреть.
@@ -63,6 +63,7 @@ const KEYS = [
   [["←", "→"], "кадр"], [["⇧", "←", "→"], "10 кадров"], [["N", "P"], "крупный промах"],
   [["Space"], "играть / пауза"], [["G"], "сетка"], [["H"], "тепло"], [["T"], "след"],
   [["Home", "End"], "начало / конец"], [["Tab"], "режим по кругу"],
+  [["V"], "экран с юнитами (поток)"], [["I"], "имена чемпионов"], [["C"], "чемпионы на миникарте"],
   [["[", "]"], "этап сети"],
   [["?"], "эта подсказка"],
 ];
@@ -248,6 +249,11 @@ function render() {
       `<span class="uo">${n(k, "ORDER")}</span>/<span class="uc">${n(k, "CHAOS")}</span>`)
       .join(" · ");
   }
+  const champs = S.champs && f.champs !== undefined;
+  $("champSvg").classList.toggle("hidden", !champs);
+  if (champs) drawChamps(f);
+  $("fRoster").classList.toggle("hidden", f.champs === undefined);
+  if (f.champs !== undefined) $("vRoster").innerHTML = rosterHtml(f.champs);
   $("mini").src = miniSrc(f);
   $("heatimg").src = heatSrc(f);
   $("heatimg").style.display = S.heat ? "" : "none";
@@ -279,7 +285,8 @@ function render() {
   }
   $("vQ").textContent = f.q.toFixed(2);
   $("yt").href = `https://www.youtube.com/watch?v=${S.video}&t=${Math.round(f.t)}s`;
-  $("why").href = `/explain/${S.run.id}/${S.video}/${f.i}.html`;
+  // В потоке прогон в шапке может быть не выбран, а отчёт о промахе там скрыт.
+  if (S.run) $("why").href = `/explain/${S.run.id}/${S.video}/${f.i}.html`;
   // Отчёт о промахе строится по слоям CoordNet из кадра на диске.
   $("why").classList.toggle("hidden", !!S.live || patch);
   if (document.activeElement !== $("jump")) $("jump").value = fmtTime(f.t);
@@ -288,17 +295,21 @@ function render() {
 }
 
 // Юниты на кадре целиком (координаты — доли кадра, холст 640×360):
-// чемпион — кольцо с полосой ХП, миньон — точка с короткой полосой, вард — ромб.
+// чемпион — кольцо с полосой ХП и именем, миньон — точка с короткой полосой,
+// вард — ромб. Имя — седьмое поле юнита (live_champions.py), его может не быть.
 function drawUnits(f) {
   const W = 640, H = 360;
   let s = "";
-  for (const [k, team, ux, uy, hp, sc] of f.units || []) {
+  for (const [k, team, ux, uy, hp, sc, name] of f.units || []) {
     const x = ux * W, y = uy * H, c = team === "ORDER" ? "uo" : "uc";
-    const tip = `<title>${k} · ${team} · ХП ${Math.round(hp * 100)}% · ${num(sc, 2)}</title>`;
+    const who = name ? `${name} · ` : "";
+    const tip = `<title>${esc(who)}${k} · ${team} · ХП ${Math.round(hp * 100)}% · ${num(sc, 2)}</title>`;
     if (k === "champion") {
       s += `<g class="unit ${c}">${tip}<circle cx="${x}" cy="${y}" r="13"/>` +
         `<rect class="hpbg" x="${x - 14}" y="${y - 24}" width="28" height="4"/>` +
-        `<rect class="hp" x="${x - 14}" y="${y - 24}" width="${28 * hp}" height="4"/></g>`;
+        `<rect class="hp" x="${x - 14}" y="${y - 24}" width="${28 * hp}" height="4"/>` +
+        (name && S.names ? `<text class="uname" x="${x}" y="${y - 28}">${esc(name)}</text>` : "") +
+        "</g>";
     } else if (k === "minion") {
       s += `<g class="unit ${c}">${tip}<circle class="dot" cx="${x}" cy="${y}" r="3.2"/>` +
         `<rect class="hpbg" x="${x - 7}" y="${y - 9}" width="14" height="2"/>` +
@@ -309,6 +320,39 @@ function drawUnits(f) {
     }
   }
   $("unitSvg").innerHTML = s;
+}
+
+// Чемпионы на миникарте (live_champions.py): запись кадра —
+// [чемпион, команда, слот, видим, u, v, жив, таймер], u и v — доли миникарты.
+// Холст 256×256 совпадает с картинкой миникарты, как у mapSvg.
+function drawChamps(f) {
+  let s = `<defs><clipPath id="chClip" clipPathUnits="objectBoundingBox">` +
+    `<circle cx=".5" cy=".5" r=".5"/></clipPath></defs>`;
+  for (const [name, team, slot, vis, u, v] of f.champs) {
+    if (!vis) continue;
+    const x = u * 256, y = v * 256, r = 9, c = team === "ORDER" ? "uo" : "uc";
+    s += `<g class="champ ${c}"><title>${esc(name)} · ${team} · ${slot}</title>` +
+      `<image href="/img/champ/${encodeURIComponent(name)}.png" x="${x - r}" y="${y - r}"` +
+      ` width="${2 * r}" height="${2 * r}" clip-path="url(#chClip)"/>` +
+      `<circle cx="${x}" cy="${y}" r="${r}"/>` +
+      // Подпись у края миникарты сдвигается внутрь, чтобы не обрезалась.
+      `<text x="${Math.min(Math.max(x, 24), 232)}" y="${Math.min(y + r + 7, 254)}">${esc(name)}</text></g>`;
+  }
+  $("champSvg").innerHTML = s;
+}
+
+// Состав: синие, затем красные; мёртвый — серый портрет с таймером,
+// не видимый на миникарте — тусклый, панель HUD не видна — со знаком «?».
+function rosterHtml(champs) {
+  const team = (t) => champs.filter((c) => c[1] === t).map(([name, , slot, vis, , , alive, timer]) => {
+    const st = alive === false ? "dead" : (vis ? "" : "fog");
+    const tip = `${name} · ${slot} · ` + (alive === false ? `мёртв${timer != null ? `, ${timer} с` : ""}`
+      : alive === null ? "панель HUD не видна" : (vis ? "на миникарте" : "не виден на миникарте"));
+    return `<span class="rc ${st}" title="${esc(tip)}"><img src="/img/champ/${encodeURIComponent(name)}.png" alt="">` +
+      (alive === false && timer != null ? `<b>${timer}</b>` : "") +
+      (alive === null ? "<b class=\"q\">?</b>" : "") + "</span>";
+  }).join("");
+  return `<span class="rteam uo">${team("ORDER")}</span><span class="rteam uc">${team("CHAOS")}</span>`;
 }
 
 function poly(pts, ox, oy) {
@@ -515,7 +559,7 @@ function toggle(key) {
   S[key] = !S[key];
   $(key).classList.toggle("on", S[key]);
   if (key === "grid") applyGrid();
-  else if (key === "heat" || key === "trail" || key === "screen") render();
+  else if (["heat", "trail", "screen", "names", "champs"].includes(key)) render();
   else strip();
 }
 
@@ -541,7 +585,7 @@ function wire() {
   $("prev").onclick = (e) => step(e.shiftKey ? -10 : -1);
   $("next").onclick = (e) => step(e.shiftKey ? 10 : 1);
   $("play").onclick = play;
-  ["grid", "heat", "trail", "screen", "fErr", "fUns"].forEach((k) => {
+  ["grid", "heat", "trail", "screen", "names", "champs", "fErr", "fUns"].forEach((k) => {
     $(k).onclick = () => toggle(k);
   });
   $("cells").onclick = () =>
@@ -584,6 +628,8 @@ function wire() {
     else if (l === "p" || l === "з") jumpWorst(-1);
     else if (l === "g" || l === "п") toggle("grid");
     else if ((l === "v" || l === "м") && S.live) toggle("screen");
+    else if ((l === "i" || l === "ш") && S.live) toggle("names");
+    else if ((l === "c" || l === "с") && S.live) toggle("champs");
     else if (l === "h" || l === "р") toggle("heat");
     else if (l === "t" || l === "е") toggle("trail");
     else if (k === "Tab") {
@@ -1116,8 +1162,10 @@ async function startLive(id, fps) {
   // Выпадающий список ролика показывает поток, пока он открыт.
   $("video").innerHTML = `<option value="${esc(id)}">ПОТОК · ${esc(d.title || id)}</option>`;
   $("holdout").className = "dot live";
-  $("screen").classList.remove("hidden");
-  $("screen").classList.toggle("on", S.screen);
+  for (const k of ["screen", "names", "champs"]) {
+    $(k).classList.remove("hidden");
+    $(k).classList.toggle("on", S[k]);
+  }
   $("holdout").title = "поток: ролик читается с YouTube прямо сейчас";
   setMode("end");
   netAvail();
@@ -1129,7 +1177,7 @@ async function stopLive() {
   if (!S.live) return;
   const id = S.live.id;
   S.live = null;
-  $("screen").classList.add("hidden");
+  for (const k of ["screen", "names", "champs"]) $(k).classList.add("hidden");
   clearTimeout(S.liveTimer);
   netAvail();
   $("holdout").className = "dot";

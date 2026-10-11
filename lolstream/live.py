@@ -35,7 +35,9 @@ CoordNet (lolvision/coord_model.py). Новый чекпоинт патчево�
 формата подхватывается без правки кода: достаточно передать его прогон.
 На каждый кадр сеанс отдаёт точку камеры, разброс, тепловую карту по карте
 и время по стадиям; у патчевой модели ещё долю согласных голосов и долю
-патчей «сцена».
+патчей «сцена». Сверх камеры на кадр — тип сцены, юниты основного вида
+(unit_net.py) и чемпионы: миникарта, жив ли, имена над чемпионами
+(live_champions.py).
 """
 
 from __future__ import annotations
@@ -68,6 +70,8 @@ from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_H
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
 from lolvision.unit_net import DEFAULT_NET as UNIT_NET, UnitNetRunner
 from lolvision.unit_targets import ignore_map, unit_keep
+from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
+from lolstream.live_champions import LiveChampions
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -75,7 +79,7 @@ WARM_Q = 0.4             # «рамка видна»: качество при р
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
-STAGES = ("decode", "prep", "net", "agg", "kind", "units", "out")
+STAGES = ("decode", "prep", "net", "agg", "kind", "units", "mini", "who", "out")
 # Кадр целиком для показа юнитов: ширина хранимой копии (16:9).
 FULL_STORE_W = 640
 # Тип сцены (игра / Tab / магазин / клиент / загрузка / не League). Своя сеть,
@@ -240,6 +244,7 @@ class Session:
         self.mini: dict[int, bytes] = {}
         self.full: dict[int, bytes] = {}       # кадр целиком 640×360 — под юнитов
         self.heat: dict[int, np.ndarray] = {}
+        self.roster: list[str] | None = None   # состав матча по HUD (L1…L5, R1…R5)
         self.kind = ""
         self.model_label = ""
         self.trained_on: list[str] = []
@@ -249,6 +254,7 @@ class Session:
         self.title = ""
         self.started = time.time()
         self._stop = threading.Event()
+        self._champs: LiveChampions | None = None
         self._lock = threading.Lock()
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
@@ -267,7 +273,7 @@ class Session:
                 "trained_on": self.trained_on, "timing": timing(tail),
                 "note": self.note, "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
-                "count": n, "since": since, "frames": rows,
+                "count": n, "since": since, "frames": rows, "roster": self.roster,
                 "elapsed": round(el, 1),
                 "speed": round(seen / el, 1) if el > 1 else None,
                 "map_units": MAP_UNITS}
@@ -285,6 +291,9 @@ class Session:
             self._work()
         except Exception as exc:                              # noqa: BLE001
             self._fail(f"{type(exc).__name__}: {exc}")
+        finally:
+            if self._champs is not None:
+                self._champs.close()             # поток чтения состава
 
     def _work(self) -> None:
         layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
@@ -333,6 +342,13 @@ class Session:
             unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep,
                                        valid=1 - ignore_map(keep), size=(h, w))
             self.note += " · юниты"
+
+        # Чемпионы (live_champions.py): состав по HUD, миникарта, жив ли,
+        # имена над чемпионами детектора. Только на кадрах «игра».
+        champs = None
+        if (MINI_RUN / "model.pt").is_file():
+            champs = self._champs = LiveChampions(self.device)
+            self.note += " · чемпионы"
 
         kind_model, kind_every = None, 1
         if KIND_NET.is_file():
@@ -383,12 +399,28 @@ class Session:
                 kind_p = kind_model.probs(fr)
                 ms["kind"] = (time.perf_counter() - t3) * 1000
             ms["kind_p"] = kind_p
+            # Без модели типа сцены считаем, что всё — игра.
+            game = kind_p is None or KIND_CLASSES[int(np.argmax(kind_p))] == "game"
+            units = None
             if unit_model is not None:
                 t4 = time.perf_counter()
+                units = unit_model.units(fr)
                 ms["units_list"] = [
                     [u.kind, u.team, round(u.x / w, 4), round(u.y / h, 4), round(u.hp, 2),
-                     round(u.score, 2)] for u in unit_model.units(fr)]
+                     round(u.score, 2)] for u in units]
                 ms["units"] = (time.perf_counter() - t4) * 1000
+            if champs is not None and game:
+                t5 = time.perf_counter()
+                champs.offer(fr, n_frame / self.fps)
+                ms["champs"] = champs.minimap(fr, np.asarray(mini))
+                self.roster = champs.roster
+                t6 = time.perf_counter()
+                ms["mini"] = (t6 - t5) * 1000
+                if units:
+                    # Имя — седьмым полем юнита: старые поля на месте.
+                    for row_u, name in zip(ms["units_list"], champs.who(fr, units)):
+                        row_u.append(name)
+                    ms["who"] = (time.perf_counter() - t6) * 1000
             ms["full_img"] = cv2.resize(fr, (FULL_STORE_W, FULL_STORE_W * h // w),
                                         interpolation=cv2.INTER_AREA)
             n_frame += 1
@@ -452,6 +484,9 @@ class Session:
         full_img = ms.pop("full_img", None)
         if units is not None:
             row["units"] = units
+        mini_champs = ms.pop("champs", None)
+        if mini_champs is not None:
+            row["champs"] = mini_champs
         kp = ms.pop("kind_p", None)
         if kp is not None:
             # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
