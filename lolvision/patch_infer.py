@@ -231,10 +231,14 @@ class FramePrep:
         self.q0 = q0
 
     @torch.no_grad()
-    def __call__(self, frame: np.ndarray):
-        """(H, W, 3) uint8 → (prep для predict, хранимая сцена uint8 для показа)."""
+    def __call__(self, frame: np.ndarray | torch.Tensor):
+        """(H, W, 3) uint8 → (prep для predict, хранимая сцена uint8 для показа).
+        Кадр уже в видеопамяти (тензор) режется на месте, без новой загрузки."""
         cx0, cy0, cx1, cy1 = self.crop
-        a = torch.from_numpy(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1])).to(self.dev)
+        if isinstance(frame, torch.Tensor):
+            a = frame[cy0:cy1, cx0:cx1]
+        else:
+            a = torch.from_numpy(np.ascontiguousarray(frame[cy0:cy1, cx0:cx1])).to(self.dev)
         a = a.permute(2, 0, 1)[None].float() * self.keep
         s = F.interpolate(a, size=(self.store[1], self.store[0]), mode="bicubic",
                           antialias=True, align_corners=False).clamp_(0, 255).round_()

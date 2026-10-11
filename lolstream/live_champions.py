@@ -1,0 +1,324 @@
+"""Чемпионы в живом потоке: состав матча, миникарта, жив ли и кто есть кто
+на основном виде.
+
+Зачем. Модели миникарты (#759, lolvision/minimap_champions.py) и «кто это»
+(#760, lolvision/roster.py, lolvision/name_reader.py) работали только по
+кадрам на диске. Здесь они собраны под поток: один объект на сеанс, кадр
+1080p RGB на входе, короткие записи для строки кадра на выходе.
+
+Что и как часто (канал наблюдателя, раскладка spectator-volibear-challenger;
+замер на этой машине):
+
+* состав — портреты HUD (roster.py, ~250 мс на кадр на процессоре). Идёт
+  в своём потоке раз в ROSTER_EVERY секунд потока на игровых кадрах, путь
+  кадра его не ждёт; решение — по последним ROSTER_FRAMES кадрам с HUD.
+  Там же раз в ROSTER_EVERY проверяется, видны ли портреты своих чемпионов
+  (hud_panels.portrait_own, ~28 мс): по ним «жив / мёртв» отличается от
+  «панели не видно». Новый состав (новый матч) сбрасывает старые кадры;
+* миникарта и боковые панели — на каждом игровом кадре: детектор и
+  классификатор иконок на видеокарте (~8 мс), назначение в состав, серый
+  портрет и таймер возрождения (hud_panels.read_panels, ~2 мс на полосах
+  панелей);
+* имя над чемпионом на основном виде — по юнитам детектора (unit_net.py),
+  а не классическим поиском плашек (330–450 мс на кадр). От центра тела
+  до плашки — постоянное смещение разметки детектора (unit_bars.BODY), имя
+  ищется в окне ±6×±8 px вокруг ожидаемого места и только среди пяти
+  чемпионов команды и надписей-состояний (name_reader). Где имя не
+  прочиталось, берётся имя ближайшего чемпиона той же команды с прошлого
+  кадра; внутри команды все разные (венгерский алгоритм).
+
+Облик (appearance.py, DINOv2) сюда не взят: признак стоит ~10 мс на вырез
+и вторую модель в видеопамяти, а без имени по соседним кадрам он даёт
+лишь +2–5 п. п. (docs/champion-identity.md).
+"""
+
+from __future__ import annotations
+
+import threading
+from collections import deque
+from pathlib import Path
+
+import cv2
+import numpy as np
+import torch
+import torch.nn.functional as F
+from scipy.optimize import linear_sum_assignment
+
+from lolvision import ddragon, hud_panels
+from lolvision.health_bars import W as PLATE_W
+from lolvision.identity import NAME_BOX, crop_pad
+from lolvision.minimap_champions import PORTRAIT_MIN, assign
+from lolvision.minimap_icons import (CROP, DEFAULT_RUN as MINI_RUN, MM, TEAMS, IconModel,
+                                     crops, decode)
+from lolvision.name_reader import NONE, STATUS, WIN_H, WIN_W, NameReader, whiteness
+from lolvision.paths import RUNS
+from lolvision.roster import IconBank, decide, read_frame
+from lolvision.unit_bars import BODY
+
+NAMES = RUNS / "identity" / "names.npz"
+ROSTER_EVERY = 5.0        # с потока, как часто читать портреты HUD
+ROSTER_FRAMES = 8         # по скольким последним кадрам с HUD решать
+# Полосы боковых панелей в кадре 1080p — всё, что читает hud_panels.
+PANEL_COLS = ((0, 80), (1840, 1920))
+PANEL_ROWS = (140, 680)
+# Центр тела чемпиона у детектора — верх плашки + dy + h/2 (unit_bars.BODY).
+_, BODY_DY, _, BODY_H = BODY["champion"]
+PLATE_DY = BODY_DY + BODY_H / 2
+# Запас окна поиска имени сверх сдвигов name_reader (±4 по x, ±2 по y), px
+# 1080p: имя от центра детектора — в 99% в пределах ±4 по x и ±7 по y
+# (435 уверенных прочтений, 58w57eJ5Qks, olmTXkkUv58, 4AIX8QtRid4).
+SLACK_X, SLACK_Y = 2, 6
+NAME_MIN = 0.5            # сходство имени не ниже (name_reader.ADAPT_SIM)
+NAME_MARGIN = 0.03        # и отрыв от второго кандидата
+TRACK_PX = 260            # px 1080p: имя переносится с прошлого кадра не дальше
+TRACK_SCORE = 0.35        # «вес» перенесённого имени против прочитанного
+MAX_ICONS = 20            # детекций миникарты на кадр не больше (minimap_icons.decode)
+
+
+def as_1080(frame: np.ndarray) -> np.ndarray:
+    if frame.shape[:2] == (1080, 1920):
+        return frame
+    return cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_AREA)
+
+
+def _to_input(u8: torch.Tensor) -> torch.Tensor:
+    """uint8 N×H×W×3 на устройстве → вход сетей миникарты (как to_tensor)."""
+    return u8.permute(0, 3, 1, 2).float().div(127.5).sub(1.0)
+
+
+class IconGraph:
+    """Детектор и классификатор иконок миникарты на одну миникарту за раз,
+    каждый — CUDA graph. Сети мелкие, и без графа время уходит на запуск
+    ~60 слоёв из Python: ~26 мс на кадр против ~8 мс. Ответ — как у
+    IconModel на пачке из одной миникарты."""
+
+    def __init__(self, model: IconModel):
+        self.model, dev = model, model.device
+        self.x = torch.zeros(1, MM, MM, 3, dtype=torch.uint8, device=dev)
+        self.c = torch.zeros(MAX_ICONS, CROP, CROP, 3, dtype=torch.uint8, device=dev)
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(s), torch.no_grad():
+            for _ in range(3):
+                self._det()
+                self._cls()
+        torch.cuda.current_stream().wait_stream(s)
+        self.g_det, self.g_cls = torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.g_det), torch.no_grad():
+            self.heat, self.off = self._det()
+        with torch.cuda.graph(self.g_cls), torch.no_grad():
+            self.logp, self.pt = self._cls()
+
+    def _det(self):
+        return self.model.det(_to_input(self.x))
+
+    def _cls(self):
+        lc, lt = self.model.cls(_to_input(self.c))
+        return F.log_softmax(lc, 1), F.softmax(lt, 1)
+
+    @torch.no_grad()
+    def __call__(self, mini: np.ndarray) -> list[dict]:
+        self.x.copy_(torch.from_numpy(np.ascontiguousarray(mini))[None])
+        self.g_det.replay()
+        ds = decode(self.heat, self.off, self.model.thr, MAX_ICONS)[0]
+        if not ds:
+            return []
+        n = len(ds)
+        self.c[:n].copy_(torch.from_numpy(crops(mini, [(d.x, d.y) for d in ds])))
+        self.g_cls.replay()
+        logp, pt = self.logp[:n].cpu().numpy(), self.pt[:n].cpu().numpy()
+        return [{"x": d.x, "y": d.y, "team": d.team, "score": d.score,
+                 "team_p": pt[i].tolist(), "logp": logp[i]} for i, d in enumerate(ds)]
+
+
+class Match:
+    """Состав и всё, что от него зависит; заменяется целиком, не правится."""
+
+    def __init__(self, roster: list[str], model: IconModel, icons: dict):
+        self.roster = roster
+        idx = {n: i for i, n in enumerate(model.champions)}
+        self.ids = [idx[n] for n in roster]
+        self.teams = [self.ids[:5], self.ids[5:]]
+        self.tm = hud_panels.portrait_templates({n: icons[n] for n in roster})
+        self.own = np.zeros(10, np.float32)       # видны ли портреты (portrait_own)
+        self.scales: list[int] | None = None
+
+
+class LiveChampions:
+    """Чемпионы одного сеанса. `minimap` и `who` зовутся из рабочего потока
+    сеанса, состав считается в своём потоке (`offer`)."""
+
+    def __init__(self, device: str = "cuda", run: Path = MINI_RUN, names: Path = NAMES):
+        self.model = IconModel(run, device)
+        self.icon_net = (IconGraph(self.model) if self.model.device.startswith("cuda")
+                         else lambda mini: self.model(mini[None])[0])
+        self.icons = ddragon.load_icons()
+        self.bank = IconBank(self.icons)
+        self.names = NameReader.load(names) if names.is_file() else None
+        # Образцы имён окнами (WIN_H, WIN_W) для cv2.matchTemplate.
+        self.name_tm = (None if self.names is None else
+                        np.ascontiguousarray(self.names.bank.T.reshape(-1, WIN_H, WIN_W)))
+        self.digits = hud_panels.DigitReader()
+        self.match: Match | None = None
+        self.hud: deque = deque(maxlen=ROSTER_FRAMES)
+        self.next_roster = 0.0
+        self.prev: list[tuple[str, str, float, float]] = []   # имя, команда, x, y (px)
+        self.bgr = np.zeros((1080, 1920, 3), np.uint8)       # только полосы панелей
+        self._job: np.ndarray | None = None
+        self._wake = threading.Event()
+        self._busy = False
+        self._closed = False
+        self._th = threading.Thread(target=self._loop, daemon=True)
+        self._th.start()
+
+    @property
+    def roster(self) -> list[str] | None:
+        m = self.match
+        return m.roster if m else None
+
+    def close(self) -> None:
+        self._closed = True
+        self._wake.set()
+
+    # ---------- состав (свой поток) ----------
+
+    def offer(self, frame: np.ndarray, t: float) -> None:
+        """Игровой кадр потока: раз в ROSTER_EVERY с уходит на чтение портретов.
+        Пока прошлый кадр не прочитан, новые не копятся."""
+        if t < self.next_roster or self._busy:
+            return
+        self.next_roster = t + ROSTER_EVERY
+        self._busy = True
+        self._job = as_1080(frame).copy()
+        self._wake.set()
+
+    def _loop(self) -> None:
+        while not self._closed:
+            self._wake.wait()
+            self._wake.clear()
+            if self._closed:
+                return
+            frame, self._job = self._job, None
+            try:
+                if frame is not None:
+                    self.read_roster(frame)
+            finally:
+                self._busy = False
+
+    def read_roster(self, frame: np.ndarray) -> bool:
+        """Портреты HUD кадра 1080p → состав. True — состав сменился."""
+        fs = read_frame(frame, self.bank)
+        if not fs.hud:
+            return False
+        self.hud.append(fs)
+        r = decide(list(self.hud), self.bank.ids)
+        m = self.match
+        if m is not None and len(set(r.champions) & set(m.roster)) < 5:
+            # Другой матч: старые кадры HUD к нему не относятся.
+            self.hud.clear()
+            self.hud.append(fs)
+            r = decide(list(self.hud), self.bank.ids)
+        changed = m is None or r.champions != m.roster
+        if changed:
+            m = Match(r.champions, self.model, self.icons)
+        bgr = np.ascontiguousarray(frame[..., ::-1])
+        own, best = hud_panels.portrait_own(bgr, m.tm, m.roster, m.scales)
+        if m.scales is None and (own >= PORTRAIT_MIN).all():
+            m.scales = best
+        m.own = own
+        if changed:
+            self.match = m
+        return changed
+
+    # ---------- миникарта и панели ----------
+
+    def minimap(self, frame: np.ndarray, mini: np.ndarray) -> list[list] | None:
+        """10 записей [чемпион, команда, слот, видим, u, v, жив, таймер]:
+        u, v — доли миникарты (0..1, как у рамки камеры), None — не видим;
+        жив — True / False / None (панель не видна). `mini` — миникарта
+        256×256 RGB, нарезанная так же, как в minimap_camera (LANCZOS)."""
+        m = self.match
+        if m is None:
+            return None
+        dets = self.icon_net(mini)
+        f = as_1080(frame)
+        y0, y1 = PANEL_ROWS
+        for x0, x1 in PANEL_COLS:
+            self.bgr[y0:y1, x0:x1] = f[y0:y1, x0:x1, ::-1]
+        slots = hud_panels.read_panels(self.bgr, self.digits)
+        who = assign(dets, m.teams)
+        seen = {c: d for d, c in zip(dets, who) if c >= 0}
+        out = []
+        for s, (name, cid) in enumerate(zip(m.roster, m.ids)):
+            d, sl = seen.get(cid), slots[s]
+            hud_ok = sl.dead or m.own[s] >= PORTRAIT_MIN
+            out.append([name, TEAMS[s // 5], f"{'LR'[s // 5]}{s % 5 + 1}", d is not None,
+                        round(d["x"] / MM, 4) if d else None,
+                        round(d["y"] / MM, 4) if d else None,
+                        (not sl.dead) if hud_ok else None,
+                        sl.timer if sl.dead else None])
+        return out
+
+    # ---------- кто есть кто на основном виде ----------
+
+    def who(self, frame: np.ndarray, units: list) -> list[str | None]:
+        """Имена для юнитов детектора (Unit из unit_net, пиксели кадра):
+        по списку юнитов — Id Data Dragon или None (не чемпион, нет
+        состава, не прочиталось и не перенеслось)."""
+        out: list[str | None] = [None] * len(units)
+        roster = self.roster
+        if roster is None or self.names is None:
+            return out
+        s = 1920 / frame.shape[1]                       # всё в пикселях 1080p
+        f = as_1080(frame)
+        cur = []
+        for team_i, team in enumerate(TEAMS):
+            cands = roster[5 * team_i:5 * team_i + 5]
+            idx = [k for k, u in enumerate(units) if u.kind == "champion" and u.team == team]
+            if not idx:
+                continue
+            score = np.zeros((len(idx), 5), np.float32)
+            for a, k in enumerate(idx):
+                x, y = units[k].x * s, units[k].y * s
+                sims = self.name_scores(f, x, y, cands)
+                if sims is not None:
+                    order = np.argsort(-sims)
+                    best, gap = sims[order[0]], sims[order[0]] - sims[order[1]]
+                    if best >= NAME_MIN and gap >= NAME_MARGIN:
+                        score[a, order[0]] += best
+                for name, pt, px, py in self.prev:
+                    if pt == team and name in cands and np.hypot(px - x, py - y) <= TRACK_PX:
+                        score[a, cands.index(name)] += TRACK_SCORE
+            rows, cols = linear_sum_assignment(-score)
+            for a, c in zip(rows, cols):
+                if score[a, c] > 0:
+                    k = idx[a]
+                    out[k] = cands[c]
+                    cur.append((cands[c], team, units[k].x * s, units[k].y * s))
+        self.prev = cur
+        return out
+
+    def name_scores(self, f: np.ndarray, x: float, y: float,
+                    cands: list[str]) -> np.ndarray | None:
+        """Сходство надписи над чемпионом (центр тела x, y в кадре 1080p) с
+        именами `cands`: нормированная корреляция по сдвигам в окне
+        (SLACK_X, SLACK_Y) — та же, что у NameReader, только через
+        cv2.matchTemplate, — и по образцам — максимум. Если надпись-состояние
+        или «пусто» ближе любого имени — None: это не голос."""
+        px, py = round(x - PLATE_W / 2), round(y - PLATE_DY)
+        ex, ey = SLACK_X, SLACK_Y
+        x0, y0, x1, y1 = NAME_BOX
+        wn = whiteness(crop_pad(f, px, py, (x0 - ex, y0 - ey, x1 + ex, y1 + ey)))
+        if wn.max() <= 0:
+            return None
+        keep = set(cands)
+        best: dict[str, float] = {}
+        for k, lab in enumerate(self.names.labels):
+            if lab in keep or lab.startswith(STATUS) or lab == NONE:
+                sim = float(cv2.matchTemplate(wn, self.name_tm[k], cv2.TM_CCOEFF_NORMED).max())
+                best[lab] = max(best.get(lab, -2.0), sim)
+        other = max([v for lab, v in best.items() if lab not in keep] or [-2.0])
+        own = np.array([best.get(c, -2.0) for c in cands], np.float32)
+        if other >= own.max():
+            return None
+        return own

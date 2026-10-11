@@ -35,7 +35,10 @@ CoordNet (lolvision/coord_model.py). Новый чекпоинт патчево�
 формата подхватывается без правки кода: достаточно передать его прогон.
 На каждый кадр сеанс отдаёт точку камеры, разброс, тепловую карту по карте
 и время по стадиям; у патчевой модели ещё долю согласных голосов и долю
-патчей «сцена».
+патчей «сцена». Сверх камеры на кадр — тип сцены, юниты основного вида
+(unit_net.py) и чемпионы: миникарта, жив ли, имена над чемпионами
+(live_champions.py); поверх них — контекст матча (match_state.py): память о
+чемпионах между кадрами, смерти и возрождения.
 """
 
 from __future__ import annotations
@@ -45,12 +48,14 @@ import io
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Protocol
 
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from lolvision.paths import DEFAULT_LAYOUT, RUNS, run_dir
@@ -68,6 +73,9 @@ from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_H
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
 from lolvision.unit_net import DEFAULT_NET as UNIT_NET, UnitNetRunner
 from lolvision.unit_targets import ignore_map, unit_keep
+from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
+from lolstream.live_champions import LiveChampions
+from lolvision.match_state import MatchState
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -75,7 +83,7 @@ WARM_Q = 0.4             # «рамка видна»: качество при р
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
-STAGES = ("decode", "prep", "net", "agg", "kind", "units", "out")
+STAGES = ("decode", "prep", "net", "agg", "kind", "units", "mini", "who", "out")
 # Кадр целиком для показа юнитов: ширина хранимой копии (16:9).
 FULL_STORE_W = 640
 # Тип сцены (игра / Tab / магазин / клиент / загрузка / не League). Своя сеть,
@@ -240,6 +248,7 @@ class Session:
         self.mini: dict[int, bytes] = {}
         self.full: dict[int, bytes] = {}       # кадр целиком 640×360 — под юнитов
         self.heat: dict[int, np.ndarray] = {}
+        self.roster: list[str] | None = None   # состав матча по HUD (L1…L5, R1…R5)
         self.kind = ""
         self.model_label = ""
         self.trained_on: list[str] = []
@@ -249,7 +258,13 @@ class Session:
         self.title = ""
         self.started = time.time()
         self._stop = threading.Event()
+        self._champs: LiveChampions | None = None
         self._lock = threading.Lock()
+        # Сжатие картинок и запись кадра в сеанс — в своём потоке: путь кадра
+        # его не ждёт. Один исполнитель — кадры ложатся строго по порядку.
+        self._n_emit = 0
+        self.match: MatchState | None = None   # контекст матча (#780)
+        self._out = ThreadPoolExecutor(1, thread_name_prefix="live-out")
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
 
@@ -267,7 +282,7 @@ class Session:
                 "trained_on": self.trained_on, "timing": timing(tail),
                 "note": self.note, "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
-                "count": n, "since": since, "frames": rows,
+                "count": n, "since": since, "frames": rows, "roster": self.roster,
                 "elapsed": round(el, 1),
                 "speed": round(seen / el, 1) if el > 1 else None,
                 "map_units": MAP_UNITS}
@@ -285,6 +300,10 @@ class Session:
             self._work()
         except Exception as exc:                              # noqa: BLE001
             self._fail(f"{type(exc).__name__}: {exc}")
+        finally:
+            self._out.shutdown(wait=True)
+            if self._champs is not None:
+                self._champs.close()             # поток чтения состава
 
     def _work(self) -> None:
         layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
@@ -334,6 +353,13 @@ class Session:
                                        valid=1 - ignore_map(keep), size=(h, w))
             self.note += " · юниты"
 
+        # Чемпионы (live_champions.py): состав по HUD, миникарта, жив ли,
+        # имена над чемпионами детектора. Только на кадрах «игра».
+        champs = None
+        if (MINI_RUN / "model.pt").is_file():
+            champs = self._champs = LiveChampions(self.device)
+            self.note += " · чемпионы"
+
         kind_model, kind_every = None, 1
         if KIND_NET.is_file():
             kind_model = SceneNetRunner(KIND_NET, self.device)
@@ -344,6 +370,15 @@ class Session:
             self.note += " · тип сцены (DINO)"
         kind_p = None
         n_frame = 0
+
+        # Кадр грузится в видеопамять один раз, через закреплённый буфер, и
+        # дальше его режут на месте подготовка камеры, детектор юнитов и
+        # уменьшенная копия для показа. Раньше каждая модель грузила свои
+        # 6 МБ сама.
+        fr_pin = fr_dev = None
+        if self.device.startswith("cuda"):
+            fr_pin = torch.empty((h, w, 3), dtype=torch.uint8).pin_memory()
+            fr_dev = torch.empty((h, w, 3), dtype=torch.uint8, device=self.device)
 
         self.state = State.RUNNING
 
@@ -371,8 +406,11 @@ class Session:
                 fr[mmbox[1]:mmbox[3], mmbox[0]:mmbox[2]])).resize((MM, MM), Image.LANCZOS)
             mask = white_mask(np.asarray(mini, dtype=np.float32))
             t2 = time.perf_counter()
+            if fr_dev is not None:
+                fr_pin.numpy()[:] = fr
+                fr_dev.copy_(fr_pin, non_blocking=True)
             if gpu_prep is not None:
-                prep, scene = gpu_prep(fr)
+                prep, scene = gpu_prep(fr_dev)
             else:
                 scene = cpu_scene(fr)
                 prep = model.prepare(Image.fromarray(scene))
@@ -383,14 +421,29 @@ class Session:
                 kind_p = kind_model.probs(fr)
                 ms["kind"] = (time.perf_counter() - t3) * 1000
             ms["kind_p"] = kind_p
+            # Без модели типа сцены считаем, что всё — игра.
+            game = kind_p is None or KIND_CLASSES[int(np.argmax(kind_p))] == "game"
+            units = None
             if unit_model is not None:
                 t4 = time.perf_counter()
+                units = unit_model.units(fr_dev)
                 ms["units_list"] = [
                     [u.kind, u.team, round(u.x / w, 4), round(u.y / h, 4), round(u.hp, 2),
-                     round(u.score, 2)] for u in unit_model.units(fr)]
+                     round(u.score, 2)] for u in units]
                 ms["units"] = (time.perf_counter() - t4) * 1000
-            ms["full_img"] = cv2.resize(fr, (FULL_STORE_W, FULL_STORE_W * h // w),
-                                        interpolation=cv2.INTER_AREA)
+            if champs is not None and game:
+                t5 = time.perf_counter()
+                champs.offer(fr, n_frame / self.fps)
+                ms["champs"] = champs.minimap(fr, np.asarray(mini))
+                self.roster = champs.roster
+                t6 = time.perf_counter()
+                ms["mini"] = (t6 - t5) * 1000
+                if units:
+                    # Имя — седьмым полем юнита: старые поля на месте.
+                    for row_u, name in zip(ms["units_list"], champs.who(fr, units)):
+                        row_u.append(name)
+                    ms["who"] = (time.perf_counter() - t6) * 1000
+            ms["full_img"] = _full_small(fr, fr_dev)
             n_frame += 1
 
             if bw is None:
@@ -417,6 +470,7 @@ class Session:
             for m, s, p, mi, t in warm:
                 self._emit(m, s, p, mi, bw, bh, model, t)
 
+        self._out.shutdown(wait=True)    # все кадры записаны — тогда конец
         if self.state is State.RUNNING:
             self.state = State.STOPPED if self._stop.is_set() else State.ENDED
 
@@ -436,7 +490,10 @@ class Session:
         ms.update(mt)
 
         t0 = time.perf_counter()
-        i = len(self.rows)
+        # Номер кадра — свой счётчик: строки ложатся в self.rows позже, из
+        # потока сжатия.
+        i = self._n_emit
+        self._n_emit += 1
         row = {"i": i, "t": round(self.start + i / self.fps, 2),
                "cx": round(cx, 4), "cy": round(cy, 4),
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
@@ -452,6 +509,9 @@ class Session:
         full_img = ms.pop("full_img", None)
         if units is not None:
             row["units"] = units
+        mini_champs = ms.pop("champs", None)
+        if mini_champs is not None:
+            row["champs"] = mini_champs
         kp = ms.pop("kind_p", None)
         if kp is not None:
             # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
@@ -461,11 +521,30 @@ class Session:
                 c = KIND_CLASSES.index("other")
             row["kind"] = KIND_CLASSES[c]
             row["kind_p"] = round(float(kp[int(np.argmax(kp))]), 3)
+        # Контекст матча: память о чемпионах между кадрами, смерти и
+        # возрождения. В строку — снимок на этот кадр и новые события.
+        if self.match is None:
+            self.match = MatchState(view=(bw / MM, bh / MM))
+        ev = self.match.update(row["t"], row)
+        if self.match.order:
+            row["ctx"] = self.match.frame_view()
+        if ev:
+            row["ev"] = ev
+        ms["out"] = (time.perf_counter() - t0) * 1000
+        row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
+        self._out.submit(self._store, row, scene, full_img, mini, hm)
+
+    def _store(self, row: dict, scene: np.ndarray, full_img: np.ndarray | None,
+               mini: Image.Image, hm: np.ndarray) -> None:
+        """Сжать картинки кадра и положить кадр в сеанс (поток self._out).
+        Строка появляется вместе с картинками: смотрелка не попросит кадр,
+        которого ещё нет. Время сжатия — row["ms"]["enc"], вне пути кадра."""
+        t0 = time.perf_counter()
         sj = _jpeg(Image.fromarray(scene), 85)
         fj = _jpeg(Image.fromarray(full_img), 80) if full_img is not None else None
         mj = _jpeg(mini.resize((MINI_STORE, MINI_STORE)), 82)
-        ms["out"] = (time.perf_counter() - t0) * 1000
-        row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
+        row["ms"]["enc"] = round((time.perf_counter() - t0) * 1000, 2)
+        i = row["i"]
         with self._lock:
             self.scene[i] = sj
             self.mini[i] = mj
@@ -475,6 +554,18 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+def _full_small(fr: np.ndarray, fr_dev: torch.Tensor | None) -> np.ndarray:
+    """Кадр целиком шириной FULL_STORE_W для показа юнитов: на видеокарте из
+    уже загруженного кадра (среднее по площади, как cv2.INTER_AREA), без неё —
+    на процессоре."""
+    h, w = fr.shape[:2]
+    size = (FULL_STORE_W * h // w, FULL_STORE_W)
+    if fr_dev is None:
+        return cv2.resize(fr, size[::-1], interpolation=cv2.INTER_AREA)
+    x = F.interpolate(fr_dev.permute(2, 0, 1)[None].float(), size=size, mode="area")
+    return x[0].permute(1, 2, 0).round_().to(torch.uint8).cpu().numpy()
 
 
 def _r(v, n: int):
