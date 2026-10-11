@@ -190,6 +190,10 @@ class UnitFrames(Dataset):
             img = cv2.imread(str(ROOT / r["frame"]))[..., ::-1]
         img = np.ascontiguousarray(img)
         labels = [{**u, "x": box_center(u)[0], "y": box_center(u)[1]} for u in r["units"]]
+        for u in labels:
+            # команду чемпиона видно только по плашке — у самометки она догадка сети
+            if u.get("source") == "self" and u["kind"] == "champion":
+                u["team"] = None
         if self.aug.on:
             # до маски HUD: стирание берёт фон и у края сцены
             rng = (np.random.default_rng(random.getrandbits(32)) if self.train
