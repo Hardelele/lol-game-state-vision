@@ -43,17 +43,22 @@ import _bootstrap  # noqa: F401
 from build_unit_labels import LABELS, label_keep
 from lolvision.bar_erase import PAD, bar_rect, erase, free_spot, paste, recolor
 from lolvision.unit_net import CLASSES, IN_H, IN_W, OUT_H, OUT_W, STRIDE, UnitNet, decode
-from lolvision.unit_targets import box_center, build_targets, ignore_map, match
+from lolvision.unit_targets import RADIUS, box_center, build_targets, ignore_map, match
 from lolvision.paths import ROOT, RUNS, TRAIN_LOG
 
 OUT = RUNS / "units"
 
 
-def load_rows(names: list[str]) -> list[dict]:
+def load_rows(names: list[str], self_labels: bool = False) -> list[dict]:
     """Строки JSONL меток по именам наборов (имя файла = ID ролика или
-    `dataset:<ID>` — кадры этого ролика из общего dataset.jsonl)."""
+    `dataset:<ID>` — кадры этого ролика из общего dataset.jsonl).
+    `self_labels` — наборы, дополненные tools/self_label_units.py."""
     rows = []
     for n in names:
+        if self_labels:
+            p = LABELS.parent / "labels_self" / f"{n.replace(':', '_')}.jsonl"
+            rows += [json.loads(s) for s in p.open(encoding="utf-8")]
+            continue
         if n.startswith("dataset:"):
             vid = n.split(":", 1)[1]
             src = [json.loads(s) for s in (LABELS / "dataset.jsonl").open(encoding="utf-8")]
@@ -73,12 +78,14 @@ class BarAug:
     пустом месте, метки нет; decoy — стёртое пятно без юнита, чтобы след
     стирания не стал признаком; recolor — другой оттенок заливки (свои цвета
     полосок у игроков). Вероятности — на юнит (erase, occlude, recolor) или
-    на кадр (phantom, decoy). `all_erased` — проверочный вариант: стёрты все."""
+    на кадр (phantom, decoy, erase_frame — стирать ли в этом кадре вообще).
+    `all_erased` — проверочный вариант: стёрты все."""
     erase: float = 0.0
     occlude: float = 0.0
     phantom: float = 0.0
     decoy: float = 0.0
     recolor: float = 0.0
+    erase_frame: float = 1.0
     all_erased: bool = False
 
     @property
@@ -96,13 +103,17 @@ def bar_aug(img: np.ndarray, units: list[dict], k: float, valid: np.ndarray, aug
     out = [dict(u) for u in units]
     shape = img.shape
     hidden = set()
+    # метки самообучения (tools/self_label_units.py) — без полоски: их не
+    # трогаем и не переносим
+    erase_on = aug.all_erased or rng.random() < aug.erase_frame
     for j, u in enumerate(out):
-        if aug.all_erased or rng.random() < aug.erase:
+        if u.get("bar") and (aug.all_erased or (erase_on and rng.random() < aug.erase)):
             hidden.add(j)
     erase(img, [bar_rect(out[j], k, shape) for j in sorted(hidden)], rng=rng)
+    units = [u for u in units if u.get("bar")]
     champs = [u for u in units if u["kind"] == "champion"]
     for j, u in enumerate(out):
-        if j in hidden:
+        if j in hidden or not u.get("bar"):
             continue
         if u["kind"] == "minion" and champs and rng.random() < aug.occlude:
             c = champs[int(rng.integers(len(champs)))]
@@ -124,7 +135,7 @@ def bar_aug(img: np.ndarray, units: list[dict], k: float, valid: np.ndarray, aug
         out[j]["hp"] = None
         if out[j]["kind"] == "champion":
             out[j]["team"] = None
-    avoid = [(u["x"] * k, u["y"] * k) for u in units] + \
+    avoid = [(u["x"] * k, u["y"] * k) for u in out] + \
             [((u["bar"][0] + u["bar"][2]) / 2 * k, u["bar"][1] * k) for u in units]
     if units and rng.random() < aug.phantom:
         for _ in range(int(rng.integers(1, 3))):
@@ -208,6 +219,11 @@ class UnitFrames(Dataset):
         units = [{"kind": u["kind"], "team": u["team"], "hp": u.get("hp"),
                   "x": u["x"] * f - ox, "y": u["y"] * f - oy} for u in labels]
         t = build_targets(units, (OUT_H, OUT_W), STRIDE, s)
+        # неуверенные ответы сетей без метки (self_label_units.py): возможно,
+        # юнит — там нет потерь тепловой карты
+        for x0, y0, kind in r.get("ignore", ()):
+            rad = max(2, int(RADIUS[kind] * f))
+            cv2.circle(g, (int(x0 * f - ox), int(y0 * f - oy)), rad, 1, -1)
         # область без меток — на сетке выхода: клетка без меток, если хоть
         # один пиксель в ней без меток
         gi = g.reshape(OUT_H, STRIDE, OUT_W, STRIDE).max((1, 3)).astype(np.float32)
@@ -256,6 +272,11 @@ def losses(out, t, ign):
 def evaluate(net, loader, dev, ign_full: np.ndarray, thr: float = 0.3) -> dict:
     """Точность/полнота против псевдо-меток проверочных кадров (масштаб 1)."""
     net.eval()
+    # как в UnitNetRunner (live): ответы вне `valid` гасятся до поиска
+    # максимумов, иначе пики в полосе у HUD занимают места topk
+    v = torch.from_numpy((1 - ign_full).astype(np.float32)).to(dev)[None, None]
+    v = -F.max_pool2d(-F.avg_pool2d(v, 2), STRIDE)
+    valid = F.pad(v, (0, OUT_W - v.shape[-1], 0, OUT_H - v.shape[-2]))
     stats = {k: [0, 0, 0] for k in CLASSES}      # tp, fp, fn
     team_ok = team_n = 0
     hp_err = {k: [] for k in CLASSES}
@@ -265,7 +286,7 @@ def evaluate(net, loader, dev, ign_full: np.ndarray, thr: float = 0.3) -> dict:
         x = x.to(dev).float() / 255
         with torch.autocast("cuda", dtype=torch.float16):
             out = net(x)
-        det = decode(*out, thr=thr).cpu().numpy()
+        det = decode(*out, thr=thr, valid=valid).cpu().numpy()
         for b in range(len(x)):
             r = rows[k]
             k += 1
@@ -325,6 +346,10 @@ def main() -> None:
     ap.add_argument("--phantom-p", type=float, default=0.3)
     ap.add_argument("--decoy-p", type=float, default=0.3)
     ap.add_argument("--recolor-p", type=float, default=0.15)
+    ap.add_argument("--erase-frame-p", type=float, default=1.0,
+                    help="доля кадров, в которых вообще стираются полоски")
+    ap.add_argument("--self-labels", action="store_true",
+                    help="обучающие метки из data/units/labels_self (self_label_units.py)")
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -336,10 +361,10 @@ def main() -> None:
     torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_gb * 2 ** 30 / total))
     keep = label_keep()
     ign = ignore_map(keep)
-    tr_rows, va_rows = load_rows(args.train), load_rows(args.val)
+    tr_rows, va_rows = load_rows(args.train, args.self_labels), load_rows(args.val)
     jp, npz = (0.0, 0.0) if args.no_codec_aug else (0.4, 0.25)
-    aug = (BarAug(args.erase_p, args.occlude_p, args.phantom_p, args.decoy_p, args.recolor_p)
-           if args.bar_aug else BarAug())
+    aug = (BarAug(args.erase_p, args.occlude_p, args.phantom_p, args.decoy_p, args.recolor_p,
+                  args.erase_frame_p) if args.bar_aug else BarAug())
     tr = UnitFrames(tr_rows, keep, ign, True, tuple(args.scale), jp, npz, aug)
     va = UnitFrames(va_rows, keep, ign, False)
     tl = DataLoader(tr, args.batch, shuffle=True, num_workers=args.workers, drop_last=True,
