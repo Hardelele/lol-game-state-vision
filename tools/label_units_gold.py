@@ -36,6 +36,7 @@ from lolvision.paths import DATASET, ROOT
 GOLD = DATASET / "units_gold"
 QUEUE = GOLD / "queue.json"
 LABELS = GOLD / "labels.jsonl"
+HISTORY = GOLD / "labels.history.jsonl"   # журнал всех сохранений, только дописывается
 UI = Path(__file__).resolve().parent / "labeler"
 HOLDOUT = ("58w57eJ5Qks", "olmTXkkUv58", "5nBGNokOUDA", "4AIX8QtRid4")
 # Классы эталона шире детектора: монстры и прочее (питомцы, клоны,
@@ -97,6 +98,11 @@ class Store:
 
     def save(self, row: dict) -> None:
         with self.lock:
+            # Сначала — в журнал: по нему восстанавливается любое состояние,
+            # даже если labels.jsonl испортят или перезапишут.
+            with HISTORY.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "
+")
             self.rows[row["frame"]] = row
             tmp = LABELS.with_suffix(".tmp")
             with tmp.open("w", encoding="utf-8") as fh:
