@@ -40,11 +40,23 @@ MIN_SIM = nr.ADAPT_SIM         # и сходство не ниже
 MIN_COUNT = nr.ADAPT_COUNT     # образец из медианы не меньше чем пяти вырезов
 
 
-def load_video(vid: str, harvest: Path = HARVEST) -> dict:
+_RENDERED: dict[str, nr.NameReader] = {}
+
+
+def rendered_reader(version: str = "16.19.1") -> nr.NameReader:
+    if version not in _RENDERED:
+        _RENDERED[version] = nr.NameReader.rendered(ddragon.DDragon(version).names())
+    return _RENDERED[version]
+
+
+def load_video(vid: str, harvest: Path = HARVEST, refine: bool = True) -> dict:
+    """Сбор ролика и состав по HUD; слоты с чужой иконкой — поправка по именам."""
     z = np.load(harvest / f"{vid}.npz")
     ids = [str(s) for s in z["ids"]]
     slots = z["slots"].astype(np.float32)
     r = roster.decide([roster.FrameSlots(s) for s in slots], ids)
+    if refine:
+        r = nr.refine_roster(r, z["names"], z["bars"]["team"], rendered_reader())
     return {"vid": vid, "roster": r, "bars": z["bars"], "names": z["names"],
             "title": str(z["title"])}
 

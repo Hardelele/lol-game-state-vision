@@ -33,6 +33,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from lolvision.identity import NAME_BOX
+from lolvision.roster import Roster
 
 # Состояния над плашкой (английский клиент). Видели CHANNELING и STUNNED;
 # остальные — из перечня эффектов контроля игры, могут не встречаться.
@@ -40,6 +41,10 @@ STATUSES = ("CHANNELING", "STUNNED", "ROOTED", "SILENCED", "TAUNTED", "FEARED", 
             "AIRBORNE", "ASLEEP", "SUPPRESSED", "POLYMORPHED", "BLINDED", "GROUNDED",
             "DISARMED", "NEARSIGHTED", "SLOWED", "KNOCKED UP", "DROWSY", "PULLED",
             "STASIS", "RECALLING")
+# Другие надписи на месте имени (видели на отложенных роликах): форма
+# чемпиона под своим именем и превращение Lulu (W) — тем же шрифтом, что имя.
+ALIASES = {"Gnar": ("Mega Gnar",)}
+NAME_STYLE_STATUSES = {"POLYMORPHED": "Harmless Critter"}
 STATUS = "status:"                  # префикс метки состояния
 NONE = "none"                       # пусто или закрыто
 CROP_H = NAME_BOX[3] - NAME_BOX[1]  # 19
@@ -121,6 +126,13 @@ class NameReader:
         temps = [center(render(t, font, px, track)) for t in names.values()]
         temps += [center(render(t, font, STATUS_PX, STATUS_TRACK, STATUS_DX, STATUS_Y))
                   for t in STATUSES]
+        for cid, texts in ALIASES.items():
+            if cid in names:
+                labels += [cid] * len(texts)
+                temps += [center(render(t, font, px, track)) for t in texts]
+        for st, text in NAME_STYLE_STATUSES.items():
+            labels.append(STATUS + st)
+            temps.append(center(render(text, font, px, track)))
         return cls(labels, np.stack(temps), ["rendered"] * len(labels))
 
     @classmethod
@@ -244,3 +256,45 @@ def adapted(reader: NameReader, crops: np.ndarray, cands: list[list[str]],
                             np.concatenate([old, np.stack(temps)]),
                             base.kinds + ["match"] * len(keys))
     return reader
+
+
+# --- поправка состава по именам ----------------------------------------
+
+def refine_roster(r: Roster, crops: np.ndarray, teams: np.ndarray,
+                  rendered: NameReader, min_count: int = 10,
+                  min_gain: float = 0.03) -> Roster:
+    """Слот с плохо узнанным портретом (Roster.uncertain) проверяется по
+    именам над плашками.
+
+    Плашки его команды, прочитанные отрисованными образцами как чемпион
+    слота, сводятся в медиану (на чистой медиане отрисованный образец
+    различает имена заметно лучше, чем на отдельном вырезе), и медиана
+    читается по всему словарю, кроме девяти остальных чемпионов состава.
+    Если лучшим оказалось другое имя с отрывом min_gain — слот исправляется
+    (на a7p5Ql2LbAg: медиана «Kai'Sa» читается как Kayn 0.72 против 0.64 у
+    следующего). Rendered — банк только из отрисованных образцов: в банке с
+    настоящими образцами ошибочная медиана этого же матча узнала бы сама себя."""
+    bad = r.uncertain()
+    if not bad or not len(crops):
+        return r
+    champs = list(r.champions)
+    fixed = dict(r.fixed)
+    sims = rendered.label_sims(crops)
+    for slot in bad:
+        team = slot // 5
+        cands = champs[5 * team:5 * team + 5]
+        ws = [center(whiteness(c)) for c, s, t in zip(crops, sims, teams)
+              if int(t) == team and rendered.pick(s, cands, statuses=False)[0] == champs[slot]
+              and rendered.pick(s, cands, statuses=False)[1] >= ADAPT_SIM]
+        if len(ws) < min_count:
+            continue
+        med = rendered.label_sims(as_crop(np.median(np.stack(ws), 0))[None])[0]
+        others = set(champs) - {champs[slot]}
+        allowed = [lab for lab in rendered.uniq
+                   if lab not in others and not lab.startswith(STATUS)]
+        lab, sim, margin = rendered.pick(med, allowed, statuses=False)
+        own = med[rendered.uniq.index(champs[slot])] if champs[slot] in rendered.uniq else -1
+        if lab != champs[slot] and sim - own >= min_gain:
+            fixed[slot] = champs[slot]
+            champs[slot] = lab
+    return Roster(champs, list(r.margin), r.frames, list(r.score), fixed)

@@ -146,3 +146,20 @@ def test_neighbours_same_team_close_level():
     assert nb[0] == [1]          # 2 — дальше, 3 — другая команда, 4 — не соседний кадр
     assert nb[1] == [0]
     assert nb[4] == []
+
+
+def test_refine_roster_fixes_slot_with_foreign_icon():
+    names = {c: c for c in ("Ahri", "Zed", "Lux", "Jinx", "Thresh", "Darius", "Kaisa", "Hwei",
+                            "Ezreal", "Soraka", "Kayn", "Garen")}
+    rendered = nr.NameReader.rendered(names)
+    champs = ["Ahri", "Zed", "Lux", "Jinx", "Thresh", "Darius", "Kaisa", "Hwei", "Ezreal", "Soraka"]
+    score = [0.8] * 10
+    score[6] = 0.45                                       # портрет Kayn в форме: иконки нет
+    r = roster.Roster(champs, [0.2] * 10, 100, score)
+    assert r.uncertain() == [6]
+    crops = np.stack([as_crop(nr.render("Kayn"))] * 12 + [as_crop(nr.render("Darius"))] * 5)
+    teams = np.array([1] * 17)
+    fixed = nr.refine_roster(r, crops, teams, rendered)
+    assert fixed.champions[6] == "Kayn" and fixed.fixed == {6: "Kaisa"}
+    sure = roster.Roster(champs, [0.2] * 10, 100, [0.8] * 10)
+    assert nr.refine_roster(sure, crops, teams, rendered).champions == champs

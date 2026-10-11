@@ -35,6 +35,7 @@ TEAMS = ("ORDER", "CHAOS")          # синие слева / красные с�
 ROLES = ("top", "jungle", "mid", "bot", "support")
 SHIFT = 3                           # поиск портрета ±3 px
 HUD_MIN = 0.6                       # медиана лучших корреляций: ниже — HUD на кадре нет
+UNSURE = 0.5                        # средняя корреляция слота ниже — иконка HUD не из Data Dragon
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,16 @@ class Roster:
     champions: list[str]
     margin: list[float] = field(default_factory=list)  # отрыв от второго кандидата
     frames: int = 0                                    # кадров с HUD в решении
+    score: list[float] = field(default_factory=list)   # средняя корреляция выбранной иконки
+    fixed: dict[int, str] = field(default_factory=dict)  # слот → прежний чемпион, если исправлен
+
+    def uncertain(self, thr: float = UNSURE) -> list[int]:
+        """Слоты, где портрет плохо совпал с любой иконкой Data Dragon.
+        Так бывает, когда иконка HUD своя: у Kayn в форме (Rhaast / Shadow
+        Assassin) портрет меняется, а в Data Dragon только базовая иконка —
+        на a7p5Ql2LbAg слот Kayn получил Kai'Sa со сходством 0.45 при обычных
+        0.56–0.90."""
+        return [i for i, sc in enumerate(self.score) if sc < thr]
 
     def team(self, team: str) -> list[str]:
         t = TEAMS.index(team)
@@ -134,7 +145,9 @@ class Roster:
 
     def to_json(self) -> dict:
         return {"ORDER": self.team("ORDER"), "CHAOS": self.team("CHAOS"),
-                "margin": [round(m, 3) for m in self.margin], "frames": self.frames}
+                "margin": [round(m, 3) for m in self.margin],
+                "score": [round(x, 3) for x in self.score], "frames": self.frames,
+                "fixed": {str(k): v for k, v in self.fixed.items()}}
 
 
 def decide(frames: list[FrameSlots], ids: list[str]) -> Roster | None:
@@ -147,8 +160,10 @@ def decide(frames: list[FrameSlots], ids: list[str]) -> Roster | None:
     rows, cols = linear_sum_assignment(-mean)
     champs = [""] * len(rows)
     margin = [0.0] * len(rows)
+    score = [0.0] * len(rows)
     for r, c in zip(rows, cols):
         champs[r] = ids[c]
         rest = np.delete(mean[r], c)
         margin[r] = float(mean[r, c] - rest.max()) / 2   # в единицах одного вида
-    return Roster(champs, margin, len(good))
+        score[r] = float(mean[r, c]) / 2
+    return Roster(champs, margin, len(good), score)
