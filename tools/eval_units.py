@@ -10,6 +10,8 @@
     python tools/eval_units.py --labels 58w57eJ5Qks olmTXkkUv58 --review 40
     python tools/eval_units.py --frames "data/not_game/*/full/*.jpg" --sample 24 --name player
     python tools/eval_units.py --bench
+    python tools/eval_units.py --gold --nets runs/units/net/model.pt runs/units/net-nobars2/model.pt \
+        --thrs 0.2 0.3 0.4 0.5     # ручной эталон dataset/units_gold
     # → runs/units/eval/<имя>/{metrics.json, preds.jsonl, review/*.jpg}
 """
 
@@ -18,6 +20,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -33,6 +36,7 @@ from lolvision.unit_net import CLASSES, DEFAULT_NET, UnitNetRunner
 from lolvision.unit_targets import box_center, ignore_map, match
 
 OUT = RUNS / "units" / "eval"
+GOLD = ROOT / "dataset" / "units_gold" / "labels.jsonl"
 
 
 def load_frame(path: str) -> np.ndarray:
@@ -91,6 +95,78 @@ def bench(runner: UnitNetRunner, n: int = 300) -> dict:
             "max_mem_mb": round(torch.cuda.max_memory_allocated() / 2 ** 20, 1)}
 
 
+def gold_rows(path: Path) -> list[dict]:
+    """Готовые кадры ручного эталона: юниты — точки центров тел (x, y при
+    1080p). Классы вне CLASSES (structure, monster, other) идут отдельно:
+    ответ сети на них — не ошибка счёта, а отдельная строка отчёта."""
+    rows = []
+    for s in path.open(encoding="utf-8"):
+        r = json.loads(s)
+        if r.get("status") != "done":
+            continue
+        units = [u for u in r["units"] if u["kind"] in CLASSES]
+        dup = [(a, b) for i, a in enumerate(units) for b in units[i + 1:]
+               if a["kind"] == b["kind"] and np.hypot(a["x"] - b["x"], a["y"] - b["y"]) < 8]
+        for a, b in dup:
+            print(f"! эталон: дубль {a['kind']} ({a['x']:.0f}, {a['y']:.0f}) / "
+                  f"({b['x']:.0f}, {b['y']:.0f}) в {r['frame']}", file=sys.stderr)
+        rows.append({"frame": r["frame"], "units": units, "duplicates": len(dup),
+                     "other": [u for u in r["units"] if u["kind"] not in CLASSES]})
+    return rows
+
+
+def gold_eval(args, keep: np.ndarray, ign: np.ndarray) -> None:
+    """Сети против ручного эталона в двух зонах: `valid` — где live сейчас
+    выдаёт ответы, `scene` — вся сцена вне HUD (с полосами у его краёв)."""
+    rows = gold_rows(args.gold)
+    nets = args.nets or [args.net]
+    thrs = sorted(args.thrs or [args.thr])
+    zones = {"valid": ign == 0, "scene": keep == 1}
+    res = {"gold": str(args.gold), "frames": len(rows),
+           "duplicate_points": sum(r["duplicates"] for r in rows), "nets": {}}
+    for n in nets:
+        run = UnitNetRunner(n, keep=keep, valid=keep, thr=thrs[0])
+        acc = {(z, t): {"cls": {k: [0, 0, 0] for k in CLASSES}, "on_other": 0, "team": [0, 0]}
+               for z in zones for t in thrs}
+        for r in rows:
+            units = run.units(load_frame(r["frame"]))
+            for z, m in zones.items():
+                inside = lambda x, y: m[min(1079, max(0, int(y))), min(1919, max(0, int(x)))]
+                gts = [u for u in r["units"] if inside(u["x"], u["y"])]
+                oth = [u for u in r["other"] if inside(u["x"], u["y"])]
+                for t in thrs:
+                    a = acc[z, t]
+                    preds = [{"kind": u.kind, "team": u.team, "score": u.score, "x": u.x,
+                              "y": u.y} for u in units if u.score >= t and inside(u.x, u.y)]
+                    pairs, fp, fn = match(preds, gts)
+                    for i, j in pairs:
+                        a["cls"][gts[j]["kind"]][0] += 1
+                        if gts[j].get("team") in ("ORDER", "CHAOS") and gts[j]["kind"] == "minion":
+                            a["team"][0] += preds[i]["team"] == gts[j]["team"]
+                            a["team"][1] += 1
+                    for i in fp:
+                        p = preds[i]
+                        if any(np.hypot(p["x"] - o["x"], p["y"] - o["y"]) <= 60 for o in oth):
+                            a["on_other"] += 1         # ответ на строении / монстре
+                        else:
+                            a["cls"][p["kind"]][1] += 1
+                    for j in fn:
+                        a["cls"][gts[j]["kind"]][2] += 1
+        out = {}
+        for (z, t), a in acc.items():
+            d = {k: {"tp": tp, "fp": fp, "fn": fn, "precision": round(tp / max(1, tp + fp), 4),
+                     "recall": round(tp / max(1, tp + fn), 4)} for k, (tp, fp, fn) in a["cls"].items()}
+            d["answers_on_structure_monster_other"] = a["on_other"]
+            d["minion_team_acc"] = round(a["team"][0] / max(1, a["team"][1]), 4)
+            out.setdefault(z, {})[str(t)] = d
+        res["nets"][str(n)] = out
+    o = OUT / (args.name or "gold")
+    o.mkdir(parents=True, exist_ok=True)
+    (o / "metrics.json").write_text(json.dumps(res, ensure_ascii=False, indent=1) + "\n",
+                                    encoding="utf-8")
+    print(json.dumps(res, ensure_ascii=False, indent=1))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--net", type=Path, default=DEFAULT_NET)
@@ -104,10 +180,19 @@ def main() -> None:
     ap.add_argument("--name", default=None)
     ap.add_argument("--bench", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--gold", nargs="?", const=GOLD, type=Path, default=None,
+                    help="ручной эталон (точки центров тел), по умолчанию " + str(GOLD))
+    ap.add_argument("--nets", nargs="+", type=Path, default=None,
+                    help="с --gold: несколько сетей сразу")
+    ap.add_argument("--thrs", type=float, nargs="+", default=None,
+                    help="с --gold: несколько порогов сразу")
     args = ap.parse_args()
 
     keep = label_keep()
     ign = ignore_map(keep)
+    if args.gold:
+        gold_eval(args, keep, ign)
+        return
     valid = None if args.no_mask else 1 - ign
     runner = UnitNetRunner(args.net, keep=None if args.no_mask else keep, valid=valid,
                            thr=args.thr)
