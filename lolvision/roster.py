@@ -34,7 +34,15 @@ from scipy.optimize import linear_sum_assignment
 TEAMS = ("ORDER", "CHAOS")          # синие слева / красные справа, как в health_bars
 ROLES = ("top", "jungle", "mid", "bot", "support")
 SHIFT = 3                           # поиск портрета ±3 px
-HUD_MIN = 0.6                       # медиана лучших корреляций: ниже — HUD на кадре нет
+# HUD наблюдателя на кадре — по медиане лучших корреляций портретов нижней
+# таблицы или боковых панелей, каждого вида отдельно. Прежняя проверка по
+# всем 20 портретам с порогом 0.6 пропустила заставку стримера (0.66), и по
+# ней решился мусорный состав (#786). Замер (1080p):
+#   наблюдатель 58w57eJ5Qks: таблица 0.97, в начале матча 0.46–0.76 (враги
+#     в тумане — «?»), тогда панели 0.84–0.87;
+#   вид игрока DQpQYfrrbHk, ANXVB571YkE: таблица не выше 0.75, панели — 0.62.
+TABLE_MIN = 0.85
+PANELS_MIN = 0.8
 UNSURE = 0.5                        # средняя корреляция слота ниже — иконка HUD не из Data Dragon
 
 
@@ -110,9 +118,19 @@ class FrameSlots:
     scores: np.ndarray
 
     @property
+    def table(self) -> float:
+        """Медиана лучших корреляций портретов нижней таблицы."""
+        return float(np.median(self.scores[:, 0].max(-1)))
+
+    @property
+    def panels(self) -> float:
+        """Медиана лучших корреляций портретов боковых панелей."""
+        return float(np.median(self.scores[:, 1].max(-1)))
+
+    @property
     def hud(self) -> bool:
-        """HUD на кадре есть: портреты хорошо совпадают хоть с какой-то иконкой."""
-        return float(np.median(self.scores.max(-1))) >= HUD_MIN
+        """HUD наблюдателя на кадре есть: таблица или панели совпадают с иконками."""
+        return self.table >= TABLE_MIN or self.panels >= PANELS_MIN
 
 
 def read_frame(rgb: np.ndarray, bank: IconBank) -> FrameSlots:

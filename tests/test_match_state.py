@@ -89,3 +89,12 @@ def test_roster_switch_needs_several_frames():
     m.update(2, {"kind": "game", "champs": other})
     ev = m.update(3, {"kind": "game", "champs": other})
     assert ev[0]["type"] == "roster" and m.order[0] == "Garen"
+
+
+def test_shop_frame_still_reads_minimap():
+    # Магазин — игра под оверлеем (#786): чемпион на миникарте виден.
+    m = MatchState()
+    m.update(0, {"kind": "game", "champs": champs()})
+    m.update(5, {"kind": "shop", "champs": champs(Jinx=dict(vis=True, u=.3, v=.4))})
+    r = view(m, "Jinx")
+    assert r[2] == "visible" and r[3:5] == [.3, .4]

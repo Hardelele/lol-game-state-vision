@@ -85,6 +85,8 @@ WARM_Q = 0.4             # «рамка видна»: качество при р
 # Поиск миникарты (minimap_locate.py, #785): ~40 мс на кадр «игра», только
 # пока не найдена. Не нашлась за столько попыток — остаётся раскладка.
 LOCATE_MAX = 300
+# Типы сцены «игра под оверлеем»: миникарта видна, сцена закрыта окном.
+OVERLAY_KINDS = ("shop", "tab")
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
@@ -260,6 +262,7 @@ class Session:
         self.heat: dict[int, np.ndarray] = {}
         self.roster: list[str] | None = None   # состав матча по HUD (L1…L5, R1…R5)
         self.minimap: dict | None = None       # прямоугольник миникарты ролика (#785)
+        self.view = "spectator"                # раскладка: наблюдатель или игрок (#786)
         self.kind = ""
         self.model_label = ""
         self.trained_on: list[str] = []
@@ -295,7 +298,7 @@ class Session:
                 "note": self.note, "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
-                "minimap": self.minimap, "elapsed": round(el, 1),
+                "minimap": self.minimap, "view": self.view, "elapsed": round(el, 1),
                 "speed": round(seen / el, 1) if el > 1 else None,
                 "map_units": MAP_UNITS}
 
@@ -375,6 +378,9 @@ class Session:
             self.tracker = UnitTracker(Projection(hp_, scene_size, (cx0, cy0, cx1, cy1)),
                                        frame_size=(w, h), valid=1 - ignore_map(keep))
             self.note += " · юниты"
+        # Зона детектора юнитов — под раскладку ролика (#786): пока раскладка
+        # не решена — наблюдатель, у вида игрока своя маска от миникарты.
+        zone = ("spectator", None)
 
         # Чемпионы (live_champions.py): состав по HUD, миникарта, жив ли,
         # имена над чемпионами детектора. Только на кадрах «игра».
@@ -438,7 +444,11 @@ class Session:
                 ms["kind"] = (time.perf_counter() - t3) * 1000
             ms["kind_p"] = kind_p
             # Без модели типа сцены считаем, что всё — игра.
-            game = kind_p is None or KIND_CLASSES[int(np.argmax(kind_p))] == "game"
+            kind = "game" if kind_p is None else KIND_CLASSES[int(np.argmax(kind_p))]
+            game = kind == "game"
+            # Магазин и Tab — игра под оверлеем (#786): сцену закрывает окно,
+            # но миникарта видна, и чемпионы на ней читаются.
+            overlay = kind in OVERLAY_KINDS
             region = fr[ry0:, rx0:]
             if locator.box is None and game and locator.tried < LOCATE_MAX:
                 if locator.offer_region(region):
@@ -462,18 +472,29 @@ class Session:
                     [u.kind, u.team, round(u.x / w, 4), round(u.y / h, 4), round(u.hp, 2),
                      round(u.score, 2)] for u in units]
                 ms["units"] = (time.perf_counter() - t4) * 1000
-            if champs is not None and game:
+            if champs is not None and (game or overlay):
                 t5 = time.perf_counter()
-                champs.offer(fr, n_frame / self.fps)
+                if game:
+                    champs.offer(fr, n_frame / self.fps)
                 ms["champs"] = champs.minimap(fr, np.asarray(mini))
                 self.roster = champs.roster
                 t6 = time.perf_counter()
                 ms["mini"] = (t6 - t5) * 1000
-                if units:
+                if units and game:
                     # Имя — седьмым полем юнита: старые поля на месте.
                     for row_u, name in zip(ms["units_list"], champs.who(fr, units)):
                         row_u.append(name)
                     ms["who"] = (time.perf_counter() - t6) * 1000
+            if unit_model is not None and champs is not None:
+                view = champs.view or "spectator"
+                want = (view, locator.box if view == "player" else None)
+                if want != zone:
+                    zone = want
+                    keep = unit_keep(w, h, view, locator.box)
+                    unit_model.set_zone(keep, 1 - ignore_map(keep))
+                    self.tracker.valid = 1 - ignore_map(keep)
+                    self.view = view
+                    self.note += " · вид игрока" if view == "player" else ""
             ms["full_img"] = _full_small(fr, fr_dev)
             n_frame += 1
 

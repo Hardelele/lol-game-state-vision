@@ -37,15 +37,30 @@ GROW = (65, 65, 10, 115)
 OPEN_FOR_UNITS = ("chat_feed", "kill_feed", "announcements", "announcement_emblem")
 
 
-def unit_keep(w: int = 1920, h: int = 1080) -> np.ndarray:
+def unit_keep(w: int = 1920, h: int = 1080, view: str = "spectator",
+              minimap=None) -> np.ndarray:
     """Где метки считаются полными: сцена вне постоянного HUD (табло, боковые
     панели, таймеры, низ). Табло закрыто в отличие от read_bars: значки
     целей на нём дают ложные полоски миньонов. Тот же `keep` закрашивает
-    HUD на входе детектора (unit_net.UnitNetRunner) — и при обучении, и в live."""
+    HUD на входе детектора (unit_net.UnitNetRunner) — и при обучении, и в live.
+
+    `view="player"` — вид игрока (#786): у него HUD только внизу по центру и
+    по углам, а маска наблюдателя закрывала 68% кадра. Миникарта с портретами
+    союзников над ней — от прямоугольника `minimap` (доли кадра, как
+    labelling.minimap; по умолчанию — стандартный)."""
     import json
 
     from lolvision.mask_frames import keep_grid
-    from lolvision.paths import DEFAULT_LAYOUT
+    from lolvision.paths import DEFAULT_LAYOUT, PLAYER_LAYOUT
+    if view == "player":
+        layout = json.loads(PLAYER_LAYOUT.read_text(encoding="utf-8"))
+        if minimap is None:
+            spec = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
+            minimap = spec["labelling"]["minimap"]
+        x0, y0 = minimap[0], minimap[1]
+        up = layout["allies_above_minimap"]
+        layout["mask"]["minimap_and_allies"] = [max(0.0, x0 - 0.005), max(0.0, y0 - up), 1, 1]
+        return keep_grid((w, h), layout).astype(np.uint8)
     layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
     layout = {**layout, "mask": {k: v for k, v in layout["mask"].items()
                                  if k not in OPEN_FOR_UNITS}}

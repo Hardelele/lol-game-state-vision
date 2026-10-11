@@ -194,11 +194,7 @@ class UnitNetRunner:
         # `valid` (H, W) 0/1 в пикселях кадра: вне его — HUD и полосы у его
         # краёв, где сеть не училась (unit_targets.ignore_map); ответы там
         # отбрасываются. Клетка выхода годна, если годны все её пиксели.
-        self.valid = None
-        if valid is not None:
-            v = torch.from_numpy(valid.astype(np.float32)).to(device)[None, None]
-            v = -F.max_pool2d(-F.avg_pool2d(v, 2), STRIDE)
-            self.valid = F.pad(v, (0, OUT_W - v.shape[-1], 0, OUT_H - v.shape[-2]))
+        self.valid = self._cells(valid) if valid is not None else None
         self.frame = torch.zeros(*size, 3, dtype=torch.uint8, device=device)
         self.graph = None
         if graph and device.startswith("cuda"):
@@ -211,6 +207,20 @@ class UnitNetRunner:
             self.graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(self.graph), torch.no_grad():
                 self.out = self._run()
+
+    def _cells(self, valid: np.ndarray) -> torch.Tensor:
+        v = torch.from_numpy(valid.astype(np.float32)).to(self.device)[None, None]
+        v = -F.max_pool2d(-F.avg_pool2d(v, 2), STRIDE)
+        return F.pad(v, (0, OUT_W - v.shape[-1], 0, OUT_H - v.shape[-2]))
+
+    @torch.no_grad()
+    def set_zone(self, keep: np.ndarray, valid: np.ndarray) -> None:
+        """Сменить маску входа и зону ответов на лету (вид игрока, #786).
+        Копия на месте: тензоры захвачены CUDA graph, новые он бы не увидел."""
+        if self.keep is None or self.valid is None:
+            raise ValueError("зона задаётся на месте только поверх заданной при создании")
+        self.keep.copy_(torch.from_numpy(keep.astype(np.float32)).to(self.device)[None, None])
+        self.valid.copy_(self._cells(valid))
 
     def _run(self) -> torch.Tensor:
         x = prepare(self.frame, self.keep)

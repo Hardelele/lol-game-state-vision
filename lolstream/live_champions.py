@@ -27,6 +27,13 @@
   прочиталось, берётся имя ближайшего чемпиона той же команды с прошлого
   кадра; внутри команды все разные (венгерский алгоритм).
 
+Вид игрока (#786). Портретов наблюдателя у него нет, а над плашкой ник, а
+не имя чемпиона. Раскладка решается по последним чтениям портретов
+(`view`): у наблюдателя таблица совпадает с иконками на 0.97, у игрока —
+на 0.48–0.49. У игрока состав не решается и имена не выдаются: прежде
+заставка стримера случайно прошла проверку HUD, состав решился по ней, и
+Brand был «Ivern» в 100% кадров (ANXVB571YkE).
+
 Облик (appearance.py, DINOv2) сюда не взят: признак стоит ~10 мс на вырез
 и вторую модель в видеопамяти, а без имени по соседним кадрам он даёт
 лишь +2–5 п. п. (docs/champion-identity.md).
@@ -58,6 +65,15 @@ from lolvision.unit_bars import BODY
 NAMES = RUNS / "identity" / "names.npz"
 ROSTER_EVERY = 5.0        # с потока, как часто читать портреты HUD
 ROSTER_FRAMES = 8         # по скольким последним кадрам с HUD решать
+# Первый состав — не меньше чем по стольким кадрам с HUD: один случайный
+# кадр иначе закрепляет состав до конца ролика (#786). Больше двух — дорого:
+# чтение портретов идёт 2–3 с (замер 2026-10-12, а не ~250 мс, как выше), и
+# при потоке ×5 три чтения — это ~50 с ролика без имён.
+ROSTER_MIN = 2
+# Раскладка ролика (#786) — по последним чтениям портретов на игровых кадрах:
+# у наблюдателя таблица портретов есть почти всегда, у вида игрока её нет.
+# Решение — когда чтений не меньше VIEW_MIN, по большинству из VIEW_READS.
+VIEW_READS, VIEW_MIN = 8, 4
 # Полосы боковых панелей в кадре 1080p — всё, что читает hud_panels.
 PANEL_COLS = ((0, 80), (1840, 1920))
 PANEL_ROWS = (140, 680)
@@ -161,6 +177,7 @@ class LiveChampions:
         self.digits = hud_panels.DigitReader()
         self.match: Match | None = None
         self.hud: deque = deque(maxlen=ROSTER_FRAMES)
+        self.reads: deque = deque(maxlen=VIEW_READS)        # был ли HUD наблюдателя
         self.next_roster = 0.0
         self.prev: list[tuple[str, str, float, float]] = []   # имя, команда, x, y (px)
         self.bgr = np.zeros((1080, 1920, 3), np.uint8)       # только полосы панелей
@@ -175,6 +192,13 @@ class LiveChampions:
     def roster(self) -> list[str] | None:
         m = self.match
         return m.roster if m else None
+
+    @property
+    def view(self) -> str | None:
+        """«spectator», «player» или None — чтений пока мало."""
+        if len(self.reads) < VIEW_MIN:
+            return None
+        return "spectator" if sum(self.reads) * 2 >= len(self.reads) else "player"
 
     def close(self) -> None:
         self._closed = True
@@ -208,11 +232,14 @@ class LiveChampions:
     def read_roster(self, frame: np.ndarray) -> bool:
         """Портреты HUD кадра 1080p → состав. True — состав сменился."""
         fs = read_frame(frame, self.bank)
+        self.reads.append(fs.hud)
         if not fs.hud:
             return False
         self.hud.append(fs)
-        r = decide(list(self.hud), self.bank.ids)
         m = self.match
+        if m is None and len(self.hud) < ROSTER_MIN:
+            return False
+        r = decide(list(self.hud), self.bank.ids)
         if m is not None and len(set(r.champions) & set(m.roster)) < 5:
             # Другой матч: старые кадры HUD к нему не относятся.
             self.hud.clear()
@@ -267,7 +294,8 @@ class LiveChampions:
         состава, не прочиталось и не перенеслось)."""
         out: list[str | None] = [None] * len(units)
         roster = self.roster
-        if roster is None or self.names is None:
+        # У вида игрока над плашкой ник, а не имя чемпиона: читать нечего.
+        if roster is None or self.names is None or self.view == "player":
             return out
         s = 1920 / frame.shape[1]                       # всё в пикселях 1080p
         f = as_1080(frame)

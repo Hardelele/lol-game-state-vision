@@ -79,6 +79,23 @@ def test_roster_from_portraits():
     assert r.team("CHAOS") == truth[5:] and r.team_of("C07") == "ORDER"
 
 
+@pytest.mark.parametrize("view", [0, 1])
+def test_hud_from_table_or_panels(view):
+    # В начале матча враги в таблице — «?», а панели видны: хватает одного
+    # вида. Случайный кадр (заставка стримера, #786) — не HUD.
+    icons = synthetic_icons()
+    bank = roster.IconBank(icons)
+    import cv2
+    rgb = np.full((1080, 1920, 3), 30, np.uint8)
+    for slot, vs in enumerate(roster.views()):
+        v = vs[view]
+        rgb[v.y:v.y + v.size, v.x:v.x + v.size] = cv2.resize(
+            icons[f"C{slot:02d}"], (v.size, v.size), interpolation=cv2.INTER_AREA)
+    assert roster.read_frame(rgb, bank).hud
+    noise = np.random.default_rng(0).integers(0, 255, (1080, 1920, 3), dtype=np.uint8)
+    assert not roster.read_frame(noise, bank).hud
+
+
 def test_roster_none_without_hud():
     bank = roster.IconBank(synthetic_icons())
     f = roster.read_frame(np.zeros((1080, 1920, 3), np.uint8), bank)

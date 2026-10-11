@@ -174,14 +174,19 @@ async function loadCells(spec) {
   render();
 }
 
+// Камера оценивается только на кадрах игры: в магазине, Tab, клиенте сцену
+// закрывает окно, и промах там не ошибка модели (#786). Без типа сцены — все.
+const camScored = (f) => f.kind === undefined || f.kind === "game";
+
 function summary() {
-  const e = S.frames.map((f) => f.err).sort((a, b) => a - b);
+  const scored = S.frames.filter(camScored);
+  const e = scored.map((f) => f.err).sort((a, b) => a - b);
   const med = e[Math.floor(e.length / 2)] || 0;
   $("sMed").title = `медианный промах ≈ ${Math.round(med * S.mapUnits)} ед. · ` +
-    `кадров ${S.frames.length}`;
+    `кадров игры ${scored.length} из ${S.frames.length}`;
   $("sMed").innerHTML = `<b>${med.toFixed(3)}</b> <i>медиана</i>`;
-  $("sGood").textContent = S.frames.filter((f) => f.err < GOOD).length;
-  $("sBad").textContent = S.frames.filter((f) => f.err >= BIG).length;
+  $("sGood").textContent = scored.filter((f) => f.err < GOOD).length;
+  $("sBad").textContent = scored.filter((f) => f.err >= BIG).length;
   $("posTotal").textContent = S.frames.length
     ? `/ ${fmtTime(S.frames[S.frames.length - 1].t)}` : "";
 }
@@ -555,7 +560,7 @@ function drawTimeline() {
   S.frames.forEach((f, i) => {
     const on = passes(f);
     x.globalAlpha = on ? 1 : 0.14;
-    x.fillStyle = BAR[errClass(f.err)];
+    x.fillStyle = camScored(f) ? BAR[errClass(f.err)] : "#555";
     const bh = minH + Math.min(span, f.err / 0.3 * span);
     x.fillRect(i * w / n, base - bh, bw, bh);
   });
