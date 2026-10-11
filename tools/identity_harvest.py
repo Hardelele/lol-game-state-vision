@@ -10,8 +10,8 @@
 Пишет data/identity/harvest/<id>.npz. Готовый ролик пропускается.
 
 Пример:
-    python tools/identity_harvest.py 58w57eJ5Qks olmTXkkUv58 --fps 1
-    python tools/identity_harvest.py --all --fps 1      # все скачанные ролики
+    python tools/identity_harvest.py 58w57eJ5Qks olmTXkkUv58 --fps 0.5
+    python tools/identity_harvest.py --all     # все скачанные ролики
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import cv2
 import numpy as np
 
 import _bootstrap  # noqa: F401
-from lolstream.video_stream import frames as video_frames
+from lolstream.video_stream import frames as video_frames, probe
 from lolvision import ddragon, health_bars as hb, identity, roster
 from lolvision.paths import DATA, VIDEOS
 from read_bars import LAYOUT, scene_keep
@@ -83,6 +83,11 @@ def harvest(vid: str, fps: float, bank: roster.IconBank, ids: list[str]) -> dict
             print(f"{vid}: кадр {i}, плашек {len(bars)}, {time.perf_counter() - t0:.0f} с",
                   flush=True)
     n = len(ts)
+    # ffmpeg, убитый снаружи (выключение машины), просто обрывает поток —
+    # неполный ролик не должен выглядеть собранным.
+    expect = int(probe(find_video(vid))[2] * fps)
+    if n < 0.97 * expect:
+        raise RuntimeError(f"{vid}: прочитано {n} кадров из ~{expect}, поток оборвался")
     dt = np.dtype([("frame", "i4"), ("x", "i2"), ("y", "i2"), ("score", "f4"), ("team", "i1"),
                    ("hp", "f4"), ("resource", "f4"), ("level", "i1"), ("level_sim", "f4")])
     HARVEST.mkdir(parents=True, exist_ok=True)
@@ -103,8 +108,9 @@ def harvest(vid: str, fps: float, bank: roster.IconBank, ids: list[str]) -> dict
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("videos", nargs="*")
-    ap.add_argument("--all", action="store_true", help="все ролики в data/videos и data/identity/videos")
-    ap.add_argument("--fps", type=float, default=1.0)
+    ap.add_argument("--all", action="store_true",
+                    help="все ролики в data/videos и data/identity/videos")
+    ap.add_argument("--fps", type=float, default=0.5)
     ap.add_argument("--version", default="16.19.1", help="версия Data Dragon")
     args = ap.parse_args()
     vids = list(args.videos)
@@ -117,7 +123,11 @@ def main() -> None:
         if (HARVEST / f"{vid}.npz").exists():
             print(f"{vid}: уже собран")
             continue
-        print(json.dumps(harvest(vid, args.fps, bank, bank.ids), ensure_ascii=False), flush=True)
+        try:
+            print(json.dumps(harvest(vid, args.fps, bank, bank.ids), ensure_ascii=False),
+                  flush=True)
+        except RuntimeError as e:
+            print(f"ОШИБКА {e}", flush=True)
 
 
 if __name__ == "__main__":

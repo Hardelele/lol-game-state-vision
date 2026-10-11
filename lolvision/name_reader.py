@@ -11,8 +11,8 @@
 корреляция со сдвигом по x ±4 px и по y ±2 px.
 
 Образцы двух сортов:
-* отрисованные шрифтом Windows (Georgia Bold — засечки и толщина близки к
-  шрифту канала) — есть для каждого имени словаря, нужны для разметки
+* отрисованные шрифтом Windows (Constantia 12 px — из семи шрифтов лучше
+  всех совпал с кадрами по разметке составом) — есть для каждого имени словаря, нужны для разметки
   сбора образцов и для чемпионов, которых в данных не было;
 * настоящие вырезы — медиана автоматически размеченных вырезов чемпиона
   (разметка: состав матча по HUD + команда плашки, см. tools/train_names.py).
@@ -45,11 +45,17 @@ CROP_H = NAME_BOX[3] - NAME_BOX[1]  # 19
 CROP_W = NAME_BOX[2] - NAME_BOX[0]  # 147
 DX, DY = 4, 2
 WIN_H, WIN_W = CROP_H - 2 * DY, CROP_W - 2 * DX
-FONT = Path("C:/Windows/Fonts/georgiab.ttf")
+FONT = Path("C:/Windows/Fonts/constan.ttf")
 FONT_PX = 12                        # кегль, при котором ширина имён совпала с кадром
 TRACK = 0.0                         # разрядка, px кадра
 TEXT_CX = CROP_W / 2                # имя центрировано над плашкой
 TEXT_Y = 4                          # верх заглавных в вырезе
+# Состояние — заглавными, с разрядкой, ниже и правее имени (слева значок
+# эффекта); подобрано по вырезам «STUNNED» (сходство 0.85).
+STATUS_PX = 12
+STATUS_DX = 10
+STATUS_Y = 6
+STATUS_TRACK = 0.5
 
 
 def whiteness(crop: np.ndarray) -> np.ndarray:
@@ -64,7 +70,7 @@ def _norm(a: np.ndarray) -> np.ndarray:
 
 
 def render(text: str, font: Path = FONT, px: int = FONT_PX,
-           track: float = TRACK) -> np.ndarray:
+           track: float = TRACK, dx: float = 0.0, top: float = TEXT_Y) -> np.ndarray:
     """Отрисованный образец: белизна (CROP_H, CROP_W), текст там, где он в кадре.
     track — добавка к промежутку между буквами в пикселях кадра (у канала
     разрядка заметная)."""
@@ -75,9 +81,9 @@ def render(text: str, font: Path = FONT, px: int = FONT_PX,
     adv = [d.textlength(ch, font=fb) + track * big for ch in text]
     width = sum(adv) - track * big
     _, y0, _, _ = d.textbbox((0, 0), "H", font=fb)
-    x = TEXT_CX * big - width / 2
+    x = (TEXT_CX + dx) * big - width / 2
     for ch, a in zip(text, adv):
-        d.text((x, TEXT_Y * big - y0), ch, fill=255, font=fb)
+        d.text((x, top * big - y0), ch, fill=255, font=fb)
         x += a
     return np.asarray(img.resize((CROP_W, CROP_H), Image.BILINEAR), np.float32) / 255.0
 
@@ -102,15 +108,19 @@ class NameReader:
         self.kinds = list(kinds or ["real"] * len(labels))   # real / rendered
         t = np.asarray(templates, np.float32).reshape(len(labels), WIN_H, WIN_W)
         self.bank = _norm(t).reshape(len(labels), -1).T          # (признаки, образцы)
+        self.uniq = list(dict.fromkeys(self.labels))              # метки без повторов
+        u = {lab: k for k, lab in enumerate(self.uniq)}
+        self.group = np.array([u[lab] for lab in self.labels])    # образец → метка
 
     @classmethod
     def rendered(cls, names: dict[str, str], font: Path = FONT, px: int = FONT_PX,
                  track: float = TRACK) -> NameReader:
         """Только отрисованные образцы: names — Id → отображаемое имя."""
         labels = list(names) + [STATUS + s for s in STATUSES]
-        texts = list(names.values()) + list(STATUSES)
-        return cls(labels, np.stack([center(render(t, font, px, track)) for t in texts]),
-                   ["rendered"] * len(labels))
+        temps = [center(render(t, font, px, track)) for t in names.values()]
+        temps += [center(render(t, font, STATUS_PX, STATUS_TRACK, STATUS_DX, STATUS_Y))
+                  for t in STATUSES]
+        return cls(labels, np.stack(temps), ["rendered"] * len(labels))
 
     @classmethod
     def load(cls, path: Path) -> NameReader:
@@ -121,28 +131,46 @@ class NameReader:
         t = (self.bank.T.reshape(-1, WIN_H, WIN_W)).astype(np.float16)
         np.savez(path, labels=np.array(self.labels), templates=t, kinds=np.array(self.kinds))
 
+    def label_sims(self, crops: np.ndarray, batch: int = 64) -> np.ndarray:
+        """Сходство вырезов (N, H, W, 3) с каждой меткой: (N, len(uniq)), где
+        uniq = self.uniq — метки без повторов; по образцам метки и сдвигам — максимум."""
+        out = np.empty((len(crops), len(self.uniq)), np.float32)
+        for i in range(0, len(crops), batch):
+            part = crops[i:i + batch]
+            w = np.stack([windows(whiteness(c)) for c in part])          # (n, сдвиги, D)
+            n, k, d = w.shape
+            sims = (w.reshape(n * k, d) @ self.bank).reshape(n, k, -1).max(1)   # (n, образцы)
+            lab = np.full((len(part), len(self.uniq)), -2.0, np.float32)
+            np.maximum.at(lab.T, self.group, sims.T)
+            out[i:i + len(part)] = lab
+        return out
+
     def scores(self, crop: np.ndarray) -> dict[str, float]:
         """Лучшее сходство с каждой меткой (по всем её образцам и сдвигам)."""
-        sims = (windows(whiteness(crop)) @ self.bank).max(0)
-        out: dict[str, float] = {}
-        for lab, s in zip(self.labels, sims):
-            if s > out.get(lab, -2.0):
-                out[lab] = float(s)
-        return out
+        return dict(zip(self.uniq, self.label_sims(crop[None])[0].tolist()))
+
+    def pick(self, sims: np.ndarray, candidates: list[str] | None = None,
+             statuses: bool = True) -> tuple[str, float, float]:
+        """Решение по строке label_sims: (метка, сходство, отрыв от второй).
+        candidates — Id допустимых чемпионов (например, пять из команды
+        плашки); состояния добавляются, если statuses."""
+        uniq = self.uniq
+        if candidates is None:
+            idx = np.arange(len(uniq))
+        else:
+            keep = set(candidates)
+            idx = np.array([k for k, lab in enumerate(uniq)
+                            if lab in keep or (statuses and lab.startswith(STATUS)) or lab == NONE],
+                           int)
+        if len(idx) == 0:
+            return NONE, float("nan"), 0.0
+        sub = sims[idx]
+        order = np.argsort(-sub)
+        s1 = float(sub[order[0]])
+        s2 = float(sub[order[1]]) if len(order) > 1 else -1.0
+        return uniq[idx[order[0]]], s1, s1 - s2
 
     def read(self, crop: np.ndarray, candidates: list[str] | None = None,
              statuses: bool = True) -> tuple[str, float, float]:
-        """(метка, сходство, отрыв от второй). candidates — Id допустимых
-        чемпионов (например, пять из команды плашки); состояния добавляются,
-        если statuses."""
-        sc = self.scores(crop)
-        if candidates is not None:
-            keep = set(candidates)
-            sc = {k: v for k, v in sc.items()
-                  if k in keep or (statuses and k.startswith(STATUS)) or k == NONE}
-        ranked = sorted(sc.items(), key=lambda kv: -kv[1])
-        if not ranked:
-            return NONE, float("nan"), 0.0
-        best, s1 = ranked[0]
-        s2 = ranked[1][1] if len(ranked) > 1 else -1.0
-        return best, s1, s1 - s2
+        """Один вырез: (метка, сходство, отрыв от второй)."""
+        return self.pick(self.label_sims(crop[None])[0], candidates, statuses)

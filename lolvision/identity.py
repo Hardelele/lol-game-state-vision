@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from lolvision.health_bars import W
 
@@ -47,3 +48,53 @@ def name_crop(rgb: np.ndarray, x: int, y: int) -> np.ndarray:
 def body_crop(rgb: np.ndarray, x: int, y: int) -> np.ndarray:
     c = crop_pad(rgb, x, y, BODY_BOX)
     return cv2.resize(c, (BODY_OUT, BODY_OUT), interpolation=cv2.INTER_AREA)
+
+
+# --- объединение: кадр и соседние кадры ---------------------------------
+
+def assign_distinct(scores: np.ndarray) -> np.ndarray:
+    """Плашки одной команды на одном кадре — разные чемпионы.
+
+    scores (плашки, кандидаты) — чем больше, тем вероятнее. Возвращает
+    номер кандидата для каждой плашки (венгерский алгоритм; плашек не
+    больше пяти, кандидатов пять)."""
+    if len(scores) == 0:
+        return np.zeros(0, int)
+    rows, cols = linear_sum_assignment(-scores)
+    out = np.full(len(scores), -1, int)
+    out[rows] = cols
+    left = out < 0                      # плашек больше кандидатов — быть не должно
+    out[left] = scores[left].argmax(1)
+    return out
+
+
+def neighbours(frame: np.ndarray, x: np.ndarray, y: np.ndarray, team: np.ndarray,
+               level: np.ndarray, gap: int = 1, max_px: float = 350.0) -> list[list[int]]:
+    """Для каждой плашки — плашки соседних кадров (±gap) «с той же плашкой»:
+    та же команда, уровень отличается не больше чем на 1, расстояние не
+    больше max_px. Из нескольких подходящих в кадре берётся ближайшая.
+
+    Это замена трекеру при редких кадрах (0.5 кадра/с): камера наблюдателя
+    сама ходит за боем, так что плашка за 2 с смещается на сотни пикселей,
+    и сопоставление по месту ненадёжно — поэтому только как голос, не как
+    жёсткая связь."""
+    by_frame: dict[int, list[int]] = {}
+    for i, f in enumerate(frame):
+        by_frame.setdefault(int(f), []).append(i)
+    out = []
+    for i, f in enumerate(frame):
+        near = []
+        for g in range(-gap, gap + 1):
+            if g == 0:
+                continue
+            best, bd = -1, max_px
+            for j in by_frame.get(int(f) + g, []):
+                if team[j] != team[i] or abs(int(level[j]) - int(level[i])) > 1:
+                    continue
+                d = float(np.hypot(x[j] - x[i], y[j] - y[i]))
+                if d <= bd:
+                    best, bd = j, d
+            if best >= 0:
+                near.append(best)
+        out.append(near)
+    return out

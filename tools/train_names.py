@@ -38,10 +38,11 @@ OUT = RUNS / "identity"
 MIN_MARGIN = 0.03       # разметка в образец: отрыв лучшего кандидата
 MIN_SIM = 0.5           # и сходство не ниже
 MIN_COUNT = 5           # образец из медианы не меньше чем пяти вырезов
+DUP_SIM = 0.85          # две медианы ролика совпали со сдвигом — это одно слово
 
 
-def load_video(vid: str) -> dict:
-    z = np.load(HARVEST / f"{vid}.npz")
+def load_video(vid: str, harvest: Path = HARVEST) -> dict:
+    z = np.load(harvest / f"{vid}.npz")
     ids = [str(s) for s in z["ids"]]
     slots = z["slots"].astype(np.float32)
     r = roster.decide([roster.FrameSlots(s) for s in slots], ids)
@@ -57,25 +58,54 @@ def label_all(reader: nr.NameReader, videos: list[dict]) -> dict[str, list[tuple
     """Чтение всех вырезов среди пяти кандидатов команды: (метка, сходство, отрыв)."""
     out = {}
     for v in videos:
-        out[v["vid"]] = [reader.read(c, candidates(v, int(b["team"])))
-                         for c, b in zip(v["names"], v["bars"])]
+        sims = reader.label_sims(v["names"])
+        out[v["vid"]] = [reader.pick(s, candidates(v, int(b["team"])))
+                         for s, b in zip(sims, v["bars"])]
     return out
 
 
+def _as_crop(win: np.ndarray) -> np.ndarray:
+    """Окно белизны (WIN_H, WIN_W) → вырез RGB полного размера с той же белизной."""
+    img = np.zeros((nr.CROP_H, nr.CROP_W), np.float32)
+    w = (win - win.min()) / (np.ptp(win) + 1e-6)
+    img[nr.DY:nr.DY + nr.WIN_H, nr.DX:nr.DX + nr.WIN_W] = w
+    return np.repeat((110 + 100 * img).clip(0, 255).astype(np.uint8)[..., None], 3, 2)
+
+
 def medians(videos: list[dict], labels: dict[str, list[tuple]]) -> tuple[list[str], list]:
-    """Образцы: медиана белизны по (ролик, чемпион) и по каждому состоянию."""
+    """Образцы: медиана белизны по (ролик, чемпион) и по каждому состоянию.
+
+    Чистка: две медианы одного ролика, совпавшие со сдвигом (сходство выше
+    DUP_SIM), — одно и то же слово; оставляется метка, у которой вырезов
+    больше. Так бывает, когда младшая метка «ворует» вырезы старшей:
+    Camille (ведомая каналом, сотни плашек) и Ezreal в одной команде,
+    отрисованный образец путает эти имена, и медиана «Ezreal» — это слово
+    Camille. Отрисованные образцы сами по себе здесь не судьи: на чистой
+    медиане они дают 0.5–0.6 и путают те же пары."""
     groups: dict[tuple[str, str], list[np.ndarray]] = defaultdict(list)
     for v in videos:
         for c, (lab, s, m) in zip(v["names"], labels[v["vid"]]):
             if s >= MIN_SIM and m >= MIN_MARGIN:
                 key = ("*", lab) if lab.startswith(nr.STATUS) else (v["vid"], lab)
                 groups[key].append(nr.center(nr.whiteness(c)))
-    labs, temps = [], []
-    for (_, lab), ws in sorted(groups.items()):
+    keys, temps, counts = [], [], []
+    for key, ws in sorted(groups.items()):
         if len(ws) >= MIN_COUNT:
-            labs.append(lab)
+            keys.append(key)
             temps.append(np.median(np.stack(ws), 0))
-    return labs, temps
+            counts.append(len(ws))
+    drop = set()
+    for i in range(len(keys)):
+        for j in range(len(keys)):
+            if i == j or keys[i][0] != keys[j][0] or keys[i][0] == "*" or counts[j] <= counts[i]:
+                continue
+            probe = nr.NameReader([keys[j][1]], temps[j][None])
+            if probe.read(_as_crop(temps[i]))[1] > DUP_SIM:
+                drop.add(i)
+                print(f"  отброшен образец {keys[i][0]}/{keys[i][1]}: это слово "
+                      f"{keys[j][1]}", flush=True)
+    keep = [i for i in range(len(keys)) if i not in drop]
+    return [keys[i][1] for i in keep], [temps[i] for i in keep]
 
 
 def build(videos: list[dict], dd, font: Path, px: int, track: float, iters: int) -> nr.NameReader:
@@ -117,17 +147,20 @@ def main() -> None:
     ap.add_argument("--iters", type=int, default=3)
     ap.add_argument("--check", type=int, default=90, help="вырезов на лист проверки")
     ap.add_argument("--version", default="16.19.1")
+    ap.add_argument("--harvest", type=Path, default=HARVEST, help="папка сборов")
+    ap.add_argument("--out", type=Path, default=OUT)
     args = ap.parse_args()
 
     dd = ddragon.DDragon(args.version)
-    vids = sorted(p.stem for p in HARVEST.glob("*.npz") if not p.stem.endswith(".tmp"))
-    train = [load_video(v) for v in vids if v not in args.heldout]
-    held = [load_video(v) for v in vids if v in args.heldout]
+    vids = sorted(p.stem for p in args.harvest.glob("*.npz") if not p.stem.endswith(".tmp"))
+    train = [load_video(v, args.harvest) for v in vids if v not in args.heldout]
+    held = [load_video(v, args.harvest) for v in vids if v in args.heldout]
     print(f"обучение: {len(train)} роликов, отложено: {len(held)}")
-    OUT.mkdir(parents=True, exist_ok=True)
+    out = args.out
+    out.mkdir(parents=True, exist_ok=True)
 
     reader = build(train, dd, Path(args.font), args.px, args.track, args.iters)
-    reader.save(OUT / "names.npz")
+    reader.save(out / "names.npz")
 
     # Лист медиан: глазами видно, что образец каждого чемпиона — его имя.
     real = [(lab, i) for i, (lab, k) in enumerate(zip(reader.labels, reader.kinds)) if k == "real"]
@@ -138,16 +171,17 @@ def main() -> None:
         img = np.zeros((nr.CROP_H, nr.CROP_W), np.float32)
         img[nr.DY:nr.DY + nr.WIN_H, nr.DX:nr.DX + nr.WIN_W] = t
         tiles.append((np.repeat((img * 255).astype(np.uint8)[..., None], 3, 2), lab))
-    sheet(OUT / "names_medians.png", tiles, cols=4, k=2)
+    sheet(out / "names_medians.png", tiles, cols=4, k=2)
 
     report = {"train": [v["vid"] for v in train], "heldout": {},
               "bank": {"real": len(real), "total": len(reader.labels)}}
     rng = np.random.default_rng(0)
     for v in held:
         t0 = time.perf_counter()
-        cons = [reader.read(c, candidates(v, int(b["team"]))) for c, b in zip(v["names"], v["bars"])]
+        sims = reader.label_sims(v["names"])
+        cons = [reader.pick(s, candidates(v, int(b["team"]))) for s, b in zip(sims, v["bars"])]
         dt = (time.perf_counter() - t0) / max(len(cons), 1)
-        free = [reader.read(c) for c in v["names"]]
+        free = [reader.pick(s) for s in sims]
         champs = set(v["roster"].champions)
         n = len(cons)
         sure = [i for i, (lab, s, m) in enumerate(cons) if s >= MIN_SIM and lab in champs]
@@ -160,11 +194,11 @@ def main() -> None:
             "free_equals_constrained": round(agree / max(len(sure), 1), 4),
             "ms_per_crop": round(dt * 1000, 2)}
         pick = rng.permutation(n)[:args.check]
-        sheet(OUT / f"names_check_{v['vid']}.png",
+        sheet(out / f"names_check_{v['vid']}.png",
               [(v["names"][i], f"{i} {cons[i][0]} {cons[i][1]:.2f} | free {free[i][0]}")
                for i in pick])
-        np.save(OUT / f"names_check_{v['vid']}.npy", pick)
-    (OUT / "names_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1),
+        np.save(out / f"names_check_{v['vid']}.npy", pick)
+    (out / "names_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1),
                                            encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))
 
