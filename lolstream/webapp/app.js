@@ -253,7 +253,10 @@ function render() {
   $("champSvg").classList.toggle("hidden", !champs);
   if (champs) drawChamps(f);
   $("fRoster").classList.toggle("hidden", f.champs === undefined);
-  if (f.champs !== undefined) $("vRoster").innerHTML = rosterHtml(f.champs);
+  if (f.champs !== undefined) $("vRoster").innerHTML = rosterHtml(f.champs, f.ctx);
+  const evs = recentEvents(6);
+  $("fEvents").classList.toggle("hidden", !evs.length);
+  if (evs.length) $("vEvents").innerHTML = evs.map(eventHtml).join("");
   $("mini").src = miniSrc(f);
   $("heatimg").src = heatSrc(f);
   $("heatimg").style.display = S.heat ? "" : "none";
@@ -338,16 +341,55 @@ function drawChamps(f) {
       // Подпись у края миникарты сдвигается внутрь, чтобы не обрезалась.
       `<text x="${Math.min(Math.max(x, 24), 232)}" y="${Math.min(y + r + 7, 254)}">${esc(name)}</text></g>`;
   }
+  // Память контекста (match_state.py): кого сейчас не видно — там, где видели
+  // последний раз, тусклее с возрастом; «вывод» — место выведено (фонтан
+  // после возрождения), а не увидено.
+  for (const [name, team, st, u, v, age, src] of f.ctx || []) {
+    if (st !== "remembered" || u == null) continue;
+    const x = u * 256, y = v * 256, r = 8, c = team === "ORDER" ? "uo" : "uc";
+    const op = Math.max(0.25, 1 - age / 90).toFixed(2);
+    const how = src === "inferred" ? "выведено" : src === "screen" ? "основной вид" : "миникарта";
+    s += `<g class="champ ghost ${c}" opacity="${op}"><title>${esc(name)} · не виден ${Math.round(age)} с · ${how}</title>` +
+      `<image href="/img/champ/${encodeURIComponent(name)}.png" x="${x - r}" y="${y - r}"` +
+      ` width="${2 * r}" height="${2 * r}" clip-path="url(#chClip)"/>` +
+      `<circle cx="${x}" cy="${y}" r="${r}"/>` +
+      `<text x="${Math.min(Math.max(x, 24), 232)}" y="${Math.min(y + r + 7, 254)}">${Math.round(age)}с</text></g>`;
+  }
   $("champSvg").innerHTML = s;
+}
+
+// События контекста матча до текущего кадра, последние сверху.
+function recentEvents(n) {
+  const out = [];
+  for (let k = S.pos; k >= 0 && out.length < n; k--) {
+    const ev = S.frames[k] && S.frames[k].ev;
+    if (ev) for (let j = ev.length - 1; j >= 0 && out.length < n; j--) out.push(ev[j]);
+  }
+  return out;
+}
+
+function eventHtml(e) {
+  const tm = `${Math.floor(e.t / 60)}:${String(Math.floor(e.t % 60)).padStart(2, "0")}`;
+  const c = e.team === "ORDER" ? "uo" : e.team === "CHAOS" ? "uc" : "";
+  const what = e.type === "death" ? `☠ ${esc(e.name)}${e.respawn_in != null ? ` <i>${e.respawn_in} с</i>` : ""}`
+    : e.type === "respawn" ? `↺ ${esc(e.name)}${e.src === "inferred" ? " <i>вывод</i>" : ""}`
+    : e.type === "roster" ? "новый состав" : esc(e.type);
+  return `<span class="ev ${c}"><b>${tm}</b> ${what}</span>`;
 }
 
 // Состав: синие, затем красные; мёртвый — серый портрет с таймером,
 // не видимый на миникарте — тусклый, панель HUD не видна — со знаком «?».
-function rosterHtml(champs) {
+function rosterHtml(champs, ctx) {
+  // Контекст (если есть) знает больше кадра: «не виден N с» и мёртв ли,
+  // даже когда панель HUD закрыта.
+  const mem = Object.fromEntries((ctx || []).map((c) => [c[0], c]));
   const team = (t) => champs.filter((c) => c[1] === t).map(([name, , slot, vis, , , alive, timer]) => {
+    const m = mem[name];
+    if (m && alive === null && m[2] === "dead") { alive = false; timer = Math.round(m[8]); }
     const st = alive === false ? "dead" : (vis ? "" : "fog");
+    const seen = m && m[2] === "remembered" ? ` · не виден ${Math.round(m[5])} с` : "";
     const tip = `${name} · ${slot} · ` + (alive === false ? `мёртв${timer != null ? `, ${timer} с` : ""}`
-      : alive === null ? "панель HUD не видна" : (vis ? "на миникарте" : "не виден на миникарте"));
+      : alive === null ? "панель HUD не видна" : (vis ? "на миникарте" : "не виден на миникарте")) + seen;
     return `<span class="rc ${st}" title="${esc(tip)}"><img src="/img/champ/${encodeURIComponent(name)}.png" alt="">` +
       (alive === false && timer != null ? `<b>${timer}</b>` : "") +
       (alive === null ? "<b class=\"q\">?</b>" : "") + "</span>";

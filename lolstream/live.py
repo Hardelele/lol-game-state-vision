@@ -37,7 +37,8 @@ CoordNet (lolvision/coord_model.py). Новый чекпоинт патчево�
 и время по стадиям; у патчевой модели ещё долю согласных голосов и долю
 патчей «сцена». Сверх камеры на кадр — тип сцены, юниты основного вида
 (unit_net.py) и чемпионы: миникарта, жив ли, имена над чемпионами
-(live_champions.py).
+(live_champions.py); поверх них — контекст матча (match_state.py): память о
+чемпионах между кадрами, смерти и возрождения.
 """
 
 from __future__ import annotations
@@ -74,6 +75,7 @@ from lolvision.unit_net import DEFAULT_NET as UNIT_NET, UnitNetRunner
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolstream.live_champions import LiveChampions
+from lolvision.match_state import MatchState
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -261,6 +263,7 @@ class Session:
         # Сжатие картинок и запись кадра в сеанс — в своём потоке: путь кадра
         # его не ждёт. Один исполнитель — кадры ложатся строго по порядку.
         self._n_emit = 0
+        self.match: MatchState | None = None   # контекст матча (#780)
         self._out = ThreadPoolExecutor(1, thread_name_prefix="live-out")
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
@@ -518,6 +521,15 @@ class Session:
                 c = KIND_CLASSES.index("other")
             row["kind"] = KIND_CLASSES[c]
             row["kind_p"] = round(float(kp[int(np.argmax(kp))]), 3)
+        # Контекст матча: память о чемпионах между кадрами, смерти и
+        # возрождения. В строку — снимок на этот кадр и новые события.
+        if self.match is None:
+            self.match = MatchState(view=(bw / MM, bh / MM))
+        ev = self.match.update(row["t"], row)
+        if self.match.order:
+            row["ctx"] = self.match.frame_view()
+        if ev:
+            row["ev"] = ev
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         self._out.submit(self._store, row, scene, full_img, mini, hm)
