@@ -29,6 +29,28 @@ RADIUS = {"champion": 60.0, "minion": 28.0, "ward": 24.0}
 GROW = (65, 65, 10, 115)
 
 
+
+# Части маски раскладки, которые для юнитов открыты: чат и лента убийств —
+# полупрозрачный текст поверх сцены, юниты под ними видны; объявления
+# появляются ненадолго. Закрыть их — потерять треть сцены вместе с
+# полосами «без меток» у их краёв (ignore_map).
+OPEN_FOR_UNITS = ("chat_feed", "kill_feed", "announcements", "announcement_emblem")
+
+
+def unit_keep(w: int = 1920, h: int = 1080) -> np.ndarray:
+    """Где метки считаются полными: сцена вне постоянного HUD (табло, боковые
+    панели, таймеры, низ). Табло закрыто в отличие от read_bars: значки
+    целей на нём дают ложные полоски миньонов. Тот же `keep` закрашивает
+    HUD на входе детектора (unit_net.UnitNetRunner) — и при обучении, и в live."""
+    import json
+
+    from lolvision.mask_frames import keep_grid
+    from lolvision.paths import DEFAULT_LAYOUT
+    layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
+    layout = {**layout, "mask": {k: v for k, v in layout["mask"].items()
+                                 if k not in OPEN_FOR_UNITS}}
+    return keep_grid((w, h), layout).astype(np.uint8)
+
 def ignore_map(keep: np.ndarray, grow: tuple[int, int, int, int] = GROW) -> np.ndarray:
     """1 — без меток (HUD, край кадра и полосы у них), 0 — метки полные."""
     h, w = keep.shape

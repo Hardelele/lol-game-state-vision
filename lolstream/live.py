@@ -66,6 +66,8 @@ from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
 from lolvision.patch_infer import PatchInfer
 from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
+from lolvision.unit_net import DEFAULT_NET as UNIT_NET, UnitNetRunner
+from lolvision.unit_targets import ignore_map, unit_keep
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -73,7 +75,9 @@ WARM_Q = 0.4             # «рамка видна»: качество при р
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
-STAGES = ("decode", "prep", "net", "agg", "kind", "out")
+STAGES = ("decode", "prep", "net", "agg", "kind", "units", "out")
+# Кадр целиком для показа юнитов: ширина хранимой копии (16:9).
+FULL_STORE_W = 640
 # Тип сцены (игра / Tab / магазин / клиент / загрузка / не League). Своя сеть,
 # дистиллированная из DINO (scene_net.py), стоит ~1.6 мс с уменьшением кадра —
 # считаем на каждом кадре. Если её нет, работает сам DINO (scene_kind.py,
@@ -234,6 +238,7 @@ class Session:
         self.rows: list[dict] = []
         self.scene: dict[int, bytes] = {}
         self.mini: dict[int, bytes] = {}
+        self.full: dict[int, bytes] = {}       # кадр целиком 640×360 — под юнитов
         self.heat: dict[int, np.ndarray] = {}
         self.kind = ""
         self.model_label = ""
@@ -319,6 +324,16 @@ class Session:
                 a[y0:y1, x0:x1] = 0
             return cv2.resize(a, (STORE_W, store_h), interpolation=cv2.INTER_AREA)
 
+        # Юниты на основном виде (unit_net.py): чемпионы, миньоны, варды —
+        # где, чьи, доля ХП. Маска HUD — та же, что при обучении; у краёв HUD
+        # ответы отбрасываются (там сеть не училась).
+        unit_model = None
+        if UNIT_NET.is_file() and self.device.startswith("cuda"):
+            keep = unit_keep(w, h)
+            unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep,
+                                       valid=1 - ignore_map(keep), size=(h, w))
+            self.note += " · юниты"
+
         kind_model, kind_every = None, 1
         if KIND_NET.is_file():
             kind_model = SceneNetRunner(KIND_NET, self.device)
@@ -368,6 +383,14 @@ class Session:
                 kind_p = kind_model.probs(fr)
                 ms["kind"] = (time.perf_counter() - t3) * 1000
             ms["kind_p"] = kind_p
+            if unit_model is not None:
+                t4 = time.perf_counter()
+                ms["units_list"] = [
+                    [u.kind, u.team, round(u.x / w, 4), round(u.y / h, 4), round(u.hp, 2),
+                     round(u.score, 2)] for u in unit_model.units(fr)]
+                ms["units"] = (time.perf_counter() - t4) * 1000
+            ms["full_img"] = cv2.resize(fr, (FULL_STORE_W, FULL_STORE_W * h // w),
+                                        interpolation=cv2.INTER_AREA)
             n_frame += 1
 
             if bw is None:
@@ -425,6 +448,10 @@ class Session:
         for k in ("votes", "is_game"):
             if k in out:
                 row[k] = out[k]
+        units = ms.pop("units_list", None)
+        full_img = ms.pop("full_img", None)
+        if units is not None:
+            row["units"] = units
         kp = ms.pop("kind_p", None)
         if kp is not None:
             # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
@@ -435,12 +462,15 @@ class Session:
             row["kind"] = KIND_CLASSES[c]
             row["kind_p"] = round(float(kp[int(np.argmax(kp))]), 3)
         sj = _jpeg(Image.fromarray(scene), 85)
+        fj = _jpeg(Image.fromarray(full_img), 80) if full_img is not None else None
         mj = _jpeg(mini.resize((MINI_STORE, MINI_STORE)), 82)
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         with self._lock:
             self.scene[i] = sj
             self.mini[i] = mj
+            if fj is not None:
+                self.full[i] = fj
             # float16: у патчевой модели сетка 64×64, и полтора часа потока
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)

@@ -341,10 +341,10 @@ def live_stop(h) -> None:
     h._json({"ok": True})
 
 
-@route("GET", r"/img/live/([\w-]+)/(scene|mini)/(\d+)\.jpg")
+@route("GET", r"/img/live/([\w-]+)/(scene|mini|full)/(\d+)\.jpg")
 def live_image(h, vid: str, kind: str, idx: str) -> None:
     ses = live.get(vid)
-    store = (ses.scene if kind == "scene" else ses.mini) if ses else {}
+    store = getattr(ses, kind) if ses else {}
     body = store.get(int(idx))
     if body is None:
         return h.fail(404, "кадра нет в сеансе")

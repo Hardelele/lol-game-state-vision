@@ -35,14 +35,16 @@
   <div class="panes">
     <div class="pane scenebox">
       <div class="phead">
-        <b>Кадр</b><i>вход модели</i>
+        <b>Кадр</b><i id="sceneSub">вход модели</i>
         <span class="grow"></span>
+        <button class="tog hidden" id="screen" title="кадр целиком с юнитами — V">экран</button>
         <button class="tog on" id="grid" title="сетка ячеек — G">сетка</button>
         <button class="tog dim" id="cells" title="размер ячеек">8×5</button>
       </div>
       <div class="holder">
         <img id="scene" alt="вход модели">
         <svg id="sceneGrid" viewBox="0 0 100 100"></svg>
+        <svg id="unitSvg" viewBox="0 0 640 360" class="hidden"></svg>
         <div id="cellTip" class="celltip hidden"></div>
       </div>
     </div>
@@ -78,6 +80,10 @@
       title="доля патчей в следе кадра, которые модель считает сценой игры, и число голосующих патчей">
       <i>сцена</i><span id="vScene"></span></div>
     <div class="fact" title="качество метки"><i>качество</i><span id="vQ"></span></div>
+    <div class="fact hidden" id="fKind" title="что на экране: игра, Tab, магазин, клиент, загрузка, не League">
+      <i>сцена</i><span id="vKind"></span></div>
+    <div class="fact hidden" id="fUnits" title="юниты на основном виде: чемпионы · миньоны · варды (синие / красные)">
+      <i>юниты</i><span id="vUnitsN"></span></div>
     <span class="grow"></span>
     <a id="why" class="out" target="_blank" rel="noopener" title="отчёт о том, почему модель промахнулась на этом кадре">разобрать ↗</a>
     <a id="yt" class="out" target="_blank" rel="noopener" title="открыть момент на YouTube">YouTube ↗</a>

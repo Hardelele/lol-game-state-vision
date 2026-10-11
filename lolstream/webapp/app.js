@@ -19,7 +19,12 @@ const CELLS = ["8x5", "12x7", "16x9", "24x13"];
 const BAR = { ok: "#3fa863", mid: "#c9922f", bad: "#d6483c" };
 const errClass = (e) => (e < GOOD ? "ok" : e < BIG ? "mid" : "bad");
 
-const TL_H = 58;     // высота холста таймлайна
+const TL_H = 62;     // высота холста таймлайна (внизу — полоса типа сцены)
+// Тип сцены (lolvision/scene_kind.py): подпись и цвет на полосе таймлайна.
+const KIND = {
+  game: ["игра", "#3fa863"], tab: ["Tab", "#4f8df7"], shop: ["магазин", "#9b6cf0"],
+  client: ["клиент", "#c9922f"], loading: ["загрузка", "#e0d24a"], other: ["не League", "#6b6f78"],
+};
 const FUNNEL = 16;   // верхняя полоса холста: воронка от ленты к её отрезку
 
 const S = {
@@ -34,7 +39,7 @@ const S = {
   // панель данными уже не того кадра или этапа.
   netSeq: 0, chanSeq: 0,
   // Поток: кадры приходят по мере распаковки ролика, а не лежат готовыми.
-  live: null, follow: true,
+  live: null, follow: true, screen: true,
 };
 
 // Пояснение к этапу: что именно здесь происходит и на что смотреть.
@@ -224,7 +229,25 @@ function fmtTime(t) {
 function render() {
   const f = S.frames[S.pos];
   if (!f) return;
-  $("scene").src = sceneSrc(f);
+  const screen = S.screen && S.live && f.units !== undefined;
+  $("scene").src = screen ? `/img/live/${S.video}/full/${f.i}.jpg` : sceneSrc(f);
+  $("sceneGrid").style.display = screen ? "none" : "";
+  $("unitSvg").classList.toggle("hidden", !screen);
+  $("sceneSub").textContent = screen ? "экран: юниты, команда, ХП" : "вход модели";
+  if (screen) drawUnits(f);
+  $("fKind").classList.toggle("hidden", f.kind === undefined);
+  if (f.kind !== undefined) {
+    const [name, color] = KIND[f.kind] || [f.kind, "#888"];
+    $("vKind").innerHTML = `<span class="kchip" style="background:${color}"></span>${esc(name)}` +
+      (f.kind_p !== undefined ? ` <i>${num(f.kind_p, 2)}</i>` : "");
+  }
+  $("fUnits").classList.toggle("hidden", f.units === undefined);
+  if (f.units !== undefined) {
+    const n = (k, t) => f.units.filter((u) => u[0] === k && (!t || u[1] === t)).length;
+    $("vUnitsN").innerHTML = ["champion", "minion", "ward"].map((k) =>
+      `<span class="uo">${n(k, "ORDER")}</span>/<span class="uc">${n(k, "CHAOS")}</span>`)
+      .join(" · ");
+  }
   $("mini").src = miniSrc(f);
   $("heatimg").src = heatSrc(f);
   $("heatimg").style.display = S.heat ? "" : "none";
@@ -262,6 +285,30 @@ function render() {
   if (document.activeElement !== $("jump")) $("jump").value = fmtTime(f.t);
   $("posNo").textContent = `#${f.i}`;
   drawMap(f);
+}
+
+// Юниты на кадре целиком (координаты — доли кадра, холст 640×360):
+// чемпион — кольцо с полосой ХП, миньон — точка с короткой полосой, вард — ромб.
+function drawUnits(f) {
+  const W = 640, H = 360;
+  let s = "";
+  for (const [k, team, ux, uy, hp, sc] of f.units || []) {
+    const x = ux * W, y = uy * H, c = team === "ORDER" ? "uo" : "uc";
+    const tip = `<title>${k} · ${team} · ХП ${Math.round(hp * 100)}% · ${num(sc, 2)}</title>`;
+    if (k === "champion") {
+      s += `<g class="unit ${c}">${tip}<circle cx="${x}" cy="${y}" r="13"/>` +
+        `<rect class="hpbg" x="${x - 14}" y="${y - 24}" width="28" height="4"/>` +
+        `<rect class="hp" x="${x - 14}" y="${y - 24}" width="${28 * hp}" height="4"/></g>`;
+    } else if (k === "minion") {
+      s += `<g class="unit ${c}">${tip}<circle class="dot" cx="${x}" cy="${y}" r="3.2"/>` +
+        `<rect class="hpbg" x="${x - 7}" y="${y - 9}" width="14" height="2"/>` +
+        `<rect class="hp" x="${x - 7}" y="${y - 9}" width="${14 * hp}" height="2"/></g>`;
+    } else {
+      s += `<g class="unit ${c}">${tip}<path class="ward" d="M${x} ${y - 6}L${x + 5} ${y}` +
+        `L${x} ${y + 6}L${x - 5} ${y}Z"/></g>`;
+    }
+  }
+  $("unitSvg").innerHTML = s;
 }
 
 function poly(pts, ox, oy) {
@@ -413,6 +460,12 @@ function drawTimeline() {
     x.fillRect(i * w / n, base - bh, bw, bh);
   });
   x.globalAlpha = 1;
+  // Полоса типа сцены под столбиками промаха.
+  S.frames.forEach((f, i) => {
+    if (f.kind === undefined) return;
+    x.fillStyle = (KIND[f.kind] || [0, "#888"])[1];
+    x.fillRect(i * w / n, TL_H - 5, bw, 4);
+  });
   const p = S.pos, px = p * w / n;
   x.fillStyle = "#fff";
   x.fillRect(px - 1, FUNNEL, Math.max(2, bw), TL_H - FUNNEL);
@@ -462,7 +515,7 @@ function toggle(key) {
   S[key] = !S[key];
   $(key).classList.toggle("on", S[key]);
   if (key === "grid") applyGrid();
-  else if (key === "heat" || key === "trail") render();
+  else if (key === "heat" || key === "trail" || key === "screen") render();
   else strip();
 }
 
@@ -488,7 +541,7 @@ function wire() {
   $("prev").onclick = (e) => step(e.shiftKey ? -10 : -1);
   $("next").onclick = (e) => step(e.shiftKey ? 10 : 1);
   $("play").onclick = play;
-  ["grid", "heat", "trail", "fErr", "fUns"].forEach((k) => {
+  ["grid", "heat", "trail", "screen", "fErr", "fUns"].forEach((k) => {
     $(k).onclick = () => toggle(k);
   });
   $("cells").onclick = () =>
@@ -530,6 +583,7 @@ function wire() {
     else if (l === "n" || l === "т") jumpWorst(1);
     else if (l === "p" || l === "з") jumpWorst(-1);
     else if (l === "g" || l === "п") toggle("grid");
+    else if ((l === "v" || l === "м") && S.live) toggle("screen");
     else if (l === "h" || l === "р") toggle("heat");
     else if (l === "t" || l === "е") toggle("trail");
     else if (k === "Tab") {
@@ -1062,6 +1116,8 @@ async function startLive(id, fps) {
   // Выпадающий список ролика показывает поток, пока он открыт.
   $("video").innerHTML = `<option value="${esc(id)}">ПОТОК · ${esc(d.title || id)}</option>`;
   $("holdout").className = "dot live";
+  $("screen").classList.remove("hidden");
+  $("screen").classList.toggle("on", S.screen);
   $("holdout").title = "поток: ролик читается с YouTube прямо сейчас";
   setMode("end");
   netAvail();
@@ -1073,6 +1129,7 @@ async function stopLive() {
   if (!S.live) return;
   const id = S.live.id;
   S.live = null;
+  $("screen").classList.add("hidden");
   clearTimeout(S.liveTimer);
   netAvail();
   $("holdout").className = "dot";

@@ -29,8 +29,7 @@ import _bootstrap  # noqa: F401
 from lolvision import health_bars as hb
 from lolvision import unit_bars as ub
 from lolvision.paths import DATA, RUNS
-from lolvision.mask_frames import keep_grid
-from read_bars import LAYOUT
+from lolvision.unit_targets import unit_keep
 
 LABELS = DATA / "units" / "labels"
 OVERLAY = RUNS / "units" / "overlay"
@@ -45,22 +44,11 @@ def _init() -> None:
     _STATE["keep"] = label_keep()
 
 
-# Части маски раскладки, которые для юнитов открыты: чат и лента убийств —
-# полупрозрачный текст поверх сцены, юниты под ними видны; объявления
-# появляются ненадолго. Закрыть их — потерять треть сцены вместе с
-# полосами «без меток» у их краёв (unit_targets.ignore_map).
-OPEN_FOR_UNITS = ("chat_feed", "kill_feed", "announcements", "announcement_emblem")
 
 
 def label_keep(w: int = 1920, h: int = 1080) -> np.ndarray:
-    """Где метки считаются полными: сцена вне постоянного HUD (табло, боковые
-    панели, таймеры, низ). Табло закрыто в отличие от read_bars: значки
-    целей на нём дают ложные полоски миньонов. Тот же `keep` закрашивает
-    HUD на входе детектора."""
-    layout = json.loads(LAYOUT.read_text(encoding="utf-8"))
-    layout = {**layout, "mask": {k: v for k, v in layout["mask"].items()
-                                 if k not in OPEN_FOR_UNITS}}
-    return keep_grid((w, h), layout).astype(np.uint8)
+    """Маска сцены для юнитов — lolvision.unit_targets.unit_keep (нужна и live)."""
+    return unit_keep(w, h)
 
 
 def label_frame(rgb: np.ndarray, tmpl, mask, keep, levels=None) -> list[dict]:
