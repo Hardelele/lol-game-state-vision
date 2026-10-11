@@ -94,3 +94,42 @@ def test_net_output_shape_and_decode():
     units = to_units(rows, 2.0)
     assert len(units) == 1 and units[0].kind == "minion"
     assert (units[0].x, units[0].y) == (30 * 4 * 2, 20 * 4 * 2)
+
+
+def test_bar_erase_removes_bar_and_keeps_surroundings():
+    from lolvision import bar_erase as be
+    rgb = scene_with_bar(600, 400, 1.0)
+    u = {"kind": "minion", "bar": [600, 400, 600 + ub.BAR_W, 403]}
+    x0, y0, x1, y1 = be.bar_rect(u)
+    assert x0 <= 598 and y0 <= 398 and x1 >= 600 + ub.BAR_W + 1 and y1 >= 405
+    out = be.erase(rgb.copy(), [be.bar_rect(u)], rng=np.random.default_rng(0))
+    assert ub.find_unit_bars(out) == []
+    assert np.abs(out[y0:y1, x0:x1].astype(int) - 95).max() < 20
+    assert (out[:y0 - 9] == rgb[:y0 - 9]).all()
+
+
+def test_bar_paste_and_recolor():
+    from lolvision import bar_erase as be
+    rgb = scene_with_bar(600, 400, 1.0, fill_rgb=(200, 50, 50))
+    u = {"kind": "minion", "bar": [600, 400, 600 + ub.BAR_W, 403]}
+    x0, y0, x1, y1 = be.bar_rect(u)
+    crop = rgb[y0:y1, x0:x1].copy()
+    assert be.paste(rgb, crop, 1000, 500) == (1000, 500, 1000 + x1 - x0, 500 + y1 - y0)
+    assert len(ub.find_unit_bars(rgb)) == 2
+    assert be.paste(rgb, crop, 1919, 1079) is not None and be.paste(rgb, crop, 3000, 0) is None
+    be.recolor(rgb, (x0, y0, x1, y1), 60)
+    assert rgb[401, 610, 1] > rgb[401, 610, 0]                 # красная заливка стала зелёной
+    assert (rgb[399, 610] == (30, 30, 30)).all()              # тёмная рамка не тронута
+
+
+def test_free_spot_respects_valid_and_distance():
+    from lolvision import bar_erase as be
+    valid = np.zeros((1080, 1920), bool)
+    valid[400:600, 800:1200] = True
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        s = be.free_spot(rng, (50, 10), valid, [(1000, 500)], 80)
+        if s is None:
+            continue
+        cx, cy = s[0] + 25, s[1] + 5
+        assert valid[cy, cx] and np.hypot(cx - 1000, cy - 500) >= 80
