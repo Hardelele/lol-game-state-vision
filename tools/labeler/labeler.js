@@ -9,7 +9,8 @@ const KIND = {
   minion: { key: "2", name: "миньон", r: 13, shape: "circle" },
   ward: { key: "3", name: "вард", r: 12, shape: "diamond" },
   monster: { key: "4", name: "монстр", r: 20, shape: "square" },
-  other: { key: "5", name: "прочее", r: 13, shape: "triangle" },
+  structure: { key: "5", name: "постройка", r: 34, shape: "square" },
+  other: { key: "6", name: "прочее", r: 13, shape: "triangle" },
 };
 const TEAM = { ORDER: "синие", CHAOS: "красные", NEUTRAL: "нейтр." };
 const S = {
@@ -136,7 +137,7 @@ function flipTeam() {
 
 function shape(u, k) {
   const { r, shape: sh } = KIND[u.kind];
-  const cls = `m ${u.team} ${u.pred ? "pred" : ""} ${k === S.sel ? "sel" : ""}`;
+  const cls = `m ${u.kind} ${u.team} ${u.pred ? "pred" : ""} ${k === S.sel ? "sel" : ""}`;
   const at = `data-k="${k}" class="${cls}"`;
   const { x, y } = u;
   if (sh === "circle") return `<circle ${at} cx="${x}" cy="${y}" r="${r}"/>`;
@@ -191,7 +192,7 @@ function buildLegend() {
   $("legend").innerHTML = Object.entries(KIND).map(([k, v]) => {
     const u = { kind: k, team: k === "monster" ? "NEUTRAL" : "ORDER", x: 30, y: 30, pred: false };
     return `<div><svg viewBox="0 0 60 60" width="34" height="34">${shape(u, -2)}</svg>` +
-      `<kbd>${v.key}</kbd> ${v.name}${k === "other" ? " — питомцы, клоны, ловушки, растения" : ""}</div>`;
+      `<kbd>${v.key}</kbd> ${v.name}${k === "other" ? " — питомцы, клоны, ловушки, растения" : k === "structure" ? " — башня, ингибитор, нексус" : k === "monster" ? " — лесные и эпические, всегда нейтральные" : ""}</div>`;
   }).join("");
 }
 
@@ -282,8 +283,9 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
-  const digit = { Digit1: "champion", Digit2: "minion", Digit3: "ward", Digit4: "monster", Digit5: "other",
-    Numpad1: "champion", Numpad2: "minion", Numpad3: "ward", Numpad4: "monster", Numpad5: "other" }[c];
+  const digit = { Digit1: "champion", Digit2: "minion", Digit3: "ward", Digit4: "monster", Digit5: "structure",
+    Digit6: "other", Numpad1: "champion", Numpad2: "minion", Numpad3: "ward", Numpad4: "monster",
+    Numpad5: "structure", Numpad6: "other" }[c];
   if (digit) setBrush(digit);
   else if (c === "KeyT") flipTeam();
   else if (c === "KeyX" || c === "Delete") remove(S.sel);

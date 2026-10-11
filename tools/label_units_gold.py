@@ -39,9 +39,10 @@ LABELS = GOLD / "labels.jsonl"
 HISTORY = GOLD / "labels.history.jsonl"   # журнал всех сохранений, только дописывается
 UI = Path(__file__).resolve().parent / "labeler"
 HOLDOUT = ("58w57eJ5Qks", "olmTXkkUv58", "5nBGNokOUDA", "4AIX8QtRid4")
-# Классы эталона шире детектора: монстры и прочее (питомцы, клоны,
-# ловушки) размечаются впрок, проверка детектора их пока пропускает.
-KINDS = ("champion", "minion", "ward", "monster", "other")
+# Классы эталона шире детектора: монстры, постройки (башни, ингибиторы,
+# нексус) и прочее (питомцы, клоны, ловушки) размечаются впрок, проверка
+# детектора их пока пропускает.
+KINDS = ("champion", "minion", "ward", "monster", "structure", "other")
 TEAMS = ("ORDER", "CHAOS", "NEUTRAL")
 
 

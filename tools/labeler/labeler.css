@@ -48,6 +48,7 @@ main { align-items: flex-start; justify-content: flex-start; }
 .m.CHAOS { fill: var(--chaos); stroke: var(--chaos); }
 .m.NEUTRAL { fill: var(--neutral); stroke: var(--neutral); }
 .m.pred { stroke-dasharray: 7 5; }
+.m.structure { fill-opacity: .08; }
 .m.sel { stroke: #fff; stroke-width: 4.5; fill-opacity: .3; }
 .m:hover { fill-opacity: .32; }
 .dot { fill: #fff; stroke: #000; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
