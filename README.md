@@ -41,6 +41,15 @@ dataset notes are in Russian; the README is in English.
   (`lolvision/scene_net.py`, three students, 98.2%, 1.8 ms per frame with
   the resize, versus 14 ms for DINO) and writes `kind` on every frame.
   `tools/mine_frames.py` uses it to keep only useful frames from a stream.
+- **Who is this champion.** The match roster (10 champions) comes from the
+  spectator HUD portraits matched against Data Dragon icons
+  (`lolvision/roster.py`, `lolvision/ddragon.py`): right on 21 of 21
+  matches. The name above a health bar is read against a closed dictionary
+  of name templates labelled automatically by roster and team
+  (`lolvision/name_reader.py`): 342 of 360 checked crops read, no errors.
+  When the name is hidden, DINOv2 appearance prototypes of the same match,
+  neighbouring frames and "one champion per bar per team" give 95–96% on
+  held-out matches. Details: [docs/champion-identity.md](docs/champion-identity.md).
 - **Baseline.** `CoordNet` (`lolvision/coord_model.py`) maps the masked and
   cropped main view to a 32×32 heatmap over the map. It is kept as the
   baseline and can still be chosen in the live mode.

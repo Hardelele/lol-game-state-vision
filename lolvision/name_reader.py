@@ -126,14 +126,17 @@ class NameReader:
         temps = [center(render(t, font, px, track)) for t in names.values()]
         temps += [center(render(t, font, STATUS_PX, STATUS_TRACK, STATUS_DX, STATUS_Y))
                   for t in STATUSES]
+        kinds = ["rendered"] * len(labels)
         for cid, texts in ALIASES.items():
             if cid in names:
                 labels += [cid] * len(texts)
                 temps += [center(render(t, font, px, track)) for t in texts]
+                kinds += ["alias"] * len(texts)
         for st, text in NAME_STYLE_STATUSES.items():
             labels.append(STATUS + st)
             temps.append(center(render(text, font, px, track)))
-        return cls(labels, np.stack(temps), ["rendered"] * len(labels))
+            kinds.append("alias")
+        return cls(labels, np.stack(temps), kinds)
 
     @classmethod
     def load(cls, path: Path) -> NameReader:

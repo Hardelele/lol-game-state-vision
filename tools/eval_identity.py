@@ -3,8 +3,8 @@
 Зачем. Задача #760, п. 4. Сводит три источника на отложенных роликах:
 * имя над плашкой (банк образцов, tools/train_names.py) среди пяти
   чемпионов команды — если прочитано уверенно, это ответ;
-* облик (признаки DINOv2, ближайший прототип того же матча — вырезы с
-  прочитанным именем);
+* облик (признаки DINOv2 в своей проекции из train_appearance.py,
+  ближайший прототип того же матча — вырезы с прочитанным именем);
 * голос соседних кадров «с той же плашкой» (lolvision/identity.neighbours)
   и запрет двух одинаковых чемпионов в одной команде на кадре.
 
@@ -32,7 +32,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 import _bootstrap  # noqa: F401
-from lolvision import identity, name_reader as nr
+from lolvision import appearance as ap_, identity, name_reader as nr
 from lolvision.paths import RUNS
 from lolvision.scene_kind import load_dino
 from train_appearance import GAP_SEC, body_features, name_labels
@@ -158,17 +158,22 @@ def main() -> None:
     ap.add_argument("--harvest", type=Path, default=HARVEST)
     ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--check", type=int, default=48, help="плашек без имени на лист проверки")
+    ap.add_argument("--proj", type=Path, default=OUT / "appearance_proj.npy",
+                    help="проекция облика из train_appearance.py (нет файла — сырые признаки)")
     args = ap.parse_args()
 
     reader = nr.NameReader.load(args.names)
+    proj = ap_.Projection(np.load(args.proj)) if args.proj.exists() else None
     vit = load_dino()
-    report: dict = {"heldout": {}}
+    report: dict = {"heldout": {}, "projection": proj is not None}
     rng = np.random.default_rng(0)
     for vid in args.heldout:
         v = load_video(vid, args.harvest)
         z = np.load(args.harvest / f"{vid}.npz")
         v["t"] = z["t"]
         f = body_features(vid, z["bodies"], vit)
+        if proj is not None:
+            f = proj(f)
         labs, sure, nsim = name_labels(v, reader, soft=True)
         r = {"title": v["title"], "roster": v["roster"].to_json()}
         for mode, past in (("offline", False), ("online", True)):

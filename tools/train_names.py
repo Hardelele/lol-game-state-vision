@@ -96,11 +96,14 @@ def build(videos: list[dict], dd, font: Path, px: int, track: float, iters: int)
         labs, temps = medians(videos, labels)
         have = set(labs)
         # Отрисованные — для чемпионов и состояний без настоящего образца.
-        rl = [lab for lab in rendered.labels if lab not in have]
-        rt = [rendered.bank[:, rendered.labels.index(lab)].reshape(nr.WIN_H, nr.WIN_W)
-              for lab in rl]
-        reader = nr.NameReader(labs + rl, np.stack(temps + rt),
-                               ["real"] * len(labs) + ["rendered"] * len(rl))
+        # Другие надписи (Mega Gnar, Harmless Critter) — всегда: настоящий
+        # образец имени «Gnar» на «Mega Gnar» не похож.
+        keep = [i for i, (lab, kind) in enumerate(zip(rendered.labels, rendered.kinds))
+                if lab not in have or kind == "alias"]
+        rl = [rendered.labels[i] for i in keep]
+        rk = [rendered.kinds[i] for i in keep]
+        rt = [rendered.bank[:, i].reshape(nr.WIN_H, nr.WIN_W) for i in keep]
+        reader = nr.NameReader(labs + rl, np.stack(temps + rt), ["real"] * len(labs) + rk)
         print(f"проход {it + 1}: настоящих образцов {len(labs)} "
               f"({len({x for x in labs if not x.startswith(nr.STATUS)})} чемпионов)", flush=True)
     return reader
