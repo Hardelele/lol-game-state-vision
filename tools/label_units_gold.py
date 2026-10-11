@@ -48,10 +48,29 @@ TEAMS = ("ORDER", "CHAOS", "NEUTRAL")
 
 # ---------- очередь ----------
 
-def prepare(per_video: int, thr: float) -> None:
+# Предразметка — объединение двух сетей: прежней (опирается на полоски) и
+# без полосок (#773). Если подставлять ответы одной сети, эталон совпадает с
+# ней до долей пикселя и сравнение на нём идёт в её пользу.
+PRELABEL_NETS = (("net", 0.25), ("net-nobars2", 0.35))
+MERGE_PX = 12.0          # ответы двух сетей ближе — один юнит
+
+
+def merge(groups: list[list[dict]]) -> list[dict]:
+    """Объединить ответы нескольких сетей: близкие точки одного класса —
+    один юнит (берётся более уверенный)."""
+    out: list[dict] = []
+    for u in sorted((u for g in groups for u in g), key=lambda u: -u["score"]):
+        if all(v["kind"] != u["kind"] or (v["x"] - u["x"]) ** 2 + (v["y"] - u["y"]) ** 2 > MERGE_PX ** 2
+               for v in out):
+            out.append(u)
+    return out
+
+
+def prepare(per_video: int) -> None:
     import cv2
     import numpy as np
-    from lolvision.unit_net import DEFAULT_NET, UnitNetRunner
+    from lolvision.paths import RUNS
+    from lolvision.unit_net import UnitNetRunner
     from lolvision.unit_targets import ignore_map, unit_keep
 
     units_labels = ROOT / "data" / "units" / "labels"
@@ -65,17 +84,25 @@ def prepare(per_video: int, thr: float) -> None:
     keep = unit_keep(1920, 1080)
     # Зона ответов — как в live: вне её (HUD и полосы у его краёв) сеть не
     # училась и сыплет ложными; юнитов там человек отметит сам.
-    runner = UnitNetRunner(DEFAULT_NET, keep=keep, valid=1 - ignore_map(keep), thr=thr)
+    runners = [UnitNetRunner(RUNS / "units" / n / "model.pt", keep=keep, valid=1 - ignore_map(keep),
+                             thr=t) for n, t in PRELABEL_NETS if (RUNS / "units" / n / "model.pt").is_file()]
     queue = []
     for k, f in enumerate(frames):
         rgb = cv2.imread(str(ROOT / f))[..., ::-1]
         if rgb.shape[:2] != (1080, 1920):
             rgb = cv2.resize(rgb, (1920, 1080), interpolation=cv2.INTER_LINEAR)
-        pred = [{"kind": u.kind, "team": u.team, "x": round(u.x, 1), "y": round(u.y, 1),
-                 "score": round(u.score, 3)} for u in runner.units(np.ascontiguousarray(rgb))]
+        rgb = np.ascontiguousarray(rgb)
+        pred = merge([[{"kind": u.kind, "team": u.team, "x": round(u.x, 1), "y": round(u.y, 1),
+                        "score": round(u.score, 3)} for u in r.units(rgb)] for r in runners])
         queue.append({"i": k, "frame": f, "video": Path(f).name.split("_t")[0], "pred": pred})
     GOLD.mkdir(parents=True, exist_ok=True)
-    QUEUE.write_text(json.dumps({"net": str(DEFAULT_NET.relative_to(ROOT)), "thr": thr,
+    if QUEUE.exists():
+        # Очередь уже есть: кадры те же (размеченное не теряет кадра), новая
+        # только предразметка.
+        old = {q["frame"] for q in json.loads(QUEUE.read_text(encoding="utf-8"))["frames"]}
+        if old != {q["frame"] for q in queue}:
+            raise SystemExit("кадры очереди изменились бы — удалите queue.json вручную, если так и надо")
+    QUEUE.write_text(json.dumps({"nets": [list(n) for n in PRELABEL_NETS],
                                  "frames": queue}, ensure_ascii=False, indent=0) + "\n",
                      encoding="utf-8")
     print(f"→ {QUEUE}: {len(queue)} кадров, предразметка {sum(len(q['pred']) for q in queue)} юнитов")
@@ -102,8 +129,7 @@ class Store:
             # Сначала — в журнал: по нему восстанавливается любое состояние,
             # даже если labels.jsonl испортят или перезапишут.
             with HISTORY.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row, ensure_ascii=False) + "
-")
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             self.rows[row["frame"]] = row
             tmp = LABELS.with_suffix(".tmp")
             with tmp.open("w", encoding="utf-8") as fh:
@@ -159,7 +185,7 @@ class Handler(BaseHTTPRequestHandler):
             ctype = mimetypes.guess_type(path)[0] or "text/plain"
             return self._send(200, (UI / path[1:]).read_bytes(), f"{ctype}; charset=utf-8")
         if path == "/api/queue":
-            return self._json({"kinds": KINDS, "teams": TEAMS, "net": srv.queue["net"],
+            return self._json({"kinds": KINDS, "teams": TEAMS, "nets": srv.queue.get("nets"),
                                "frames": srv.queue["frames"], "labels": srv.store.rows})
         if path.startswith("/frame/"):
             try:
@@ -201,12 +227,11 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("prepare", help="очередь кадров и предразметка сетью")
     p.add_argument("--per-video", type=int, default=100)
-    p.add_argument("--thr", type=float, default=0.25)
     s = sub.add_parser("serve", help="страница разметки")
     s.add_argument("--port", type=int, default=8794)
     args = ap.parse_args()
     if args.cmd == "prepare":
-        prepare(args.per_video, args.thr)
+        prepare(args.per_video)
     else:
         serve(args.port)
 
