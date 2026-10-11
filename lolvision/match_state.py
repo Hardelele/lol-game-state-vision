@@ -93,10 +93,13 @@ class MatchState:
         new: list[dict] = []
         kind = row.get("kind", "game")
         champs = row.get("champs")
-        if kind == "game" and champs:
+        # Магазин и Tab — игра под оверлеем (#786): миникарта видна, а юниты
+        # сцены — нет (окно закрывает их, это не «ушли из вида»).
+        if kind in ("game", "shop", "tab") and champs:
             self._roster(t, champs, new)
             self._from_champs(t, champs, new)
-            self._from_units(t, row)
+            if kind == "game":
+                self._from_units(t, row)
         self._infer(t, new)
         self.events += new
         return new

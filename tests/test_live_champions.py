@@ -1,6 +1,7 @@
 """Имя над чемпионом в потоке (lolstream/live_champions.py): по центру тела
 от детектора находится и читается среди пяти кандидатов, со сдвигом тоже."""
 
+from collections import deque
 from types import SimpleNamespace
 
 import numpy as np
@@ -22,6 +23,7 @@ def reader() -> lc.LiveChampions:
     obj = object.__new__(lc.LiveChampions)
     obj.names = names
     obj.name_tm = np.ascontiguousarray(names.bank.T.reshape(-1, WIN_H, WIN_W))
+    obj.reads = deque(maxlen=lc.VIEW_READS)
     return obj
 
 
@@ -56,3 +58,24 @@ def test_who_assigns_distinct_names_and_tracks():
     empty = np.full((1080, 1920, 3), 40, np.uint8)
     moved = [SimpleNamespace(kind="champion", team="CHAOS", x=960, y=520)]
     assert r.who(empty, moved) == ["Hecarim"]
+
+
+def test_view_from_portrait_reads():
+    r = reader()
+    r.reads.extend([False] * (lc.VIEW_MIN - 1))
+    assert r.view is None                       # чтений мало — не решаем
+    r.reads.append(False)
+    assert r.view == "player"
+    r.reads.extend([True] * lc.VIEW_READS)
+    assert r.view == "spectator"
+
+
+def test_who_silent_in_player_view():
+    # У вида игрока над плашкой ник: имя чемпиона не выдумывается ни чтением,
+    # ни переносом с прошлого кадра (#786: Brand был «Ivern» в 100% кадров).
+    r = reader()
+    r.prev = []
+    r.match = SimpleNamespace(roster=["Irelia", "Evelynn", "A", "B", "C"] + CANDS)
+    r.reads.extend([False] * lc.VIEW_READS)
+    units = [SimpleNamespace(kind="champion", team="CHAOS", x=900, y=500)]
+    assert r.who(frame_with("Hecarim", 900, 500), units) == [None]

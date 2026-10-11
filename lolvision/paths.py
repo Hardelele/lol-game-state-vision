@@ -26,6 +26,7 @@ DATASET = ROOT / "dataset"
 DATASET_VIDEOS = DATASET / "videos"
 LAYOUTS = DATASET / "layouts"          # раскладки HUD
 DEFAULT_LAYOUT = LAYOUTS / "spectator-volibear-challenger.json"   # раскладка наблюдателя
+PLAYER_LAYOUT = LAYOUTS / "player-default.json"   # вид игрока: маска детектора юнитов (#786)
 PROJECTION = LAYOUTS / "projection.json"   # calibrate_projection.py: сцена → карта
 SOURCES = DATASET / "sources"          # каталоги каналов
 NOT_GAME_LABELS = DATASET / "not_game" # метки «игра / не игра» по интервалам
