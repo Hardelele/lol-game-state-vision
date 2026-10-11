@@ -41,6 +41,16 @@ dataset notes are in Russian; the README is in English.
   (`lolvision/scene_net.py`, three students, 98.2%, 1.8 ms per frame with
   the resize, versus 14 ms for DINO) and writes `kind` on every frame.
   `tools/mine_frames.py` uses it to keep only useful frames from a stream.
+- **Champions on the minimap.** For each of the ten champions: map
+  position, team, visible or not, alive or dead and the respawn timer
+  (`lolvision/minimap_champions.py`, `tools/minimap_champions.py` → JSONL).
+  A small detector and classifier trained only on synthetic minimaps (Data
+  Dragon icons over real minimap backgrounds) find icons; the match roster
+  and slot order come from the HUD portraits; alive/dead comes only from
+  the HUD, never from an icon disappearing. On 119 hand-labelled frames of
+  held-out matches: 97.6% of icons found, 96.0% named right, 104 of 104
+  deaths and 103 of 104 timers read, 23 ms per frame. Details and failure
+  cases (Mega Gnar, dense fights): [docs/minimap-champions.md](docs/minimap-champions.md).
 - **Baseline.** `CoordNet` (`lolvision/coord_model.py`) maps the masked and
   cropped main view to a 32×32 heatmap over the map. It is kept as the
   baseline and can still be chosen in the live mode.
