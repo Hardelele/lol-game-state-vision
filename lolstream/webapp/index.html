@@ -38,6 +38,7 @@
         <b>Кадр</b><i id="sceneSub">вход модели</i>
         <span class="grow"></span>
         <button class="tog hidden" id="screen" title="кадр целиком с юнитами — V">экран</button>
+        <button class="tog hidden" id="names" title="имена над чемпионами на экране — I">имена</button>
         <button class="tog on" id="grid" title="сетка ячеек — G">сетка</button>
         <button class="tog dim" id="cells" title="размер ячеек">8×5</button>
       </div>
@@ -54,11 +55,13 @@
         <span class="grow"></span>
         <button class="tog on" id="heat" title="распределение вероятности — H">тепло</button>
         <button class="tog" id="trail" title="след камеры — T">след</button>
+        <button class="tog hidden" id="champs" title="чемпионы на миникарте и состав — C">чемпионы</button>
       </div>
       <div class="holder">
         <img id="mini" alt="миникарта">
         <img id="heatimg" alt="">
         <svg id="mapSvg" viewBox="0 0 1 1"></svg>
+        <svg id="champSvg" viewBox="0 0 256 256" class="hidden"></svg>
       </div>
     </div>
   </div>
@@ -84,6 +87,9 @@
       <i>сцена</i><span id="vKind"></span></div>
     <div class="fact hidden" id="fUnits" title="юниты на основном виде: чемпионы · миньоны · варды (синие / красные)">
       <i>юниты</i><span id="vUnitsN"></span></div>
+    <div class="fact hidden" id="fRoster"
+      title="состав по портретам HUD: синие · красные; серый — мёртв (таймер возрождения), тусклый — не виден на миникарте">
+      <i>состав</i><span id="vRoster"></span></div>
     <span class="grow"></span>
     <a id="why" class="out" target="_blank" rel="noopener" title="отчёт о том, почему модель промахнулась на этом кадре">разобрать ↗</a>
     <a id="yt" class="out" target="_blank" rel="noopener" title="открыть момент на YouTube">YouTube ↗</a>

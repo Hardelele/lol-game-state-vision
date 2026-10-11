@@ -36,6 +36,7 @@ from lolstream import live
 from lolstream import video_side
 from lolvision.geometry import MAP_UNITS, apply_h, load_projection
 from lolstream.channels import youtube_id
+from lolvision import ddragon
 from lolvision.checkpoints import checkpoint_kind, read_checkpoint
 from lolvision.paths import COORDS_DATA, PROJECTION, RUNS, VIDEOS, run_dir
 
@@ -349,6 +350,22 @@ def live_image(h, vid: str, kind: str, idx: str) -> None:
     if body is None:
         return h.fail(404, "кадра нет в сеансе")
     h._send(body, "image/jpeg", cache=3600)
+
+
+@route("GET", r"/img/champ/(\w+)\.png")
+def champ_icon(h, cid: str) -> None:
+    """Иконка чемпиона Data Dragon из локального кэша (в сеть не ходит)."""
+    if cid not in _champ_ids():
+        return h.fail(404, "нет такого чемпиона")
+    h._file(ddragon.DDragon(ddragon.DEFAULT_VERSION).icon(cid))
+
+
+@lru_cache(maxsize=1)
+def _champ_ids() -> frozenset[str]:
+    try:
+        return frozenset(ddragon.champions())
+    except FileNotFoundError:                     # кэш Data Dragon не скачан
+        return frozenset()
 
 
 @route("GET", r"/img/live/([\w-]+)/heat/(\d+)\.png")
