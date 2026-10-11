@@ -141,7 +141,8 @@ def main() -> None:
     ap.add_argument("--nets", nargs="+", type=Path, required=True)
     ap.add_argument("--sample", type=int, default=0)
     ap.add_argument("--review", type=int, default=0, help="листов на сеть и условие")
-    ap.add_argument("--thr", type=float, default=0.3)
+    ap.add_argument("--thr", type=float, nargs="+", default=[0.3],
+                    help="пороги оценки: сеть отвечает с нижним, выше — отсев по оценке")
     ap.add_argument("--name", default="heldout")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -149,7 +150,9 @@ def main() -> None:
     keep = unit_keep()
     ign = ignore_map(keep)
     valid = 1 - ign
-    runners = {str(n): UnitNetRunner(n, keep=keep, valid=valid, thr=args.thr) for n in args.nets}
+    runners = {str(n): UnitNetRunner(n, keep=keep, valid=valid, thr=min(args.thr))
+               for n in args.nets}
+    keys = [(n, t) for n in runners for t in args.thr]
     rows = [json.loads(s) for n in args.labels for s in (LABELS / f"{n}.jsonl").open(encoding="utf-8")]
     rows = [r for r in rows if "error" not in r]
     rng = np.random.default_rng(args.seed)
@@ -158,9 +161,9 @@ def main() -> None:
     bank = build_bank(rows, np.random.default_rng(args.seed + 1))
     review = set(np.random.default_rng(args.seed + 2).permutation(len(rows))[:args.review].tolist())
     out = OUT / args.name
-    acc = {n: {c: {k: [0, 0, 0] for k in CLASSES} for c in CONDS} for n in runners}
-    extra = {n: {"occ_n": 0, "occ_hit": 0, "occ_hit_orig": 0, "plate_champ": 0, "plates": 0,
-                 "ph": {k: [0, 0, 0] for k in PHANTOMS}} for n in runners}
+    acc = {key: {c: {k: [0, 0, 0] for k in CLASSES} for c in CONDS} for key in keys}
+    extra = {key: {"occ_n": 0, "occ_hit": 0, "occ_hit_orig": 0, "plate_champ": 0, "plates": 0,
+                   "ph": {k: [0, 0, 0] for k in PHANTOMS}} for key in keys}
     for i, r in enumerate(rows):
         rgb = load_frame(r["frame"])
         gts_all = []
@@ -172,48 +175,30 @@ def main() -> None:
         conds = make_conditions(rgb, gts_all, valid.astype(bool), bank,
                                 np.random.default_rng([args.seed, i]))
         for n, run in runners.items():
-            res = {}
+            raw = {}
             for c, d in conds.items():
-                units = run.units(d["rgb"])
-                preds = [{"kind": u.kind, "team": u.team, "score": u.score, "x": u.x, "y": u.y,
-                          "hp": u.hp} for u in units
-                         if ign[min(1079, int(u.y)), min(1919, int(u.x))] == 0]
-                res[c] = preds
-                pairs = score(preds, gts, acc[n][c])
-                if c == "occluded":
-                    gi = {id(gts_all[j]) for j in d["occluded"]}
-                    hit = {id(gts[b]) for _, b in pairs}
-                    e = extra[n]
-                    occ = [g for g in gts if id(g) in gi]
-                    e["occ_n"] += len(occ)
-                    e["occ_hit"] += sum(id(g) in hit for g in occ)
-                    e["occ_hit_orig"] += sum(near(res["orig"], g["x"], g["y"], "minion") for g in occ)
-                    e["plates"] += len(d["plates"])
-                    e["plate_champ"] += sum(near(preds, x, y, "champion") for x, y in d["plates"])
-                if c == "phantom":
-                    for p in d["phantoms"]:
-                        s = extra[n]["ph"][p["kind"]]
-                        s[0] += 1
-                        s[1] += near(preds, p["x"], p["y"], p["kind"])
-                        s[2] += near(preds, p["x"], p["y"], None)
-                if i in review:
-                    marks = gts + [{"kind": p["kind"], "team": "", "box": [p["x"] - 8, p["y"] - 8,
-                                    p["x"] + 8, p["y"] + 8]} for p in d.get("phantoms", [])]
-                    review_image(dim(d["rgb"], valid), marks, preds,
-                                 out / "review" / Path(n).parent.name / f"{i:04d}_{c}.jpg")
+                raw[c] = [{"kind": u.kind, "team": u.team, "score": u.score, "x": u.x, "y": u.y,
+                           "hp": u.hp} for u in run.units(d["rgb"])
+                          if ign[min(1079, int(u.y)), min(1919, int(u.x))] == 0]
+            for t in args.thr:
+                res = {c: [p for p in v if p["score"] >= t] for c, v in raw.items()}
+                for c, d in conds.items():
+                    account(c, d, res, gts, gts_all, acc[n, t][c], extra[n, t],
+                            review=i in review and t == min(args.thr), valid=valid,
+                            out=out / "review" / Path(n).parent.name / f"{i:04d}_{c}.jpg")
         if (i + 1) % 100 == 0:
             print(f"{i + 1}/{len(rows)}", flush=True)
 
     report = {"frames": len(rows), "labels": args.labels, "thr": args.thr, "nets": {}}
-    for n in runners:
+    for n, t in keys:
         rep = {}
         for c in CONDS:
             rep[c] = {}
-            for k, (tp, fp, fn) in acc[n][c].items():
+            for k, (tp, fp, fn) in acc[n, t][c].items():
                 rep[c][k] = {"tp": tp, "fp": fp, "fn": fn,
                              "precision": round(tp / max(1, tp + fp), 4),
                              "recall": round(tp / max(1, tp + fn), 4)}
-        e = extra[n]
+        e = extra[n, t]
         rep["occluded_minions"] = {"n": e["occ_n"],
                                    "recall": round(e["occ_hit"] / max(1, e["occ_n"]), 4),
                                    "recall_same_minions_orig": round(e["occ_hit_orig"] / max(1, e["occ_n"]), 4),
@@ -222,11 +207,37 @@ def main() -> None:
         rep["phantom_bars"] = {k: {"n": v[0], "same_class_found": round(v[1] / max(1, v[0]), 4),
                                    "any_unit_found": round(v[2] / max(1, v[0]), 4)}
                                for k, v in e["ph"].items()}
-        report["nets"][n] = rep
+        report["nets"].setdefault(n, {})[str(t)] = rep
     out.mkdir(parents=True, exist_ok=True)
     (out / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n",
                                       encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))
+
+
+def account(c, d, res, gts, gts_all, st, e, review, valid, out) -> None:
+    """Посчитать условие `c` одного кадра (res — ответы сети во всех условиях
+    этого кадра, уже после порога; st, e — накопители этой сети и порога)."""
+    preds = res[c]
+    pairs = score(preds, gts, st)
+    if c == "occluded":
+        gi = {id(gts_all[j]) for j in d["occluded"]}
+        hit = {id(gts[b]) for _, b in pairs}
+        occ = [g for g in gts if id(g) in gi]
+        e["occ_n"] += len(occ)
+        e["occ_hit"] += sum(id(g) in hit for g in occ)
+        e["occ_hit_orig"] += sum(near(res["orig"], g["x"], g["y"], "minion") for g in occ)
+        e["plates"] += len(d["plates"])
+        e["plate_champ"] += sum(near(preds, x, y, "champion") for x, y in d["plates"])
+    if c == "phantom":
+        for p in d["phantoms"]:
+            s = e["ph"][p["kind"]]
+            s[0] += 1
+            s[1] += near(preds, p["x"], p["y"], p["kind"])
+            s[2] += near(preds, p["x"], p["y"], None)
+    if review:
+        marks = gts + [{"kind": p["kind"], "team": "", "box": [p["x"] - 8, p["y"] - 8,
+                        p["x"] + 8, p["y"] + 8]} for p in d.get("phantoms", [])]
+        review_image(dim(d["rgb"], valid), marks, preds, out)
 
 
 if __name__ == "__main__":

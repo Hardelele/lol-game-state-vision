@@ -133,3 +133,20 @@ def test_free_spot_respects_valid_and_distance():
             continue
         cx, cy = s[0] + 25, s[1] + 5
         assert valid[cy, cx] and np.hypot(cx - 1000, cy - 500) >= 80
+
+
+def test_gold_rows_skips_drafts_and_other_classes(tmp_path):
+    import json
+    import sys
+    sys.path.insert(0, "tools")
+    from eval_units import gold_rows
+    p = tmp_path / "labels.jsonl"
+    rows = [{"frame": "a.jpg", "status": "done", "units": [
+                {"kind": "champion", "team": "CHAOS", "x": 10, "y": 10},
+                {"kind": "champion", "team": "CHAOS", "x": 12, "y": 11},
+                {"kind": "structure", "team": "CHAOS", "x": 50, "y": 50}]},
+            {"frame": "b.jpg", "status": "draft", "units": []}]
+    p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    got = gold_rows(p)
+    assert len(got) == 1 and len(got[0]["units"]) == 2 and got[0]["duplicates"] == 1
+    assert [u["kind"] for u in got[0]["other"]] == ["structure"]

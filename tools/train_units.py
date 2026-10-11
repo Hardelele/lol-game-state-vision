@@ -86,6 +86,7 @@ class BarAug:
     decoy: float = 0.0
     recolor: float = 0.0
     erase_frame: float = 1.0
+    erase_champion: float | None = None     # своя вероятность стирания у чемпионов
     all_erased: bool = False
 
     @property
@@ -107,7 +108,9 @@ def bar_aug(img: np.ndarray, units: list[dict], k: float, valid: np.ndarray, aug
     # трогаем и не переносим
     erase_on = aug.all_erased or rng.random() < aug.erase_frame
     for j, u in enumerate(out):
-        if u.get("bar") and (aug.all_erased or (erase_on and rng.random() < aug.erase)):
+        p = (aug.erase_champion if u["kind"] == "champion" and aug.erase_champion is not None
+             else aug.erase)
+        if u.get("bar") and (aug.all_erased or (erase_on and rng.random() < p)):
             hidden.add(j)
     erase(img, [bar_rect(out[j], k, shape) for j in sorted(hidden)], rng=rng)
     units = [u for u in units if u.get("bar")]
@@ -190,6 +193,10 @@ class UnitFrames(Dataset):
             img = cv2.imread(str(ROOT / r["frame"]))[..., ::-1]
         img = np.ascontiguousarray(img)
         labels = [{**u, "x": box_center(u)[0], "y": box_center(u)[1]} for u in r["units"]]
+        for u in labels:
+            # команду чемпиона видно только по плашке — у самометки она догадка сети
+            if u.get("source") == "self" and u["kind"] == "champion":
+                u["team"] = None
         if self.aug.on:
             # до маски HUD: стирание берёт фон и у края сцены
             rng = (np.random.default_rng(random.getrandbits(32)) if self.train
@@ -348,6 +355,8 @@ def main() -> None:
     ap.add_argument("--recolor-p", type=float, default=0.15)
     ap.add_argument("--erase-frame-p", type=float, default=1.0,
                     help="доля кадров, в которых вообще стираются полоски")
+    ap.add_argument("--erase-champion-p", type=float, default=None,
+                    help="вероятность стирания у чемпионов (по умолчанию — --erase-p)")
     ap.add_argument("--self-labels", action="store_true",
                     help="обучающие метки из data/units/labels_self (self_label_units.py)")
     args = ap.parse_args()
@@ -364,7 +373,7 @@ def main() -> None:
     tr_rows, va_rows = load_rows(args.train, args.self_labels), load_rows(args.val)
     jp, npz = (0.0, 0.0) if args.no_codec_aug else (0.4, 0.25)
     aug = (BarAug(args.erase_p, args.occlude_p, args.phantom_p, args.decoy_p, args.recolor_p,
-                  args.erase_frame_p) if args.bar_aug else BarAug())
+                  args.erase_frame_p, args.erase_champion_p) if args.bar_aug else BarAug())
     tr = UnitFrames(tr_rows, keep, ign, True, tuple(args.scale), jp, npz, aug)
     va = UnitFrames(va_rows, keep, ign, False)
     tl = DataLoader(tr, args.batch, shuffle=True, num_workers=args.workers, drop_last=True,
