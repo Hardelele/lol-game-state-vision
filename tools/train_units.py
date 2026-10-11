@@ -9,11 +9,18 @@
 яркость/контраст; перекодирование JPEG с низким качеством и шум —
 полоски миньонов тонкие, сжатие видео их съедает (docs/pitfalls.md).
 
+`--bar-aug` (#773): стирание, перекрытие, перенос и перекраска полосок
+(BarAug) — без них сеть находит полоску, а не тело (замер
+tools/eval_units_bars.py). Тогда же проверка идёт и на кадрах со стёртыми
+полосками, лучшая эпоха — по среднему F1 обоих вариантов.
+
 Пример:
     python tools/train_units.py --train ibUVbSX7ARU zJvTSjEnKNE ... \
         --val 58w57eJ5Qks olmTXkkUv58 --epochs 30 --name net
     # → runs/units/<имя>/model.pt, report.json, train.log; last.pt — для
     #   продолжения: повторный запуск с тем же --name продолжает обучение
+    python tools/train_units.py ... --bar-aug --init runs/units/net/model.pt --lr 1e-3 \
+        --epochs 10 --name net-nobars
 """
 
 from __future__ import annotations
@@ -23,6 +30,7 @@ import json
 import math
 import random
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import cv2
@@ -33,6 +41,7 @@ from torch.utils.data import DataLoader, Dataset
 
 import _bootstrap  # noqa: F401
 from build_unit_labels import LABELS, label_keep
+from lolvision.bar_erase import PAD, bar_rect, erase, free_spot, paste, recolor
 from lolvision.unit_net import CLASSES, IN_H, IN_W, OUT_H, OUT_W, STRIDE, UnitNet, decode
 from lolvision.unit_targets import box_center, build_targets, ignore_map, match
 from lolvision.paths import ROOT, RUNS, TRAIN_LOG
@@ -54,11 +63,100 @@ def load_rows(names: list[str]) -> list[dict]:
     return [r for r in rows if "error" not in r]
 
 
+@dataclass
+class BarAug:
+    """Аугментации полосок (#773): сеть должна находить тело, а не полоску.
+
+    erase — у юнита стёрта полоска (и имя у чемпиона), метка тела остаётся,
+    ХП неизвестна; occlude — полоска миньона закрыта чужой плашкой чемпиона
+    из того же кадра (крип за плашкой); phantom — копия полоски без тела в
+    пустом месте, метки нет; decoy — стёртое пятно без юнита, чтобы след
+    стирания не стал признаком; recolor — другой оттенок заливки (свои цвета
+    полосок у игроков). Вероятности — на юнит (erase, occlude, recolor) или
+    на кадр (phantom, decoy). `all_erased` — проверочный вариант: стёрты все."""
+    erase: float = 0.0
+    occlude: float = 0.0
+    phantom: float = 0.0
+    decoy: float = 0.0
+    recolor: float = 0.0
+    all_erased: bool = False
+
+    @property
+    def on(self) -> bool:
+        return self.all_erased or any((self.erase, self.occlude, self.phantom, self.decoy,
+                                       self.recolor))
+
+
+def bar_aug(img: np.ndarray, units: list[dict], k: float, valid: np.ndarray, aug: BarAug,
+            rng: np.random.Generator) -> list[dict]:
+    """Применить BarAug к кадру `img` (масштаб k к 1080p, на месте); вернуть
+    метки с поправками: у юнита без видимой полоски нет ХП, у чемпиона без
+    плашки — и команды (её видно только по плашке)."""
+    src = img.copy()
+    out = [dict(u) for u in units]
+    shape = img.shape
+    hidden = set()
+    for j, u in enumerate(out):
+        if aug.all_erased or rng.random() < aug.erase:
+            hidden.add(j)
+    erase(img, [bar_rect(out[j], k, shape) for j in sorted(hidden)], rng=rng)
+    champs = [u for u in units if u["kind"] == "champion"]
+    for j, u in enumerate(out):
+        if j in hidden:
+            continue
+        if u["kind"] == "minion" and champs and rng.random() < aug.occlude:
+            c = champs[int(rng.integers(len(champs)))]
+            x0, y0, x1, y1 = bar_rect(c, k, shape)
+            crop = src[y0:y1, x0:x1]
+            if crop.size:
+                bx0, by0, bx1, _ = u["bar"]
+                px = int(((bx0 + bx1) / 2 + rng.integers(-25, 26)) * k - crop.shape[1] / 2)
+                py = int((by0 - PAD["champion"][1] - rng.integers(3, 12)) * k)
+                paste(img, crop, px, py)
+                hidden.add(j)
+        elif rng.random() < aug.recolor:
+            x0, y0, x1, y1 = u["bar"]
+            recolor(img, (int(x0 * k), int(y0 * k), int(x1 * k) + 1, int(y1 * k) + 1),
+                    int(rng.integers(20, 160)))
+            if u["kind"] == "champion":
+                u["team"] = None
+    for j in hidden:
+        out[j]["hp"] = None
+        if out[j]["kind"] == "champion":
+            out[j]["team"] = None
+    avoid = [(u["x"] * k, u["y"] * k) for u in units] + \
+            [((u["bar"][0] + u["bar"][2]) / 2 * k, u["bar"][1] * k) for u in units]
+    if units and rng.random() < aug.phantom:
+        for _ in range(int(rng.integers(1, 3))):
+            u = units[int(rng.integers(len(units)))]
+            x0, y0, x1, y1 = bar_rect(u, k, shape)
+            crop = src[y0:y1, x0:x1]
+            if not crop.size:
+                continue
+            spot = free_spot(rng, (crop.shape[1], crop.shape[0] + int(120 * k)), valid, avoid,
+                             130 * k)
+            if spot is not None:
+                paste(img, crop, *spot)
+                avoid.append((spot[0] + crop.shape[1] / 2, spot[1] + 60 * k))
+    if rng.random() < aug.decoy:
+        rects = []
+        for _ in range(int(rng.integers(1, 4))):
+            w, h = (int(146 * k), int(47 * k)) if rng.random() < 0.4 else (int(60 * k), int(10 * k))
+            spot = free_spot(rng, (w, h + int(120 * k)), valid, avoid, 130 * k)
+            if spot is not None:
+                rects.append((spot[0], spot[1], spot[0] + w, spot[1] + h))
+        erase(img, rects, rng=rng)
+    return out
+
+
 class UnitFrames(Dataset):
     def __init__(self, rows: list[dict], keep: np.ndarray, ign: np.ndarray, train: bool,
-                 scale=(0.6, 1.5), jpeg_p: float = 0.5, noise_p: float = 0.3):
+                 scale=(0.6, 1.5), jpeg_p: float = 0.5, noise_p: float = 0.3,
+                 aug: BarAug | None = None):
         self.rows, self.keep, self.ign, self.train = rows, keep, ign, train
         self.scale, self.jpeg_p, self.noise_p = scale, jpeg_p, noise_p
+        self.aug = aug or BarAug()
+        self.valid = ign == 0
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -72,14 +170,22 @@ class UnitFrames(Dataset):
             s = 1.0
         f = 0.5 * s
         nw, nh = round(1920 * f), round(1080 * f)
-        if self.train and f <= 0.5:
+        half = self.train and f <= 0.5
+        if half:
             # распаковка JPEG сразу в половинном размере — вчетверо дешевле;
             # на проверке — полный кадр, как в UnitNetRunner
             img = cv2.imread(str(ROOT / r["frame"]), cv2.IMREAD_REDUCED_COLOR_2)[..., ::-1]
-            img = img * self.keep[::2, ::2, None]
         else:
             img = cv2.imread(str(ROOT / r["frame"]))[..., ::-1]
-            img = img * self.keep[..., None]
+        img = np.ascontiguousarray(img)
+        labels = [{**u, "x": box_center(u)[0], "y": box_center(u)[1]} for u in r["units"]]
+        if self.aug.on:
+            # до маски HUD: стирание берёт фон и у края сцены
+            rng = (np.random.default_rng(random.getrandbits(32)) if self.train
+                   else np.random.default_rng(i))
+            labels = bar_aug(img, labels, img.shape[1] / 1920,
+                             self.valid[::2, ::2] if half else self.valid, self.aug, rng)
+        img = img * (self.keep[::2, ::2, None] if half else self.keep[..., None])
         im = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA
                         if nw < img.shape[1] else cv2.INTER_LINEAR)
         ig = cv2.resize(self.ign, (nw, nh), interpolation=cv2.INTER_NEAREST)
@@ -99,11 +205,8 @@ class UnitFrames(Dataset):
         g[dy0:dy0 + ch, dx0:dx0 + cw] = ig[sy0:sy0 + ch, sx0:sx0 + cw]
         if self.train:
             x = self.photometric(x)
-        units = []
-        for u in r["units"]:
-            cx, cy = box_center(u)
-            units.append({"kind": u["kind"], "team": u["team"], "hp": u.get("hp"),
-                          "x": cx * f - ox, "y": cy * f - oy})
+        units = [{"kind": u["kind"], "team": u["team"], "hp": u.get("hp"),
+                  "x": u["x"] * f - ox, "y": u["y"] * f - oy} for u in labels]
         t = build_targets(units, (OUT_H, OUT_W), STRIDE, s)
         # область без меток — на сетке выхода: клетка без меток, если хоть
         # один пиксель в ней без меток
@@ -215,6 +318,13 @@ def main() -> None:
     ap.add_argument("--no-codec-aug", action="store_true", help="без JPEG и шума (абляция)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--mem-gb", type=float, default=4.0, help="предел видеопамяти процесса")
+    ap.add_argument("--init", type=Path, default=None, help="начальные веса (дообучение)")
+    ap.add_argument("--bar-aug", action="store_true", help="аугментации полосок BarAug (#773)")
+    ap.add_argument("--erase-p", type=float, default=0.5)
+    ap.add_argument("--occlude-p", type=float, default=0.15)
+    ap.add_argument("--phantom-p", type=float, default=0.3)
+    ap.add_argument("--decoy-p", type=float, default=0.3)
+    ap.add_argument("--recolor-p", type=float, default=0.15)
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -228,13 +338,21 @@ def main() -> None:
     ign = ignore_map(keep)
     tr_rows, va_rows = load_rows(args.train), load_rows(args.val)
     jp, npz = (0.0, 0.0) if args.no_codec_aug else (0.4, 0.25)
-    tr = UnitFrames(tr_rows, keep, ign, True, tuple(args.scale), jp, npz)
+    aug = (BarAug(args.erase_p, args.occlude_p, args.phantom_p, args.decoy_p, args.recolor_p)
+           if args.bar_aug else BarAug())
+    tr = UnitFrames(tr_rows, keep, ign, True, tuple(args.scale), jp, npz, aug)
     va = UnitFrames(va_rows, keep, ign, False)
     tl = DataLoader(tr, args.batch, shuffle=True, num_workers=args.workers, drop_last=True,
                     persistent_workers=True, pin_memory=True)
     vl = DataLoader(va, args.batch, shuffle=False, num_workers=args.workers)
+    # те же проверочные кадры со стёртыми полосками всех размеченных юнитов
+    vl_erased = (DataLoader(UnitFrames(va_rows, keep, ign, False, aug=BarAug(all_erased=True)),
+                            args.batch, shuffle=False, num_workers=args.workers)
+                 if args.bar_aug else None)
 
     net = UnitNet(tuple(args.widths), tuple(args.depths), args.head).to(dev)
+    if args.init:
+        net.load_state_dict(torch.load(args.init, map_location=dev, weights_only=False)["state"])
     # без channels_last: depthwise-свёртки в fp16 с ним впятеро медленнее
     # (замер: 324 против 63 мс на шаг батча 8, RTX 5060 Ti)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -282,6 +400,11 @@ def main() -> None:
                f"off {acc[2]:.3f} hp {acc[3]:.3f} | " +
                " ".join(f"{c} P{res[c]['precision']:.3f} R{res[c]['recall']:.3f}" for c in CLASSES)
                + f" team {res['team_acc']:.3f}")
+        if vl_erased is not None:
+            res["erased"] = er = evaluate(net, vl_erased, dev, ign)
+            f1 = (f1 + (er["champion"]["f1"] + er["minion"]["f1"]) / 2) / 2
+            msg += " | без полосок " + " ".join(
+                f"{c} P{er[c]['precision']:.3f} R{er[c]['recall']:.3f}" for c in CLASSES[:2])
         print(msg, flush=True)
         print(msg, file=log, flush=True)
         if f1 > best:
@@ -292,7 +415,8 @@ def main() -> None:
         torch.save({"state": net.state_dict(), "opt": opt.state_dict(),
                     "sched": sched.state_dict(), "scaler": scaler.state_dict(),
                     "best": best, "best_res": best_res, "epoch": ep + 1}, last)
-    report = {"args": vars(args), "train_frames": len(tr), "val_frames": len(va),
+    report = {"args": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+              "bar_aug": asdict(aug), "train_frames": len(tr), "val_frames": len(va),
               "params_m": round(nparam / 1e6, 3), "best_val_vs_pseudo": best_res,
               "minutes": round((time.time() - t0) / 60, 1)}
     (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n",
