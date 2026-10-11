@@ -37,8 +37,11 @@ import _bootstrap  # noqa: F401 — корень репозитория в sys.p
 from lolvision.paths import COORDS_DATA, VIDEOS
 from lolvision.mask_frames import crop_box, mask_boxes
 from lolvision.minimap_camera import MM, white_mask, find_box_clipped, estimate_box
+from lolvision.minimap_locate import Locator, box_px, search_region
 from lolvision.dataset_io import MINI_STORE, STORE_W
 from lolstream.video_stream import probe_url, probe, have_nvdec, frames
+
+LOCATE_MAX = 300   # кадров на поиск миникарты (~40 мс каждый, только до находки)
 
 
 
@@ -55,6 +58,9 @@ def main() -> None:
     ap.add_argument("--jpeg", type=int, default=88)
     ap.add_argument("--decode", choices=("auto", "gpu", "cpu"), default="auto",
                     help="чем распаковывать видео; это узкое место сборки")
+    ap.add_argument("--minimap", choices=("auto", "layout"), default="auto",
+                    help="прямоугольник миникарты: найти в кадрах (масштаб "
+                         "миникарты у стримеров свой, #785) или взять из раскладки")
     args = ap.parse_args()
 
     layout = json.loads(args.layout.read_text(encoding="utf-8"))
@@ -80,8 +86,13 @@ def main() -> None:
     cx0, cy0, cx1, cy1 = crop_box((w, h), layout, "dense")
     store_h = round(STORE_W * (cy1 - cy0) / (cx1 - cx0))
     boxes = mask_boxes((w, h), layout)
-    mm0, mn0, mm1, mn1 = layout["labelling"]["minimap"]
-    mmbox = (int(mm0 * w), int(mn0 * h), int(mm1 * w), int(mn1 * h))
+    mmbox = box_px(layout["labelling"]["minimap"], (w, h))
+    # Масштаб миникарты у стримеров свой (1.0–1.5 от стандартной), и по
+    # раскладке истина у них съезжает к левому верхнему углу (#785). Пока
+    # миникарта не найдена, кадр сохраняется без неё, а угол кадра ждёт в
+    # памяти (~0.9 МБ при 1080p); не нашлась за LOCATE_MAX кадров — раскладка.
+    locator = Locator((w, h)) if args.minimap == "auto" else None
+    rx0, ry0 = search_region((w, h))[:2]
     print(f"  сцена {cx1 - cx0}x{cy1 - cy0} → хранение {STORE_W}x{store_h}")
     use_gpu = args.decode == "gpu" or (args.decode == "auto" and have_nvdec())
     print(f"  распаковка: {'видеокарта (NVDEC)' if use_gpu else 'процессор'}")
@@ -96,19 +107,32 @@ def main() -> None:
     # оценка уезжает. Маски копим целиком (на 1500 кадров это ~90 МБ).
     masks: list[np.ndarray] = []
 
-    def handle(i: int, fr: np.ndarray) -> np.ndarray:
-        """Обработка одного кадра: маска миникарты и два файла на диск."""
+    def cut(i: int, region: np.ndarray, box) -> np.ndarray:
+        """Миникарта из угла кадра: файл на диск и маска рамки."""
+        x0, y0, x1, y1 = box
+        mini = Image.fromarray(region[y0 - ry0:y1 - ry0, x0 - rx0:x1 - rx0]).resize(
+            (MM, MM), Image.LANCZOS)
+        mini.resize((MINI_STORE, MINI_STORE)).save(mdir / f"{i:06d}.jpg", quality=82)
+        return white_mask(np.asarray(mini, dtype=np.float32)).astype(np.uint8)
+
+    def handle(i: int, fr: np.ndarray, box) -> np.ndarray:
+        """Обработка одного кадра: сцена на диск; миникарта — если известен
+        её прямоугольник, иначе вернуть угол кадра, чтобы нарезать позже."""
         img = Image.fromarray(fr)
-        mini = img.crop(mmbox).resize((MM, MM), Image.LANCZOS)
         scene = img.copy()
         for bx in boxes:
             scene.paste((0, 0, 0), bx)
         scene.crop((cx0, cy0, cx1, cy1)).resize(
             (STORE_W, store_h), Image.LANCZOS).save(
             sdir / f"{i:06d}.jpg", quality=args.jpeg)
-        mini.resize((MINI_STORE, MINI_STORE)).save(
-            mdir / f"{i:06d}.jpg", quality=82)
-        return white_mask(np.asarray(mini, dtype=np.float32)).astype(np.uint8)
+        region = fr[ry0:, rx0:]
+        return cut(i, region, box) if box is not None else region.copy()
+
+    def settle(box) -> None:
+        """Нарезать миникарту кадров, ждавших прямоугольника."""
+        for i, m in enumerate(masks):
+            if m.ndim == 3:
+                masks[i] = cut(i, m, box)
 
     # Уменьшение и сжатие идут в потоках: после перехода на распаковку
     # видеокартой именно они стали узким местом (замер: 11.5 мс на одно
@@ -118,11 +142,21 @@ def main() -> None:
     # распаковщик забьёт память быстрее, чем потоки разберут.
     pend: deque = deque()
     done = 0
+    box = mmbox if locator is None else None
     with ThreadPoolExecutor(max(2, (os.cpu_count() or 8) // 4)) as pool:
         for i, fr in enumerate(frames(source, w, h, args.fps, from_url,
                                       args.decode)):
+            if box is None:
+                if locator.offer(fr):
+                    box = box_px(locator.box, (w, h))
+                    print(f"  миникарта ×{locator.fit.scale:g}: {list(locator.box)} "
+                          f"(кадр {i}, совпадение {locator.fit.score:.2f})", flush=True)
+                elif locator.tried >= LOCATE_MAX:
+                    box = mmbox
+                    print(f"  миникарта не найдена за {LOCATE_MAX} кадров — по раскладке",
+                          flush=True)
             # Копия обязательна: буфер трубы переиспользуется следующим кадром.
-            pend.append(pool.submit(handle, i, fr.copy()))
+            pend.append(pool.submit(handle, i, fr.copy(), box))
             while len(pend) > 12:
                 masks.append(pend.popleft().result())
                 done += 1
@@ -130,6 +164,10 @@ def main() -> None:
                     print(f"  {done} кадров", flush=True)
         while pend:
             masks.append(pend.popleft().result())
+    if box is None:
+        box = mmbox
+        print("  миникарта не найдена — по раскладке")
+    settle(box)
 
     step = max(1, len(masks) // 24)
     bw, bh = estimate_box([m.astype(np.float32) for m in masks[::step]])

@@ -75,12 +75,16 @@ from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
 from lolvision.unit_net import DEFAULT_NET, UnitNetRunner
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
+from lolvision.minimap_locate import Locator, box_px
 from lolstream.live_champions import LiveChampions
 from lolvision.match_state import MatchState
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
+# Поиск миникарты (minimap_locate.py, #785): ~40 мс на кадр «игра», только
+# пока не найдена. Не нашлась за столько попыток — остаётся раскладка.
+LOCATE_MAX = 300
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
@@ -255,6 +259,7 @@ class Session:
         self.full: dict[int, bytes] = {}       # кадр целиком 640×360 — под юнитов
         self.heat: dict[int, np.ndarray] = {}
         self.roster: list[str] | None = None   # состав матча по HUD (L1…L5, R1…R5)
+        self.minimap: dict | None = None       # прямоугольник миникарты ролика (#785)
         self.kind = ""
         self.model_label = ""
         self.trained_on: list[str] = []
@@ -290,7 +295,7 @@ class Session:
                 "note": self.note, "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
-                "elapsed": round(el, 1),
+                "minimap": self.minimap, "elapsed": round(el, 1),
                 "speed": round(seen / el, 1) if el > 1 else None,
                 "map_units": MAP_UNITS}
 
@@ -322,8 +327,14 @@ class Session:
         cx0, cy0, cx1, cy1 = crop_box((w, h), layout, "dense")
         store_h = round(STORE_W * (cy1 - cy0) / (cx1 - cx0))
         boxes = mask_boxes((w, h), layout)
-        m0, n0, m1, n1 = layout["labelling"]["minimap"]
-        mmbox = (int(m0 * w), int(n0 * h), int(m1 * w), int(n1 * h))
+        # Миникарта: пока не найдена в кадре, режется по раскладке. Масштаб
+        # миникарты у стримеров свой (от 1.0 до 1.5 от стандартной), и по
+        # раскладке истина у них съезжает к левому верхнему углу (#785).
+        mmbox = box_px(layout["labelling"]["minimap"], (w, h))
+        self.minimap = {"box": list(layout["labelling"]["minimap"]), "scale": None,
+                        "found": False}
+        locator = Locator((w, h))
+        rx0, ry0 = locator.region[:2]
 
         ck = run_checkpoint(self.run)
         if not ck.is_file():
@@ -410,13 +421,6 @@ class Session:
             t1 = time.perf_counter()
             if fr is None or self._stop.is_set() or len(self.rows) >= MAX_FRAMES:
                 break
-            # Миникарта — только источник метки. LANCZOS оставлен как в
-            # build_coords: с INTER_AREA рамка в 15% кадров уезжала на пиксель
-            # (~58 ед.) от меток датасета. Обрезается до PIL, а не после:
-            # перевод в PIL всего кадра 1080p стоил сам по себе.
-            mini = Image.fromarray(np.ascontiguousarray(
-                fr[mmbox[1]:mmbox[3], mmbox[0]:mmbox[2]])).resize((MM, MM), Image.LANCZOS)
-            mask = white_mask(np.asarray(mini, dtype=np.float32))
             t2 = time.perf_counter()
             if fr_dev is not None:
                 fr_pin.numpy()[:] = fr
@@ -435,6 +439,21 @@ class Session:
             ms["kind_p"] = kind_p
             # Без модели типа сцены считаем, что всё — игра.
             game = kind_p is None or KIND_CLASSES[int(np.argmax(kind_p))] == "game"
+            region = fr[ry0:, rx0:]
+            if locator.box is None and game and locator.tried < LOCATE_MAX:
+                if locator.offer_region(region):
+                    mmbox = box_px(locator.box, (w, h))
+                    self.minimap = {"box": list(locator.box), "scale": locator.fit.scale,
+                                    "found": True}
+                    self.note += f" · миникарта ×{locator.fit.scale:g}"
+                    if bw is not None:
+                        # Найдена после прогрева: размер рамки оценён в чужой
+                        # сетке. Вьюпорт постоянен в единицах карты, поэтому
+                        # в сетке своей миникарты он меньше в масштаб раз.
+                        bw = round(bw / locator.fit.scale)
+                        bh = round(bh / locator.fit.scale)
+            mini = _mini(region, mmbox, rx0, ry0)
+            mask = white_mask(np.asarray(mini, dtype=np.float32))
             units = None
             if unit_model is not None:
                 t4 = time.perf_counter()
@@ -459,14 +478,18 @@ class Session:
             n_frame += 1
 
             if bw is None:
-                warm.append((mask, scene, prep, mini, ms))
+                # Угол кадра — чтобы перерезать миникарту, если её найдут
+                # позже в прогреве (буфер кадра переиспользуется).
+                warm.append((mask, scene, prep, mini, ms, region.copy()))
                 # Считаются только кадры, где рамка уже видна: по заставке
                 # размер выходил меньше настоящего (58w57eJ5Qks: 56x32 вместо
                 # 68x38), и все метки ролика смещались на ~380 ед.
                 if find_box(mask, *BOX0)[2] >= WARM_Q:
                     n_good += 1
-                if n_good < WARMUP and len(warm) < WARMUP_MAX:
+                # Ждём и миникарту: без неё размер рамки оценится в чужой сетке.
+                if (n_good < WARMUP or locator.box is None) and len(warm) < WARMUP_MAX:
                     continue
+                warm = _recut(warm, mmbox, rx0, ry0)
                 good = [m[0] for m in warm if find_box(m[0], *BOX0)[2] >= WARM_Q]
                 bw, bh = estimate_box(good or [m[0] for m in warm])
                 self.note += f" · рамка {bw}x{bh}"
@@ -478,6 +501,7 @@ class Session:
         stream.close()                    # ffmpeg и yt-dlp не должны висеть
         if bw is None and warm and not self._stop.is_set():
             # Ролик кончился раньше, чем набралась оценка рамки.
+            warm = _recut(warm, mmbox, rx0, ry0)
             bw, bh = estimate_box([m[0] for m in warm])
             for m, s, p, mi, t in warm:
                 self._emit(m, s, p, mi, bw, bh, model, t)
@@ -575,6 +599,29 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+def _mini(region: np.ndarray, mmbox, rx0: int, ry0: int) -> Image.Image:
+    """Миникарта 256×256 из угла кадра — те же пиксели, что из кадра целиком.
+
+    LANCZOS оставлен как в build_coords: с INTER_AREA рамка в 15% кадров
+    уезжала на пиксель (~58 ед.) от меток датасета. Обрезается до PIL, а не
+    после: перевод в PIL всего кадра 1080p стоил сам по себе."""
+    x0, y0, x1, y1 = mmbox
+    return Image.fromarray(np.ascontiguousarray(
+        region[y0 - ry0:y1 - ry0, x0 - rx0:x1 - rx0])).resize((MM, MM), Image.LANCZOS)
+
+
+def _recut(warm: list[tuple], mmbox, rx0: int, ry0: int) -> list[tuple]:
+    """Кадры прогрева с миникартой по окончательному прямоугольнику.
+
+    Ответы иконок чемпионов на кадрах до находки остаются по раскладке:
+    это первые секунды игры, и перерезать их — значит держать кадры целиком."""
+    out = []
+    for _, s, p, _, t, region in warm:
+        mini = _mini(region, mmbox, rx0, ry0)
+        out.append((white_mask(np.asarray(mini, dtype=np.float32)), s, p, mini, t))
+    return out
 
 
 def _full_small(fr: np.ndarray, fr_dev: torch.Tensor | None) -> np.ndarray:
