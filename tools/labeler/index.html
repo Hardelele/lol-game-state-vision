@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Эталон юнитов</title>
+<link rel="stylesheet" href="/labeler.css">
+</head>
+<body>
+<header>
+  <div class="prog"><b id="pos">—</b><span id="posOf"></span><span class="sep">·</span><span id="vid"></span></div>
+  <div class="brushes" id="brushes"></div>
+  <div class="counts" id="counts"></div>
+  <span class="grow"></span>
+  <span class="saved" id="saved"></span>
+  <button id="bPrev" title="предыдущий кадр (←)">←</button>
+  <button id="bNext" title="следующий без отметки «готово» (→)">→</button>
+  <button id="bSkip" title="кадр плохой / не уверен — пропустить (S)">Пропустить <kbd>S</kbd></button>
+  <button id="bDone" class="primary" title="кадр размечен верно — дальше (Enter / пробел)">Готово <kbd>⏎</kbd></button>
+  <button id="bHelp" class="ghost" title="правила и клавиши (?)">?</button>
+</header>
+
+<main id="stage">
+  <div id="view">
+    <img id="img" alt="" draggable="false">
+    <svg id="marks" viewBox="0 0 1920 1080"></svg>
+  </div>
+  <div id="status" class="badge"></div>
+</main>
+
+<footer>
+  <div id="strip" title="все кадры: зелёный — готов, жёлтый — пропущен, серый — черновик; клик — перейти"></div>
+  <div class="hint">
+    <span><b>ЛКМ</b> добавить синего</span><span><b>ПКМ</b> добавить красного</span>
+    <span><b>ЛКМ по метке</b> выбрать / тащить</span><span><b>ПКМ по метке</b> удалить</span>
+    <span><b>1–5</b> класс</span><span><b>T</b> команда</span><span><b>Z</b> отмена</span>
+    <span><b>H</b> держать — скрыть метки</span><span><b>колесо</b> зум</span><span><b>средняя / Shift+тянуть</b> сдвиг</span>
+    <span><b>0</b> сброс зума</span>
+  </div>
+</footer>
+
+<div id="help" class="overlay hidden">
+  <div class="card">
+    <h2>Как размечать</h2>
+    <p>На кадре уже стоят ответы сети (пунктир). Задача — сделать так, чтобы
+      <b>каждый видимый юнит</b> был отмечен ровно одной точкой, и ничего лишнего.</p>
+    <ul>
+      <li>Точка — в <b>центр тела</b>, не в полоску ХП над ним.</li>
+      <li>Отмечай и частично видимых: за краем экрана, за чужой плашкой, в эффектах — если узнаёшь юнита.</li>
+      <li><b>Не отмечай</b>: трупы, невидимых (в стелсе их не видно), иконки на миникарте и в HUD, то, что целиком под HUD.</li>
+      <li>Команда — по цвету полоски / миньона: синие — ORDER, красные — CHAOS. Монстры — нейтральные.</li>
+      <li>Сомневаешься во всём кадре (затемнение, повтор, не игра) — <b>S</b>, пропустить.</li>
+    </ul>
+    <h3>Классы</h3>
+    <div class="legend" id="legend"></div>
+    <h3>Клавиши</h3>
+    <table>
+      <tr><td><kbd>ЛКМ</kbd> / <kbd>ПКМ</kbd></td><td>добавить синего / красного (класс — текущая кисть)</td></tr>
+      <tr><td><kbd>ЛКМ</kbd> по метке</td><td>выбрать, тащить — подвинуть</td></tr>
+      <tr><td><kbd>ПКМ</kbd> по метке, <kbd>X</kbd>, <kbd>Del</kbd></td><td>удалить</td></tr>
+      <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>кисть; у выбранной метки — сменить класс</td></tr>
+      <tr><td><kbd>T</kbd></td><td>сменить команду выбранной метки</td></tr>
+      <tr><td><kbd>Z</kbd>, <kbd>Ctrl+Z</kbd></td><td>отменить</td></tr>
+      <tr><td><kbd>Enter</kbd>, <kbd>пробел</kbd></td><td>кадр готов → следующий</td></tr>
+      <tr><td><kbd>S</kbd></td><td>пропустить кадр</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>листать (черновик сохраняется)</td></tr>
+      <tr><td><kbd>H</kbd> (держать)</td><td>скрыть метки, посмотреть на кадр</td></tr>
+      <tr><td>колесо, <kbd>0</kbd></td><td>зум к курсору, сброс</td></tr>
+    </table>
+    <p class="mut">Всё сохраняется в dataset/units_gold/labels.jsonl после каждого кадра.</p>
+    <button id="bHelpClose" class="primary">Понятно</button>
+  </div>
+</div>
+<div id="toast"></div>
+<script src="/labeler.js"></script>
+</body>
+</html>
