@@ -406,3 +406,7 @@ kbd {
 .rc b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; color: #ff6b5e; text-shadow: 0 0 3px #000, 0 0 2px #000; }
 .rc b.q { color: #ddd; }
+#champSvg .ghost circle { stroke-dasharray: 2.5 2; }
+#vEvents { display: inline-flex; gap: 10px; flex-wrap: wrap; }
+.ev { white-space: nowrap; } .ev b { color: var(--dim); font-weight: 500; }
+.ev.uo { color: #7fb6ff; } .ev.uc { color: #ff8a80; } .ev i { color: var(--dim); font-style: normal; }
