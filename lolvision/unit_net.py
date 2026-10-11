@@ -229,6 +229,9 @@ class UnitNetRunner:
         return self.out
 
     @torch.no_grad()
-    def units(self, rgb: np.ndarray) -> list[Unit]:
-        rows = self.raw(torch.from_numpy(rgb).to(self.device))[0].cpu().numpy()
+    def units(self, rgb: np.ndarray | torch.Tensor) -> list[Unit]:
+        """Кадр (H, W, 3) uint8 — массив или тензор, уже лежащий в видеопамяти."""
+        if not isinstance(rgb, torch.Tensor):
+            rgb = torch.from_numpy(rgb).to(self.device)
+        rows = self.raw(rgb)[0].cpu().numpy()
         return to_units(rows, rgb.shape[1] / IN_W)
