@@ -120,12 +120,15 @@ class Unit:
 
 
 def decode(heat: torch.Tensor, team: torch.Tensor, off: torch.Tensor, hp: torch.Tensor,
-           thr: float = 0.3, topk: int = 100) -> torch.Tensor:
+           thr: float = 0.3, topk: int = 100, valid: torch.Tensor | None = None) -> torch.Tensor:
     """Локальные максимумы → тензор (N, 7): класс, оценка, P(CHAOS), x, y, батч, ХП
     в координатах входа сети. Без синхронизаций с CPU — годится в CUDA graph
-    (фиксированный topk; строки с оценкой ниже порога отбрасываются потом)."""
+    (фиксированный topk; строки с оценкой ниже порога отбрасываются потом).
+    `valid` — (1, 1, h, w) 0/1 на сетке выхода: где ответам можно верить."""
     b, k, h, w = heat.shape
     p = torch.sigmoid(heat.float())
+    if valid is not None:
+        p = p * valid
     peak = (F.max_pool2d(p, 3, 1, 1) == p).float() * p
     sc, idx = peak.reshape(b, -1).topk(topk)
     cls = idx // (h * w)
@@ -180,14 +183,22 @@ class UnitNetRunner:
     на батч 1 (fp16). Кадр 1080p в видеопамяти → тензор decode."""
 
     def __init__(self, path: Path = DEFAULT_NET, device: str = "cuda",
-                 keep: np.ndarray | None = None, thr: float = 0.3, fp16: bool = True,
+                 keep: np.ndarray | None = None, valid: np.ndarray | None = None,
+                 thr: float = 0.3, fp16: bool = True,
                  graph: bool = True, size: tuple[int, int] = (1080, 1920)):
         self.net = load_net(path, device)
         self.device, self.thr = device, thr
         self.dtype = torch.float16 if fp16 and device.startswith("cuda") else torch.float32
-        self.net = self.net.to(memory_format=torch.channels_last)
         self.keep = (torch.from_numpy(keep.astype(np.float32)).to(device)[None, None]
                      if keep is not None else None)
+        # `valid` (H, W) 0/1 в пикселях кадра: вне его — HUD и полосы у его
+        # краёв, где сеть не училась (unit_targets.ignore_map); ответы там
+        # отбрасываются. Клетка выхода годна, если годны все её пиксели.
+        self.valid = None
+        if valid is not None:
+            v = torch.from_numpy(valid.astype(np.float32)).to(device)[None, None]
+            v = -F.max_pool2d(-F.avg_pool2d(v, 2), STRIDE)
+            self.valid = F.pad(v, (0, OUT_W - v.shape[-1], 0, OUT_H - v.shape[-2]))
         self.frame = torch.zeros(*size, 3, dtype=torch.uint8, device=device)
         self.graph = None
         if graph and device.startswith("cuda"):
@@ -202,10 +213,10 @@ class UnitNetRunner:
                 self.out = self._run()
 
     def _run(self) -> torch.Tensor:
-        x = prepare(self.frame, self.keep).to(memory_format=torch.channels_last)
+        x = prepare(self.frame, self.keep)
         with torch.autocast("cuda", dtype=self.dtype, enabled=self.dtype == torch.float16):
             h, t, o, hp = self.net(x)
-        return decode(h, t, o, hp, self.thr)
+        return decode(h, t, o, hp, self.thr, valid=self.valid)
 
     @torch.no_grad()
     def raw(self, frame: torch.Tensor) -> torch.Tensor:

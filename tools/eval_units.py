@@ -61,6 +61,13 @@ def review_image(rgb: np.ndarray, gts: list[dict], preds: list[dict], out: Path,
     im.crop(crop).save(out, quality=88)
 
 
+def dim(rgb: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Затемнить то, что не проверяется (HUD и полосы у его краёв)."""
+    out = rgb.copy()
+    out[valid == 0] = out[valid == 0] // 3
+    return out
+
+
 def bench(runner: UnitNetRunner, n: int = 300) -> dict:
     """мс на кадр: только граф (кадр уже в видеопамяти) и с загрузкой кадра."""
     rgb = np.random.randint(0, 255, (1080, 1920, 3), np.uint8)
@@ -89,6 +96,7 @@ def main() -> None:
     ap.add_argument("--net", type=Path, default=DEFAULT_NET)
     ap.add_argument("--labels", nargs="*", default=[], help="наборы data/units/labels/<имя>.jsonl")
     ap.add_argument("--frames", default=None, help="glob кадров без меток (качественно)")
+    ap.add_argument("--list", type=Path, default=None, help="файл со списком кадров без меток")
     ap.add_argument("--sample", type=int, default=0)
     ap.add_argument("--review", type=int, default=0, help="сколько листов для проверки глазами")
     ap.add_argument("--no-mask", action="store_true", help="без маски HUD (другой HUD)")
@@ -99,7 +107,10 @@ def main() -> None:
     args = ap.parse_args()
 
     keep = label_keep()
-    runner = UnitNetRunner(args.net, keep=None if args.no_mask else keep, thr=args.thr)
+    ign = ignore_map(keep)
+    valid = None if args.no_mask else 1 - ign
+    runner = UnitNetRunner(args.net, keep=None if args.no_mask else keep, valid=valid,
+                           thr=args.thr)
     if args.bench:
         res = bench(runner)
         res["fp32_graph"] = bench(UnitNetRunner(args.net, keep=keep, fp16=False))
@@ -115,14 +126,14 @@ def main() -> None:
         rows = [json.loads(s) for n in args.labels
                 for s in (LABELS / f"{n}.jsonl").open(encoding="utf-8")]
     else:
-        rows = [{"frame": Path(p).relative_to(ROOT).as_posix() if Path(p).is_absolute() else
-                 Path(p).as_posix(), "units": None} for p in sorted(glob.glob(args.frames))]
+        paths = (args.list.read_text(encoding="utf-8").split() if args.list
+                 else sorted(glob.glob(args.frames)))
+        rows = [{"frame": Path(p).as_posix(), "units": None} for p in paths]
     if args.sample:
         rows = [rows[i] for i in sorted(rng.permutation(len(rows))[:args.sample])]
     name = args.name or "+".join(args.labels) or "frames"
     out = OUT / name
     out.mkdir(parents=True, exist_ok=True)
-    ign = ignore_map(keep)
     stats = {k: [0, 0, 0] for k in CLASSES}
     team_ok = team_n = 0
     hp_err = {k: [] for k in CLASSES}
@@ -156,7 +167,7 @@ def main() -> None:
                 for b in fn:
                     stats[gts[b]["kind"]][2] += 1
             if i in review:
-                review_image(rgb, r["units"] or [], preds,
+                review_image(rgb if valid is None else dim(rgb, valid), r["units"] or [], preds,
                              out / "review" / f"{i:03d}_{Path(r['frame']).stem}.jpg")
     res = {"frames": len(rows), "thr": args.thr, "net": str(args.net)}
     if args.labels:

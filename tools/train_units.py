@@ -12,7 +12,8 @@
 Пример:
     python tools/train_units.py --train ibUVbSX7ARU zJvTSjEnKNE ... \
         --val 58w57eJ5Qks olmTXkkUv58 --epochs 30 --name net
-    # → runs/units/<имя>/model.pt, report.json, train.log
+    # → runs/units/<имя>/model.pt, report.json, train.log; last.pt — для
+    #   продолжения: повторный запуск с тем же --name продолжает обучение
 """
 
 from __future__ import annotations
@@ -64,8 +65,6 @@ class UnitFrames(Dataset):
 
     def __getitem__(self, i: int):
         r = self.rows[i]
-        img = cv2.imread(str(ROOT / r["frame"]))[..., ::-1]
-        img = img * self.keep[..., None]
         if self.train:
             lo, hi = self.scale
             s = math.exp(random.uniform(math.log(lo), math.log(hi)))
@@ -73,7 +72,16 @@ class UnitFrames(Dataset):
             s = 1.0
         f = 0.5 * s
         nw, nh = round(1920 * f), round(1080 * f)
-        im = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if f < 1 else cv2.INTER_LINEAR)
+        if self.train and f <= 0.5:
+            # распаковка JPEG сразу в половинном размере — вчетверо дешевле;
+            # на проверке — полный кадр, как в UnitNetRunner
+            img = cv2.imread(str(ROOT / r["frame"]), cv2.IMREAD_REDUCED_COLOR_2)[..., ::-1]
+            img = img * self.keep[::2, ::2, None]
+        else:
+            img = cv2.imread(str(ROOT / r["frame"]))[..., ::-1]
+            img = img * self.keep[..., None]
+        im = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA
+                        if nw < img.shape[1] else cv2.INTER_LINEAR)
         ig = cv2.resize(self.ign, (nw, nh), interpolation=cv2.INTER_NEAREST)
         # вырез 960×544 (или поле, если кадр меньше)
         if self.train:
@@ -107,7 +115,7 @@ class UnitFrames(Dataset):
         a = x.astype(np.float32)
         a = (a - 128) * random.uniform(0.85, 1.15) + 128 + random.uniform(-15, 15)
         if random.random() < self.noise_p:
-            a += np.random.normal(0, random.uniform(2, 7), a.shape)
+            a += np.random.default_rng(random.getrandbits(32)).standard_normal(a.shape, dtype=np.float32) * random.uniform(2, 7)
         a = np.clip(a, 0, 255).astype(np.uint8)
         if random.random() < self.jpeg_p:
             q = random.randint(25, 85)
@@ -206,16 +214,20 @@ def main() -> None:
     ap.add_argument("--scale", type=float, nargs=2, default=(0.6, 1.5))
     ap.add_argument("--no-codec-aug", action="store_true", help="без JPEG и шума (абляция)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--mem-gb", type=float, default=4.0, help="предел видеопамяти процесса")
     args = ap.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     dev = "cuda"
+    # карту делят несколько процессов: не больше 4 ГБ из 16
+    total = torch.cuda.get_device_properties(0).total_memory
+    torch.cuda.set_per_process_memory_fraction(min(1.0, args.mem_gb * 2 ** 30 / total))
     keep = label_keep()
     ign = ignore_map(keep)
     tr_rows, va_rows = load_rows(args.train), load_rows(args.val)
-    jp, npz = (0.0, 0.0) if args.no_codec_aug else (0.5, 0.3)
+    jp, npz = (0.0, 0.0) if args.no_codec_aug else (0.4, 0.25)
     tr = UnitFrames(tr_rows, keep, ign, True, tuple(args.scale), jp, npz)
     va = UnitFrames(va_rows, keep, ign, False)
     tl = DataLoader(tr, args.batch, shuffle=True, num_workers=args.workers, drop_last=True,
@@ -223,7 +235,8 @@ def main() -> None:
     vl = DataLoader(va, args.batch, shuffle=False, num_workers=args.workers)
 
     net = UnitNet(tuple(args.widths), tuple(args.depths), args.head).to(dev)
-    net = net.to(memory_format=torch.channels_last)
+    # без channels_last: depthwise-свёртки в fp16 с ним впятеро медленнее
+    # (замер: 324 против 63 мс на шаг батча 8, RTX 5060 Ti)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     steps = args.epochs * len(tl)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=steps, pct_start=0.05)
@@ -234,13 +247,22 @@ def main() -> None:
     nparam = sum(p.numel() for p in net.parameters())
     print(f"train {len(tr)} кадров, val {len(va)}, параметров {nparam / 1e6:.2f} М", file=log,
           flush=True)
-    best, best_res = -1.0, None
+    best, best_res, start = -1.0, None, 0
+    last = out / "last.pt"
+    if last.exists():
+        # продолжение после обрыва: веса, оптимизатор, расписание, лучший итог
+        ck = torch.load(last, map_location=dev, weights_only=False)
+        net.load_state_dict(ck["state"])
+        opt.load_state_dict(ck["opt"])
+        sched.load_state_dict(ck["sched"])
+        scaler.load_state_dict(ck["scaler"])
+        best, best_res, start = ck["best"], ck["best_res"], ck["epoch"]
+        print(f"продолжаю с эпохи {start + 1}", file=log, flush=True)
     t0 = time.time()
-    for ep in range(args.epochs):
+    for ep in range(start, args.epochs):
         acc = np.zeros(4)
         for x, t, ig in tl:
-            x = x.to(dev, non_blocking=True).float().div_(255).contiguous(
-                memory_format=torch.channels_last)
+            x = x.to(dev, non_blocking=True).float().div_(255)
             t = {k: v.to(dev, non_blocking=True) for k, v in t.items()}
             ig = ig.to(dev, non_blocking=True)
             with torch.autocast("cuda", dtype=torch.float16):
@@ -267,6 +289,9 @@ def main() -> None:
             torch.save({"state": net.state_dict(), "widths": args.widths, "depths": args.depths,
                         "head": args.head, "classes": CLASSES, "epoch": ep + 1,
                         "train": args.train, "val": args.val}, out / "model.pt")
+        torch.save({"state": net.state_dict(), "opt": opt.state_dict(),
+                    "sched": sched.state_dict(), "scaler": scaler.state_dict(),
+                    "best": best, "best_res": best_res, "epoch": ep + 1}, last)
     report = {"args": vars(args), "train_frames": len(tr), "val_frames": len(va),
               "params_m": round(nparam / 1e6, 3), "best_val_vs_pseudo": best_res,
               "minutes": round((time.time() - t0) / 60, 1)}

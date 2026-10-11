@@ -87,7 +87,10 @@ def label_frame(rgb: np.ndarray, tmpl, mask, keep, levels=None) -> list[dict]:
 
 
 def _work(path: str) -> dict:
-    rgb = np.asarray(Image.open(path).convert("RGB"))
+    try:
+        rgb = np.asarray(Image.open(path).convert("RGB"))
+    except OSError as e:            # кадр, недописанный при обрыве извлечения
+        return {"frame": path, "units": [], "error": str(e)}
     if rgb.shape[:2] != (1080, 1920):
         return {"frame": path, "units": [], "error": f"size {rgb.shape[1]}x{rgb.shape[0]}"}
     units = label_frame(rgb, _STATE["tmpl"], _STATE["mask"], _STATE["keep"], _STATE["levels"])

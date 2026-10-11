@@ -2,7 +2,7 @@
 
 Зачем. Путь B плана второй модели (docs/entity-model-plan.md, 2.3): HUD
 кадра — учитель. Плашки чемпионов читает lolvision/health_bars.py; здесь —
-полоски юнитов без квадрата уровня. От полоски к телу (unit_boxes) — по
+полоски юнитов без квадрата уровня. От полоски к телу (body_box) — по
 постоянным смещениям, измеренным на кадрах канала (docs/unit-detection.md).
 Псевдо-метки детектора юнитов собираются из обоих читателей
 (tools/build_unit_labels.py).
@@ -146,18 +146,24 @@ def tail_ok(lum: np.ndarray, x: int, y: int, hh: int, fill: int, mid: float) -> 
     col = tail.mean(0)
     if float((col < min(mid - 30, 90)).mean()) < 0.75:
         return False
-    if tail.std() > 12 or tail.mean() > 55:
+    # короткая заливка (ХП < 20%) похожа на блик: для неё пороги строже —
+    # ложные находки на листе проверки были с заливкой 5–7 px
+    short = fill < 11
+    if tail.std() > (8 if short else 12) or tail.mean() > 55:
         return False
     end = lum[y:y + hh, x + BAR_W + 1:x + BAR_W + 3].mean() - lum[y:y + hh, x1 - 2:x1].mean()
-    return end > 12
+    return end > (20 if short else 12)
 
 
 def _is_ward(g: list[tuple[int, int, int, int]], rgb: np.ndarray) -> bool:
-    """Вард: ≥2 сегмента ширины SEG_W с просветами и белая линия таймера над
-    полоской."""
+    """Вард: сегменты ширины SEG_W с просветами. Четыре сегмента и больше —
+    вард без таймера (контрольный, лист проверки 58w57eJ5Qks/olmTXkkUv58);
+    два-три — нужна ещё белая линия таймера над полоской."""
     segs = [c for c in g if SEG_W[0] <= c[2] <= SEG_W[1]]
     if len(segs) < 2 or len(segs) < len(g) - 1:
         return False
+    if len(segs) >= 4:
+        return True
     x0, y = g[0][0], g[0][1]
     x1 = g[-1][0] + g[-1][2]
     line = rgb[max(0, y - 4):y - 1, x0:x1].astype(np.int16)
