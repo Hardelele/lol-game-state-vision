@@ -97,8 +97,13 @@ function push() {
 }
 
 function add(x, y, team) {
-  push();
   const kind = S.brush;
+  // Клик рядом с уже стоящей меткой того же класса — промах мимо неё, а
+  // не второй юнит: выбрать её вместо дубля (в первых кадрах эталона было
+  // 4 пары точек в 2–3 px друг от друга).
+  const near = S.units.findIndex((u) => u.kind === kind && Math.hypot(u.x - x, u.y - y) < KIND[kind].r * 0.8);
+  if (near >= 0) { S.sel = near; render(); return; }
+  push();
   S.units.push({ kind, team: kind === "monster" ? "NEUTRAL" : team, x, y, pred: false });
   S.sel = S.units.length - 1;
   render();

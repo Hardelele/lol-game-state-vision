@@ -71,7 +71,7 @@ from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
 from lolvision.patch_infer import PatchInfer
 from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
-from lolvision.unit_net import DEFAULT_NET as UNIT_NET, UnitNetRunner
+from lolvision.unit_net import DEFAULT_NET, UnitNetRunner
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolstream.live_champions import LiveChampions
@@ -92,6 +92,11 @@ FULL_STORE_W = 640
 # ~14 мс) — тогда примерно KIND_HZ раз в секунду потока, между этим берём
 # прошлый ответ.
 KIND_HZ = 2.0
+# Детектор юнитов без опоры на полоски ХП (#773, docs/unit-detection.md):
+# с полосками миньоны не хуже прежнего, без них — 0.79 против 0.015. Его
+# рабочий порог 0.4 (у прежней сети 0.3). Нет файла — прежняя сеть.
+UNIT_NET_NOBARS = RUNS / "units" / "net-nobars2" / "model.pt"
+UNIT_NET, UNIT_THR = ((UNIT_NET_NOBARS, 0.4) if UNIT_NET_NOBARS.is_file() else (DEFAULT_NET, 0.3))
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 
 
@@ -349,7 +354,7 @@ class Session:
         unit_model = None
         if UNIT_NET.is_file() and self.device.startswith("cuda"):
             keep = unit_keep(w, h)
-            unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep,
+            unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep, thr=UNIT_THR,
                                        valid=1 - ignore_map(keep), size=(h, w))
             self.note += " · юниты"
 
