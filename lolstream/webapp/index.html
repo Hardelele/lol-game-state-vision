@@ -190,10 +190,13 @@
         <button class="pill" id="pTake"
           title="кадры с координатами собираются потоком, файл на диск не пишется">
           взять в датасет потоком</button>
-        <select id="pFps" class="plain" title="кадров в секунду ролика">
+        <select id="pFps" class="plain" title="кадров в секунду ролика; для id крипов (трекинг волн) — от 3">
           <option value="0.5">0.5 кадр/с</option>
           <option value="1" selected>1 кадр/с</option>
           <option value="2">2 кадр/с</option>
+          <option value="3">3 кадр/с</option>
+          <option value="5">5 кадр/с</option>
+          <option value="10">10 кадр/с</option>
         </select>
         <select id="pModel" class="plain"
           title="модель для потока: прогон с model.pt под runs/, тип берётся из чекпоинта"></select>
