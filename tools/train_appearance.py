@@ -55,17 +55,29 @@ def body_features(vid: str, bodies: np.ndarray, vit) -> np.ndarray:
     return f
 
 
-def name_labels(v: dict, reader: nr.NameReader) -> tuple[list[str], np.ndarray]:
+def name_labels(v: dict, reader: nr.NameReader, adapt: bool = True,
+                soft: bool = False):
     """Метка по имени для каждой плашки: Id чемпиона, если имя прочитано
-    уверенно, иначе ""; и маска уверенных."""
+    уверенно, иначе ""; и маска уверенных. adapt — сначала подстроить банк
+    под матч (nr.adapted). soft — вернуть ещё сходства с именами пяти
+    кандидатов команды (N, 5): слабое свидетельство для плашек без
+    уверенного имени."""
+    cands = [candidates(v, int(b["team"])) for b in v["bars"]]
+    if adapt and len(v["names"]):
+        reader = nr.adapted(reader, v["names"], cands)
     sims = reader.label_sims(v["names"])
     champs = set(v["roster"].champions)
     labs = []
-    for s, b in zip(sims, v["bars"]):
-        lab, sim, m = reader.pick(s, candidates(v, int(b["team"])))
+    for s, cand in zip(sims, cands):
+        lab, sim, m = reader.pick(s, cand)
         labs.append(lab if lab in champs and sim >= NAME_SIM and m >= NAME_MARGIN else "")
-    labs_arr = np.array(labs)
-    return labs, labs_arr != ""
+    sure = np.array(labs) != ""
+    if not soft:
+        return labs, sure
+    idx = {lab: k for k, lab in enumerate(reader.uniq)}
+    nsim = np.array([[s[idx[c]] if c in idx else 0.0 for c in cand]
+                     for s, cand in zip(sims, cands)], np.float32).reshape(-1, 5)
+    return labs, sure, nsim
 
 
 def train_head(x: np.ndarray, y: list[str], epochs: int = 300, wd: float = 1e-3) -> ap_.LinearHead:
@@ -87,8 +99,30 @@ def train_head(x: np.ndarray, y: list[str], epochs: int = 300, wd: float = 1e-3)
                           lin.bias.detach().cpu().numpy())
 
 
+def train_projection(x: np.ndarray, y: list[str], dim: int = 128, epochs: int = 400,
+                     temp: float = 0.07) -> ap_.Projection:
+    """Проекция 384 → dim: косинусный классификатор по чемпионам обучения
+    (нормированные признаки и нормированные веса классов, температура)."""
+    ids = sorted(set(y))
+    yi = torch.tensor([ids.index(c) for c in y], device="cuda")
+    xt = torch.tensor(x, device="cuda")
+    proj = torch.nn.Linear(x.shape[1], dim, bias=False).cuda()
+    cls = torch.nn.Parameter(torch.randn(len(ids), dim, device="cuda") * 0.1)
+    opt = torch.optim.AdamW([*proj.parameters(), cls], lr=3e-3, weight_decay=1e-4)
+    cnt = torch.bincount(yi, minlength=len(ids)).float()
+    w = (cnt.sum() / (cnt * len(ids))).clamp(max=20)
+    torch.manual_seed(0)
+    for _ in range(epochs):
+        opt.zero_grad()
+        z = F.normalize(proj(F.dropout(xt, 0.2)), dim=1)
+        logits = z @ F.normalize(cls, dim=1).T / temp
+        F.cross_entropy(logits, yi, weight=w).backward()
+        opt.step()
+    return ap_.Projection(proj.weight.detach().cpu().numpy().T)
+
+
 def proto_scores(f: np.ndarray, t: np.ndarray, labs: list[str], sure: np.ndarray,
-                 i: int, cands: list[str], past: bool, k: int = 5) -> np.ndarray:
+                 i: int, cands: list[str], past: bool, k: int = 1) -> np.ndarray:
     """Сходство выреза i с прототипами кандидатов из того же ролика."""
     far = np.abs(t - t[i]) >= GAP_SEC
     if past:
@@ -106,10 +140,14 @@ def proto_scores(f: np.ndarray, t: np.ndarray, labs: list[str], sure: np.ndarray
     return out
 
 
+METHODS = ("head", "proto", "proto_past", "mix", "proj", "proj_past")
+
+
 def evaluate(v: dict, f: np.ndarray, labs: list[str], sure: np.ndarray,
-             head: ap_.LinearHead) -> dict:
+             head: ap_.LinearHead, proj: ap_.Projection) -> dict:
     t = v["t"][v["bars"]["frame"]]
-    res = {m: [] for m in ("head", "proto", "proto_past", "mix")}
+    g = proj(f)
+    res = {m: [] for m in METHODS}
     known = 0
     for i in np.flatnonzero(sure):
         cands = candidates(v, int(v["bars"]["team"][i]))
@@ -124,6 +162,9 @@ def evaluate(v: dict, f: np.ndarray, labs: list[str], sure: np.ndarray,
         # mix: прототипы там, где есть, остальным кандидатам — вероятность головы
         mix = np.where(ps > -1, ps, -1.0 + hp)
         res["mix"].append(cands[int(mix.argmax())] == truth)
+        for name, past in (("proj", False), ("proj_past", True)):
+            qs = proto_scores(g, t, labs, sure, i, cands, past=past)
+            res[name].append(qs.max() > -1 and cands[int(qs.argmax())] == truth)
     n = int(sure.sum())
     return {"labelled": n, "unlabelled": int((~sure).sum()),
             "truth_known_to_head": round(known / max(n, 1), 4),
@@ -157,8 +198,10 @@ def main() -> None:
     x = np.concatenate([data[v][1][data[v][3]] for v in train])
     y = [lab for v in train for lab, s in zip(data[v][2], data[v][3]) if s]
     head = train_head(x, y)
+    proj = train_projection(x, y)
     args.out.mkdir(parents=True, exist_ok=True)
     head.save(args.out / "appearance_head.npz")
+    np.save(args.out / "appearance_proj.npy", proj.w)
 
     # Скорость признаков: пачка из 4 вырезов (типичное число плашек на кадре).
     bodies = np.load(args.harvest / f"{vids[0]}.npz")["bodies"][:4]
@@ -177,13 +220,13 @@ def main() -> None:
         if vid not in data:
             continue
         v, f, labs, sure = data[vid]
-        r = evaluate(v, f, labs, sure, head)
+        r = evaluate(v, f, labs, sure, head, proj)
         r["roster"] = v["roster"].to_json()
         r["roster_unseen_by_head"] = [c for c in v["roster"].champions if c not in head.ids]
         report["heldout"][vid] = r
         print(vid, json.dumps(r, ensure_ascii=False), flush=True)
     tot = {}
-    for m in ("head", "proto", "proto_past", "mix"):
+    for m in METHODS:
         num = sum(r[m] * r["labelled"] for r in report["heldout"].values() if r[m] is not None)
         den = sum(r["labelled"] for r in report["heldout"].values() if r[m] is not None)
         tot[m] = round(num / max(den, 1), 4)

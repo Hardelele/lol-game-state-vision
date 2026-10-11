@@ -6,8 +6,12 @@
 над плашкой («HUD как учитель», docs/entity-model-plan.md, 2.3).
 
 Признак — замороженный DINOv2 ViT-S/14 по вырезу облика 128×128
-(lolvision/identity.py), увеличенному до 224×224: CLS-токен и среднее
-патч-токенов, 768 чисел, L2-нормировано. Над ним два классификатора:
+(lolvision/identity.py), увеличенному до 224×224: среднее патч-токенов
+центрального окна 6×6 из 16×16 (строки 4–9, столбцы 5–10 — там, где под
+плашкой стоит модель), 384 числа, L2-нормировано. Центр, а не CLS и не
+среднее по всему вырезу: в вырезе много фона и соседей, и по ближайшему
+соседу центр точнее (на трёх роликах: 86/97/77% против 85/97/76% у CLS и
+83/97/74% у среднего). Над ним классификаторы:
 
 * общий — линейная голова на чемпионах обучающих роликов
   (tools/train_appearance.py); на чужом ролике выбирает только среди пяти
@@ -19,7 +23,7 @@
   минут, когда у чемпиона набралось хоть несколько прочитанных имён.
 
 Формы (Нидали, Элиза, Джейс, Гнар) и эволюция скинов — несколько
-прототипов на чемпиона (k ближайших, а не среднее), так что новая форма
+прототипов на чемпиона (ближайший, а не среднее), так что новая форма
 узнаётся, как только для неё есть прочитанные имена.
 """
 
@@ -32,13 +36,14 @@ import torch.nn.functional as F
 from lolvision.scene_kind import _MEAN, _STD
 
 IN = 224
-FEAT = 768
+FEAT = 384
+CENTER = (slice(4, 10), slice(5, 11))   # окно патчей 6×6 из 16×16
 
 
 @torch.no_grad()
 def features(vit: torch.nn.Module, crops: np.ndarray, dev: str = "cuda",
              batch: int = 256) -> np.ndarray:
-    """crops (N, 128, 128, 3) uint8 → (N, 768) float32, L2-нормировано."""
+    """crops (N, 128, 128, 3) uint8 → (N, 384) float32, L2-нормировано."""
     mean = torch.tensor(_MEAN, device=dev).view(1, 3, 1, 1)
     std = torch.tensor(_STD, device=dev).view(1, 3, 1, 1)
     out = []
@@ -48,7 +53,9 @@ def features(vit: torch.nn.Module, crops: np.ndarray, dev: str = "cuda",
         x = F.interpolate(x, size=(IN, IN), mode="bilinear", align_corners=False)
         with torch.autocast("cuda", dtype=torch.float16, enabled=dev.startswith("cuda")):
             f = vit.forward_features((x - mean) / std)
-        v = torch.cat([f["x_norm_clstoken"], f["x_norm_patchtokens"].mean(1)], 1).float()
+        g = IN // 14
+        p = f["x_norm_patchtokens"].reshape(len(x), g, g, -1)
+        v = p[:, CENTER[0], CENTER[1]].mean((1, 2)).float()
         out.append(F.normalize(v, dim=1).cpu().numpy())
     return np.concatenate(out) if out else np.zeros((0, FEAT), np.float32)
 
@@ -84,10 +91,26 @@ class LinearHead:
         return [candidates[j] for j in p.argmax(1)], p
 
 
+class Projection:
+    """Своё пространство облика: линейная проекция признаков DINOv2 (384 → d),
+    обученная разводить чемпионов обучающих роликов (косинусный
+    классификатор). Сама проекция чемпионов не называет — она для
+    прототипов матча: в ней ближайшие соседи меньше смотрят на фон и
+    освещение и больше на модель чемпиона; работает и для чемпионов,
+    которых в обучении не было."""
+
+    def __init__(self, w: np.ndarray):
+        self.w = np.asarray(w, np.float32)            # (384, d)
+
+    def __call__(self, f: np.ndarray) -> np.ndarray:
+        z = f @ self.w
+        return z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-6)
+
+
 class MatchPrototypes:
     """Прототипы облика внутри одного матча: вырезы с прочитанным именем."""
 
-    def __init__(self, k: int = 5):
+    def __init__(self, k: int = 1):
         self.k = k
         self.feats: list[np.ndarray] = []
         self.labels: list[str] = []
@@ -98,7 +121,8 @@ class MatchPrototypes:
 
     def scores(self, f: np.ndarray, candidates: list[str]) -> np.ndarray:
         """(N, len(candidates)): среднее сходство с k ближайшими прототипами
-        кандидата; нет прототипов — −1."""
+        кандидата (по умолчанию k = 1: при k = 5 частый чемпион — ведомый
+        каналом — перетягивает редких); нет прототипов — −1."""
         out = np.full((len(f), len(candidates)), -1.0, np.float32)
         if not self.feats:
             return out

@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -174,3 +175,72 @@ class NameReader:
              statuses: bool = True) -> tuple[str, float, float]:
         """Один вырез: (метка, сходство, отрыв от второй)."""
         return self.pick(self.label_sims(crop[None])[0], candidates, statuses)
+
+
+# --- настоящие образцы из вырезов -------------------------------------
+
+ADAPT_SIM = 0.5         # вырез идёт в медиану: сходство с образцом не ниже
+ADAPT_MARGIN = 0.03     # и отрыв от второго кандидата
+ADAPT_COUNT = 5         # медиана не меньше чем из пяти вырезов
+DUP_SIM = 0.85          # две медианы одной группы совпали со сдвигом — одно слово
+
+
+def as_crop(win: np.ndarray) -> np.ndarray:
+    """Окно белизны (WIN_H, WIN_W) → вырез RGB полного размера с той же белизной."""
+    img = np.zeros((CROP_H, CROP_W), np.float32)
+    w = (win - win.min()) / (np.ptp(win) + 1e-6)
+    img[DY:DY + WIN_H, DX:DX + WIN_W] = w
+    return np.repeat((110 + 100 * img).clip(0, 255).astype(np.uint8)[..., None], 3, 2)
+
+
+def build_medians(groups: dict[tuple[str, str], list[np.ndarray]],
+                  min_count: int = ADAPT_COUNT) -> tuple[list[tuple[str, str]], list]:
+    """Медианы окон белизны по ключам (группа, метка).
+
+    Чистка: две медианы одной группы (ролика), совпавшие со сдвигом выше
+    DUP_SIM, — одно и то же слово; остаётся метка, у которой вырезов больше.
+    Так бывает, когда младшая метка «ворует» вырезы старшей: Camille
+    (ведомая каналом, сотни плашек) и Ezreal в одной команде, отрисованный
+    образец путает эти имена, и медиана «Ezreal» — это слово Camille.
+    Отрисованные образцы здесь не судьи: на чистой медиане они дают
+    0.5–0.6 и путают те же пары. Группа «*» (состояния) не чистится."""
+    keys, temps, counts = [], [], []
+    for key, ws in sorted(groups.items()):
+        if len(ws) >= min_count:
+            keys.append(key)
+            temps.append(np.median(np.stack(ws), 0))
+            counts.append(len(ws))
+    drop = set()
+    for i in range(len(keys)):
+        for j in range(len(keys)):
+            if i == j or keys[i][0] != keys[j][0] or keys[i][0] == "*" or counts[j] <= counts[i]:
+                continue
+            if NameReader([keys[j][1]], temps[j][None]).read(as_crop(temps[i]))[1] > DUP_SIM:
+                drop.add(i)
+    keep = [i for i in range(len(keys)) if i not in drop]
+    return [keys[i] for i in keep], [temps[i] for i in keep]
+
+
+def adapted(reader: NameReader, crops: np.ndarray, cands: list[list[str]],
+            iters: int = 2) -> NameReader:
+    """Банк, подстроенный под один матч: медианы уверенно прочитанных вырезов
+    этого матча (среди пяти кандидатов команды) добавляются как настоящие
+    образцы. Нужен для чемпионов, у которых в банке только отрисованный
+    образец: на нём сходство 0.5–0.6, и имя часто не проходит порог, хотя
+    видно. Верные метки не нужны — только состав и команда плашки."""
+    base = reader
+    for _ in range(iters):
+        sims = reader.label_sims(crops)
+        groups: dict[tuple[str, str], list[np.ndarray]] = defaultdict(list)
+        for c, s, cand in zip(crops, sims, cands):
+            lab, sim, m = reader.pick(s, cand)
+            if sim >= ADAPT_SIM and m >= ADAPT_MARGIN and not lab.startswith(STATUS):
+                groups[("match", lab)].append(center(whiteness(c)))
+        keys, temps = build_medians(groups)
+        if not keys:
+            return base
+        old = base.bank.T.reshape(-1, WIN_H, WIN_W)
+        reader = NameReader(base.labels + [k[1] for k in keys],
+                            np.concatenate([old, np.stack(temps)]),
+                            base.kinds + ["match"] * len(keys))
+    return reader

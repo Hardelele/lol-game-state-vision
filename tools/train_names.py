@@ -35,10 +35,9 @@ from lolvision.paths import DATA, RUNS
 
 HARVEST = DATA / "identity" / "harvest"
 OUT = RUNS / "identity"
-MIN_MARGIN = 0.03       # разметка в образец: отрыв лучшего кандидата
-MIN_SIM = 0.5           # и сходство не ниже
-MIN_COUNT = 5           # образец из медианы не меньше чем пяти вырезов
-DUP_SIM = 0.85          # две медианы ролика совпали со сдвигом — это одно слово
+MIN_MARGIN = nr.ADAPT_MARGIN   # разметка в образец: отрыв лучшего кандидата
+MIN_SIM = nr.ADAPT_SIM         # и сходство не ниже
+MIN_COUNT = nr.ADAPT_COUNT     # образец из медианы не меньше чем пяти вырезов
 
 
 def load_video(vid: str, harvest: Path = HARVEST) -> dict:
@@ -64,48 +63,17 @@ def label_all(reader: nr.NameReader, videos: list[dict]) -> dict[str, list[tuple
     return out
 
 
-def _as_crop(win: np.ndarray) -> np.ndarray:
-    """Окно белизны (WIN_H, WIN_W) → вырез RGB полного размера с той же белизной."""
-    img = np.zeros((nr.CROP_H, nr.CROP_W), np.float32)
-    w = (win - win.min()) / (np.ptp(win) + 1e-6)
-    img[nr.DY:nr.DY + nr.WIN_H, nr.DX:nr.DX + nr.WIN_W] = w
-    return np.repeat((110 + 100 * img).clip(0, 255).astype(np.uint8)[..., None], 3, 2)
-
-
 def medians(videos: list[dict], labels: dict[str, list[tuple]]) -> tuple[list[str], list]:
-    """Образцы: медиана белизны по (ролик, чемпион) и по каждому состоянию.
-
-    Чистка: две медианы одного ролика, совпавшие со сдвигом (сходство выше
-    DUP_SIM), — одно и то же слово; оставляется метка, у которой вырезов
-    больше. Так бывает, когда младшая метка «ворует» вырезы старшей:
-    Camille (ведомая каналом, сотни плашек) и Ezreal в одной команде,
-    отрисованный образец путает эти имена, и медиана «Ezreal» — это слово
-    Camille. Отрисованные образцы сами по себе здесь не судьи: на чистой
-    медиане они дают 0.5–0.6 и путают те же пары."""
+    """Образцы: медиана белизны по (ролик, чемпион) и по каждому состоянию
+    (чистка совпавших медиан — в nr.build_medians)."""
     groups: dict[tuple[str, str], list[np.ndarray]] = defaultdict(list)
     for v in videos:
         for c, (lab, s, m) in zip(v["names"], labels[v["vid"]]):
             if s >= MIN_SIM and m >= MIN_MARGIN:
                 key = ("*", lab) if lab.startswith(nr.STATUS) else (v["vid"], lab)
                 groups[key].append(nr.center(nr.whiteness(c)))
-    keys, temps, counts = [], [], []
-    for key, ws in sorted(groups.items()):
-        if len(ws) >= MIN_COUNT:
-            keys.append(key)
-            temps.append(np.median(np.stack(ws), 0))
-            counts.append(len(ws))
-    drop = set()
-    for i in range(len(keys)):
-        for j in range(len(keys)):
-            if i == j or keys[i][0] != keys[j][0] or keys[i][0] == "*" or counts[j] <= counts[i]:
-                continue
-            probe = nr.NameReader([keys[j][1]], temps[j][None])
-            if probe.read(_as_crop(temps[i]))[1] > DUP_SIM:
-                drop.add(i)
-                print(f"  отброшен образец {keys[i][0]}/{keys[i][1]}: это слово "
-                      f"{keys[j][1]}", flush=True)
-    keep = [i for i in range(len(keys)) if i not in drop]
-    return [keys[i][1] for i in keep], [temps[i] for i in keep]
+    keys, temps = nr.build_medians(groups, MIN_COUNT)
+    return [k[1] for k in keys], temps
 
 
 def build(videos: list[dict], dd, font: Path, px: int, track: float, iters: int) -> nr.NameReader:
