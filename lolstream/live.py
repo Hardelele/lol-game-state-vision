@@ -64,7 +64,8 @@ from lolvision.dataset_io import MINI_STORE, STORE_W
 from lolstream.video_stream import probe_url, frames as frame_stream
 from lolstream.channels import check_fps, youtube_id
 from lolvision.coord_model import expected_point, peak_point, spread
-from lolvision.geometry import MAP_UNITS
+from lolvision.geometry import MAP_UNITS, load_projection
+from lolvision.unit_tracker import Projection, UnitTracker
 from lolvision.mask_frames import crop_box, mask_boxes
 from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
                                       find_box_clipped, estimate_box)
@@ -269,6 +270,7 @@ class Session:
         # его не ждёт. Один исполнитель — кадры ложатся строго по порядку.
         self._n_emit = 0
         self.match: MatchState | None = None   # контекст матча (#780)
+        self.tracker: UnitTracker | None = None  # id юнитов между кадрами (#782)
         self._out = ThreadPoolExecutor(1, thread_name_prefix="live-out")
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
@@ -356,6 +358,11 @@ class Session:
             keep = unit_keep(w, h)
             unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep, thr=UNIT_THR,
                                        valid=1 - ignore_map(keep), size=(h, w))
+            # Трекер юнитов (#782): сопоставление на карте через проекцию
+            # экрана и центр камеры; «должен быть виден» — та же зона ответов.
+            hp_, scene_size = load_projection()
+            self.tracker = UnitTracker(Projection(hp_, scene_size, (cx0, cy0, cx1, cy1)),
+                                       frame_size=(w, h), valid=1 - ignore_map(keep))
             self.note += " · юниты"
 
         # Чемпионы (live_champions.py): состав по HUD, миникарта, жив ли,
@@ -535,6 +542,15 @@ class Session:
             row["ctx"] = self.match.frame_view()
         if ev:
             row["ev"] = ev
+        # Треки юнитов: id, состояние (seen / unseen / lost), место на карте.
+        # События юнитов — отдельно от событий чемпионов: смертей крипов
+        # десятки в минуту.
+        if self.tracker is not None and row.get("kind", "game") == "game" and "units" in row:
+            cam = (row.get("px"), row.get("py"))
+            uev = self.tracker.update(row["t"], None if cam[0] is None else cam, row["units"])
+            row["tracks"] = self.tracker.frame_view(row["t"])
+            if uev:
+                row["uev"] = uev
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         self._out.submit(self._store, row, scene, full_img, mini, hm)

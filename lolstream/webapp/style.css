@@ -407,6 +407,10 @@ kbd {
   font-size: 11px; font-weight: 700; color: #ff6b5e; text-shadow: 0 0 3px #000, 0 0 2px #000; }
 .rc b.q { color: #ddd; }
 #champSvg .ghost circle { stroke-dasharray: 2.5 2; }
+#champSvg .trk { fill: var(--u); stroke: rgba(0,0,0,.7); stroke-width: .6; pointer-events: auto; }
+#champSvg .trk.unseen, #champSvg .trk.lost { opacity: .35; }
+#unitSvg .uid { fill: #ddd; font: 500 6px ui-monospace, monospace; text-anchor: middle;
+  paint-order: stroke; stroke: rgba(0,0,0,.85); stroke-width: 2px; }
 #vEvents { display: inline-flex; gap: 10px; flex-wrap: wrap; }
 .ev { white-space: nowrap; } .ev b { color: var(--dim); font-weight: 500; }
 .ev.uo { color: #7fb6ff; } .ev.uc { color: #ff8a80; } .ev i { color: var(--dim); font-style: normal; }
