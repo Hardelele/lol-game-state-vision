@@ -145,7 +145,6 @@ def read_panels(frame_bgr: np.ndarray, reader: DigitReader | None = None) -> lis
     """10 слотов кадра (BGR, как у cv2): серый ли портрет, таймер."""
     h, w = frame_bgr.shape[:2]
     sx, sy = w / REF_W, h / REF_H
-    hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     out = []
     for s, (x0, y0, x1, y1) in enumerate(slot_boxes((w, h))):
         side, k = "LR"[s // 5], s % 5
@@ -153,7 +152,7 @@ def read_panels(frame_bgr: np.ndarray, reader: DigitReader | None = None) -> lis
         red = red_mask(b)
         # JPEG размазывает цвет цифр на 2–3 px вокруг — их тоже не считаем.
         near = cv2.dilate(red.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
-        sat = hsv[y0:y1, x0:x1, 1][~near]
+        sat = cv2.cvtColor(b, cv2.COLOR_BGR2HSV)[..., 1][~near]   # только слот, не весь кадр
         sat_m = float(np.median(sat)) if sat.size else 0.0
         hx0, hx1 = HP_X_LEFT if side == "L" else HP_X_RIGHT
         hy = Y0 + PITCH * k
@@ -204,12 +203,11 @@ def portrait_templates(icons: dict[str, np.ndarray]) -> dict[str, list[np.ndarra
 def _portrait_regions(frame_bgr: np.ndarray) -> list[np.ndarray]:
     if frame_bgr.shape[:2] != (REF_H, REF_W):
         frame_bgr = cv2.resize(frame_bgr, (REF_W, REF_H), interpolation=cv2.INTER_AREA)
-    g = frame_bgr.astype(np.float32)
     out = []
     for s in range(10):
         x0, x1 = PORTRAIT_X_LEFT if s < 5 else PORTRAIT_X_RIGHT
         y0 = PORTRAIT_Y0 + PITCH * (s % 5)
-        out.append(g[y0:y0 + PORTRAIT_H, x0:x1])
+        out.append(frame_bgr[y0:y0 + PORTRAIT_H, x0:x1].astype(np.float32))
     return out
 
 
@@ -226,8 +224,20 @@ def portrait_scores(frame_bgr: np.ndarray, templates: dict[str, list[np.ndarray]
 
 
 def portrait_own(frame_bgr: np.ndarray, templates: dict[str, list[np.ndarray]],
-                 roster: list[str]) -> np.ndarray:
+                 roster: list[str], scales: list[int] | None = None
+                 ) -> tuple[np.ndarray, list[int]]:
     """Сходство портрета каждого слота со своим чемпионом состава (10 чисел):
-    низкое — панель скрыта или заслонена."""
+    низкое — панель скрыта или заслонена. `scales` — номера масштабов,
+    найденные раньше: тогда проверяются только они и соседние (втрое
+    дешевле). Возвращает сходства и лучшие масштабы."""
     regs = _portrait_regions(frame_bgr)
-    return np.array([_match(r, templates[n]) for r, n in zip(regs, roster)], np.float32)
+    out, best = [], []
+    for s, (r, n) in enumerate(zip(regs, roster)):
+        ts = templates[n]
+        ks = range(len(ts)) if scales is None else \
+            range(max(0, scales[s] - 1), min(len(ts), scales[s] + 2))
+        sc = {k: float(cv2.matchTemplate(r, ts[k], cv2.TM_CCOEFF_NORMED).max()) for k in ks}
+        k = max(sc, key=sc.get)
+        out.append(sc[k])
+        best.append(k)
+    return np.array(out, np.float32), best

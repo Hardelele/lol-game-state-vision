@@ -30,7 +30,10 @@ MM = 256
 STRIDE = 2
 CROP = 32                      # сторона выреза для классификатора
 TEAMS = ("ORDER", "CHAOS")     # 0 — синие, 1 — красные (как в health_bars)
-DEFAULT_RUN = RUNS / "minimap" / "icons"
+# Модель по умолчанию — только на синтетике: дообучение на псевдо-метках
+# подняло точность определения чемпиона (96.0 → 97.1%), но уронило полноту
+# детекции (97.6 → 93.9%), docs/minimap-champions.md.
+DEFAULT_RUN = RUNS / "minimap" / "icons-syn"
 
 
 def conv_bn(cin: int, cout: int, stride: int = 1, dil: int = 1) -> nn.Sequential:
@@ -150,7 +153,7 @@ def decode(heat: torch.Tensor, off: torch.Tensor, thr: float = 0.3,
 
 
 class IconModel:
-    """Детектор + классификатор из каталога прогона (runs/minimap/icons)."""
+    """Детектор + классификатор из каталога прогона (runs/minimap/icons-syn)."""
 
     def __init__(self, run: Path = DEFAULT_RUN, device: str | None = None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")

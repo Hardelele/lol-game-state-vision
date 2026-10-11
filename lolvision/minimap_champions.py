@@ -95,7 +95,7 @@ class Composition:
         return out
 
 
-def assign(dets: list[dict], teams: list[list[int]]) -> list[int]:
+def assign(dets: list[dict], teams: list[list[int]], new_cost: float = NEW_COST) -> list[int]:
     """Детекции кадра → индекс чемпиона из состава или −1.
 
     Цена пары — −log p(чемпион) плюс −log p(команда детектора совпадает с
@@ -112,7 +112,7 @@ def assign(dets: list[dict], teams: list[list[int]]) -> list[int]:
         for j, (c, t) in enumerate(cand):
             team_cost = -np.log(max(tp[t], 1e-4)) if d["team"] != t else 0.0
             cost[i, j] = -float(d["logp"][c]) + team_cost
-        cost[i, m + i] = NEW_COST
+        cost[i, m + i] = new_cost
     rows, cols = linear_sum_assignment(cost)
     out = [-1] * n
     for i, j in zip(rows, cols):
@@ -188,6 +188,8 @@ class FrameReader:
         self.teams = [self.ids[:5], self.ids[5:]]
         self.digits = hud_panels.DigitReader()
         self.tm = hud_panels.portrait_templates({n: icons[n] for n in roster})
+        self.scales = None
+        self.new_cost = NEW_COST
 
     @staticmethod
     def minimap_of(frame_rgb: np.ndarray, layout: dict) -> np.ndarray:
@@ -211,8 +213,11 @@ class FrameReader:
         h, w = frame_rgb.shape[:2]
         bgr = np.ascontiguousarray(frame_rgb[..., ::-1])
         slots = self.hp.read_panels(bgr, self.digits)
-        own = self.hp.portrait_own(bgr, self.tm, self.roster)
-        who = assign(dets, self.teams)
+        # Масштаб портрета запоминается по первому уверенному кадру.
+        own, best = self.hp.portrait_own(bgr, self.tm, self.roster, self.scales)
+        if self.scales is None and (own >= PORTRAIT_MIN).all():
+            self.scales = best
+        who = assign(dets, self.teams, self.new_cost)
         seen = {c: d for d, c in zip(dets, who) if c >= 0}
         out = []
         for s, (name, cid) in enumerate(zip(self.roster, self.ids)):

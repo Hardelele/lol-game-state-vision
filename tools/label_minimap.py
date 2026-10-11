@@ -59,7 +59,8 @@ def sheet(frame: Image.Image, mm: np.ndarray, dets: list[dict], names: list[str]
         d.text((x + 30, y - 30), str(i), fill=col, font=f, stroke_width=2, stroke_fill=(0, 0, 0))
         top = np.argsort(-det["logp"])[:3]
         txt = (f"{i} {TEAMS[det['team']][0]} s{det['score']:.2f} "
-               f"({det['x']:.0f},{det['y']:.0f}): ") + ", ".join(f"{names[c]} {np.exp(det['logp'][c]):.2f}" for c in top)
+               f"({det['x']:.0f},{det['y']:.0f}): ")
+        txt += ", ".join(f"{names[c]} {np.exp(det['logp'][c]):.2f}" for c in top)
         d.text((256 * K + 8, 8 + 22 * i), txt, fill=col, font=fs)
     # Портреты HUD: слева синие, справа красные, по 5 сверху вниз.
     for s, box in enumerate(hud_panels.slot_boxes(frame.size)):

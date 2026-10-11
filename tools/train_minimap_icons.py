@@ -10,7 +10,7 @@
 Пример:
     python tools/train_minimap_icons.py --out runs/minimap/icons-syn
     python tools/train_minimap_icons.py --init runs/minimap/icons-syn \
-        --real data/minimap --out runs/minimap/icons
+        --real data/minimap --out runs/minimap/icons-ft
 """
 
 from __future__ import annotations

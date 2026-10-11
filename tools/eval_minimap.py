@@ -18,8 +18,8 @@
 * время на кадр.
 
 Пример:
-    python tools/eval_minimap.py --run runs/minimap/icons
-    # → runs/minimap/icons/eval.json
+    python tools/eval_minimap.py --run runs/minimap/icons-syn
+    # → runs/minimap/icons-syn/eval.json
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 from PIL import Image
 from scipy.optimize import linear_sum_assignment
 
@@ -93,6 +94,9 @@ def main() -> None:
     ap.add_argument("--run", default=str(DEFAULT_RUN))
     ap.add_argument("--device", default=None)
     ap.add_argument("--labels", default=str(LABELS))
+    ap.add_argument("--new-cost", type=float, default=None,
+                    help="цена «детекция не из состава» (по умолчанию NEW_COST)")
+    ap.add_argument("--tag", default="", help="суффикс имени отчёта")
     args = ap.parse_args()
 
     layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
@@ -126,13 +130,20 @@ def main() -> None:
                            and sorted(roster[5:]) == sorted(comps[vid]["CHAOS"]),
                            "set_overlap": len(set(roster) & set(truth))}
         reader = FrameReader(model, roster, layout, icons)
+        if args.new_cost is not None:
+            reader.new_cost = args.new_cost
         slot_of = {n: f"{'LR'[i // 5]}{i % 5 + 1}" for i, n in enumerate(roster)}
         for r, f in zip(rs, frames):
             t0 = time.perf_counter()
             mm = reader.minimap(f)
+            t1 = time.perf_counter()
             dets = model(mm[None])[0]
+            if model.device == "cuda":
+                torch.cuda.synchronize()
+            t2 = time.perf_counter()
             recs = reader.records(f, dets)
-            t_frame.append(time.perf_counter() - t0)
+            t3 = time.perf_counter()
+            t_frame.append((t3 - t0, t1 - t0, t2 - t1, t3 - t2))
             labs = r["icons"]
             pairs = match(dets, labs)
             tp += len(pairs)
@@ -217,10 +228,12 @@ def main() -> None:
                                                               + alive["fp"] + alive["fn"]), 4)},
         "timer": {"n": timer_n, "exact": round(timer_ok / max(1, timer_n), 4)},
         "misses": {k: v[:40] for k, v in misses.items()},
-        "ms_per_frame": {"median": round(1000 * float(np.median(t_frame)), 2),
-                         "mean": round(1000 * float(np.mean(t_frame)), 2)},
+        # Первые кадры — прогрев (CUDA, кеши), в замер не идут.
+        "ms_per_frame": {k: round(1000 * float(np.median([t[i] for t in t_frame[5:]])), 2)
+                         for i, k in enumerate(("total", "minimap_crop", "nets",
+                                                "hud_and_assign"))},
     })
-    out = Path(args.run) / "eval.json"
+    out = Path(args.run) / f"eval{args.tag}.json"
     out.write_text(json.dumps(rep, indent=1, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(rep, indent=1, ensure_ascii=False))
 
