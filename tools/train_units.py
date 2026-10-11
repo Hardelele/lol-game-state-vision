@@ -1,0 +1,279 @@
+"""Обучить детектор юнитов (lolvision/unit_net.py) на псевдо-метках полосок.
+
+Зачем. Этап 3 плана второй модели: псевдо-метки классических читателей
+(tools/build_unit_labels.py) → свой быстрый детектор. Сплит — по роликам:
+проверочные ролики в обучение не попадают.
+
+Аугментации (раздел 3.4 плана, «размер — не признак»): масштаб кадра
+×0.6–1.5 вместе с метками (лог-равномерно), случайный вырез 960×544;
+яркость/контраст; перекодирование JPEG с низким качеством и шум —
+полоски миньонов тонкие, сжатие видео их съедает (docs/pitfalls.md).
+
+Пример:
+    python tools/train_units.py --train ibUVbSX7ARU zJvTSjEnKNE ... \
+        --val 58w57eJ5Qks olmTXkkUv58 --epochs 30 --name net
+    # → runs/units/<имя>/model.pt, report.json, train.log
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import random
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+
+import _bootstrap  # noqa: F401
+from build_unit_labels import LABELS, label_keep
+from lolvision.unit_net import CLASSES, IN_H, IN_W, OUT_H, OUT_W, STRIDE, UnitNet, decode
+from lolvision.unit_targets import box_center, build_targets, ignore_map, match
+from lolvision.paths import ROOT, RUNS, TRAIN_LOG
+
+OUT = RUNS / "units"
+
+
+def load_rows(names: list[str]) -> list[dict]:
+    """Строки JSONL меток по именам наборов (имя файла = ID ролика или
+    `dataset:<ID>` — кадры этого ролика из общего dataset.jsonl)."""
+    rows = []
+    for n in names:
+        if n.startswith("dataset:"):
+            vid = n.split(":", 1)[1]
+            src = [json.loads(s) for s in (LABELS / "dataset.jsonl").open(encoding="utf-8")]
+            rows += [r for r in src if Path(r["frame"]).name.startswith(vid)]
+        else:
+            rows += [json.loads(s) for s in (LABELS / f"{n}.jsonl").open(encoding="utf-8")]
+    return [r for r in rows if "error" not in r]
+
+
+class UnitFrames(Dataset):
+    def __init__(self, rows: list[dict], keep: np.ndarray, ign: np.ndarray, train: bool,
+                 scale=(0.6, 1.5), jpeg_p: float = 0.5, noise_p: float = 0.3):
+        self.rows, self.keep, self.ign, self.train = rows, keep, ign, train
+        self.scale, self.jpeg_p, self.noise_p = scale, jpeg_p, noise_p
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, i: int):
+        r = self.rows[i]
+        img = cv2.imread(str(ROOT / r["frame"]))[..., ::-1]
+        img = img * self.keep[..., None]
+        if self.train:
+            lo, hi = self.scale
+            s = math.exp(random.uniform(math.log(lo), math.log(hi)))
+        else:
+            s = 1.0
+        f = 0.5 * s
+        nw, nh = round(1920 * f), round(1080 * f)
+        im = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if f < 1 else cv2.INTER_LINEAR)
+        ig = cv2.resize(self.ign, (nw, nh), interpolation=cv2.INTER_NEAREST)
+        # вырез 960×544 (или поле, если кадр меньше)
+        if self.train:
+            ox = random.randint(min(0, nw - IN_W), max(0, nw - IN_W))
+            oy = random.randint(min(0, nh - IN_H), max(0, nh - IN_H))
+        else:
+            ox, oy = 0, 0
+        x = np.zeros((IN_H, IN_W, 3), np.uint8)
+        g = np.ones((IN_H, IN_W), np.uint8)
+        sx0, sy0 = max(0, ox), max(0, oy)
+        dx0, dy0 = max(0, -ox), max(0, -oy)
+        cw = min(nw - sx0, IN_W - dx0)
+        ch = min(nh - sy0, IN_H - dy0)
+        x[dy0:dy0 + ch, dx0:dx0 + cw] = im[sy0:sy0 + ch, sx0:sx0 + cw]
+        g[dy0:dy0 + ch, dx0:dx0 + cw] = ig[sy0:sy0 + ch, sx0:sx0 + cw]
+        if self.train:
+            x = self.photometric(x)
+        units = []
+        for u in r["units"]:
+            cx, cy = box_center(u)
+            units.append({"kind": u["kind"], "team": u["team"], "hp": u.get("hp"),
+                          "x": cx * f - ox, "y": cy * f - oy})
+        t = build_targets(units, (OUT_H, OUT_W), STRIDE, s)
+        # область без меток — на сетке выхода: клетка без меток, если хоть
+        # один пиксель в ней без меток
+        gi = g.reshape(OUT_H, STRIDE, OUT_W, STRIDE).max((1, 3)).astype(np.float32)
+        xt = torch.from_numpy(np.ascontiguousarray(x)).permute(2, 0, 1)
+        return xt, {k: torch.from_numpy(v) for k, v in t.items()}, torch.from_numpy(gi)
+
+    def photometric(self, x: np.ndarray) -> np.ndarray:
+        a = x.astype(np.float32)
+        a = (a - 128) * random.uniform(0.85, 1.15) + 128 + random.uniform(-15, 15)
+        if random.random() < self.noise_p:
+            a += np.random.normal(0, random.uniform(2, 7), a.shape)
+        a = np.clip(a, 0, 255).astype(np.uint8)
+        if random.random() < self.jpeg_p:
+            q = random.randint(25, 85)
+            ok, buf = cv2.imencode(".jpg", a, [cv2.IMWRITE_JPEG_QUALITY, q])
+            a = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
+        return a
+
+
+def focal(pred: torch.Tensor, gt: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+    """Фокальная потеря CenterNet (α=2, β=4); w — 0 в области без меток."""
+    p = torch.sigmoid(pred.float()).clamp(1e-4, 1 - 1e-4)
+    pos = (gt >= 0.999).float()
+    neg = 1 - pos
+    lp = -torch.log(p) * (1 - p) ** 2 * pos
+    ln = -torch.log(1 - p) * p ** 2 * (1 - gt) ** 4 * neg * w
+    n = pos.sum().clamp(min=1)
+    return (lp.sum() + ln.sum()) / n
+
+
+def losses(out, t, ign):
+    heat, team, off, hp = out
+    w = (1 - ign)[:, None]
+    lh = focal(heat, t["heat"], w)
+    m = t["team_m"]
+    lt = (F.binary_cross_entropy_with_logits(team[:, 0].float(), t["team"], reduction="none")
+          * m).sum() / m.sum().clamp(min=1)
+    mo = t["off_m"]
+    lo = ((off.float() - t["off"]).abs().sum(1) * mo).sum() / mo.sum().clamp(min=1)
+    mh = t["hp_m"]
+    lhp = ((torch.sigmoid(hp[:, 0].float()) - t["hp"]).abs() * mh).sum() / mh.sum().clamp(min=1)
+    return lh, lt, lo, lhp
+
+
+@torch.no_grad()
+def evaluate(net, loader, dev, ign_full: np.ndarray, thr: float = 0.3) -> dict:
+    """Точность/полнота против псевдо-меток проверочных кадров (масштаб 1)."""
+    net.eval()
+    stats = {k: [0, 0, 0] for k in CLASSES}      # tp, fp, fn
+    team_ok = team_n = 0
+    hp_err = {k: [] for k in CLASSES}
+    rows = loader.dataset.rows
+    k = 0
+    for x, _, _ in loader:
+        x = x.to(dev).float() / 255
+        with torch.autocast("cuda", dtype=torch.float16):
+            out = net(x)
+        det = decode(*out, thr=thr).cpu().numpy()
+        for b in range(len(x)):
+            r = rows[k]
+            k += 1
+            preds = [{"kind": CLASSES[int(c)], "score": float(s), "x": float(px * 2),
+                      "y": float(py * 2), "team": "CHAOS" if tp > 0.5 else "ORDER", "hp": float(h)}
+                     for c, s, tp, px, py, _, h in det[b] if s > 0]
+            preds = [p for p in preds if ign_full[min(1079, int(p["y"])), min(1919, int(p["x"]))] == 0]
+            gts = []
+            for u in r["units"]:
+                cx, cy = box_center(u)
+                if ign_full[min(1079, max(0, int(cy))), min(1919, max(0, int(cx)))] == 0:
+                    gts.append({"kind": u["kind"], "x": cx, "y": cy, "team": u["team"],
+                                "hp": u.get("hp")})
+            pairs, fp, fn = match(preds, gts)
+            for i, j in pairs:
+                stats[gts[j]["kind"]][0] += 1
+                team_ok += preds[i]["team"] == gts[j]["team"]
+                team_n += 1
+                if gts[j]["hp"] is not None:
+                    hp_err[gts[j]["kind"]].append(abs(preds[i]["hp"] - gts[j]["hp"]))
+            for i in fp:
+                stats[preds[i]["kind"]][1] += 1
+            for j in fn:
+                stats[gts[j]["kind"]][2] += 1
+    res = {}
+    for c, (tp, fp, fn) in stats.items():
+        p = tp / max(1, tp + fp)
+        rc = tp / max(1, tp + fn)
+        res[c] = {"tp": tp, "fp": fp, "fn": fn, "precision": round(p, 4), "recall": round(rc, 4),
+                  "f1": round(2 * p * rc / max(1e-9, p + rc), 4),
+                  "hp_mae": round(float(np.mean(hp_err[c])), 4) if hp_err[c] else None}
+    res["team_acc"] = round(team_ok / max(1, team_n), 4)
+    net.train()
+    return res
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--train", nargs="+", required=True)
+    ap.add_argument("--val", nargs="+", required=True)
+    ap.add_argument("--name", default="net")
+    ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--lr", type=float, default=2e-3)
+    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--widths", type=int, nargs=5, default=(24, 48, 96, 160, 256))
+    ap.add_argument("--depths", type=int, nargs=5, default=(1, 2, 3, 3, 2))
+    ap.add_argument("--head", type=int, default=64)
+    ap.add_argument("--scale", type=float, nargs=2, default=(0.6, 1.5))
+    ap.add_argument("--no-codec-aug", action="store_true", help="без JPEG и шума (абляция)")
+    ap.add_argument("--seed", type=int, default=0)
+    args = ap.parse_args()
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    dev = "cuda"
+    keep = label_keep()
+    ign = ignore_map(keep)
+    tr_rows, va_rows = load_rows(args.train), load_rows(args.val)
+    jp, npz = (0.0, 0.0) if args.no_codec_aug else (0.5, 0.3)
+    tr = UnitFrames(tr_rows, keep, ign, True, tuple(args.scale), jp, npz)
+    va = UnitFrames(va_rows, keep, ign, False)
+    tl = DataLoader(tr, args.batch, shuffle=True, num_workers=args.workers, drop_last=True,
+                    persistent_workers=True, pin_memory=True)
+    vl = DataLoader(va, args.batch, shuffle=False, num_workers=args.workers)
+
+    net = UnitNet(tuple(args.widths), tuple(args.depths), args.head).to(dev)
+    net = net.to(memory_format=torch.channels_last)
+    opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+    steps = args.epochs * len(tl)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=steps, pct_start=0.05)
+    scaler = torch.amp.GradScaler()
+    out = OUT / args.name
+    out.mkdir(parents=True, exist_ok=True)
+    log = (out / TRAIN_LOG).open("a", encoding="utf-8")
+    nparam = sum(p.numel() for p in net.parameters())
+    print(f"train {len(tr)} кадров, val {len(va)}, параметров {nparam / 1e6:.2f} М", file=log,
+          flush=True)
+    best, best_res = -1.0, None
+    t0 = time.time()
+    for ep in range(args.epochs):
+        acc = np.zeros(4)
+        for x, t, ig in tl:
+            x = x.to(dev, non_blocking=True).float().div_(255).contiguous(
+                memory_format=torch.channels_last)
+            t = {k: v.to(dev, non_blocking=True) for k, v in t.items()}
+            ig = ig.to(dev, non_blocking=True)
+            with torch.autocast("cuda", dtype=torch.float16):
+                o = net(x)
+            ls = losses(o, t, ig)
+            loss = ls[0] + ls[1] + ls[2] + 2 * ls[3]
+            opt.zero_grad(set_to_none=True)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+            sched.step()
+            acc += [v.item() for v in ls]
+        acc /= len(tl)
+        res = evaluate(net, vl, dev, ign)
+        f1 = (res["champion"]["f1"] + res["minion"]["f1"]) / 2
+        msg = (f"ep {ep + 1} {time.time() - t0:.0f}s loss heat {acc[0]:.3f} team {acc[1]:.3f} "
+               f"off {acc[2]:.3f} hp {acc[3]:.3f} | " +
+               " ".join(f"{c} P{res[c]['precision']:.3f} R{res[c]['recall']:.3f}" for c in CLASSES)
+               + f" team {res['team_acc']:.3f}")
+        print(msg, flush=True)
+        print(msg, file=log, flush=True)
+        if f1 > best:
+            best, best_res = f1, res
+            torch.save({"state": net.state_dict(), "widths": args.widths, "depths": args.depths,
+                        "head": args.head, "classes": CLASSES, "epoch": ep + 1,
+                        "train": args.train, "val": args.val}, out / "model.pt")
+    report = {"args": vars(args), "train_frames": len(tr), "val_frames": len(va),
+              "params_m": round(nparam / 1e6, 3), "best_val_vs_pseudo": best_res,
+              "minutes": round((time.time() - t0) / 60, 1)}
+    (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n",
+                                     encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False, indent=1))
+
+
+if __name__ == "__main__":
+    main()
