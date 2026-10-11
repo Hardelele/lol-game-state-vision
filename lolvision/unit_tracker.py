@@ -1,0 +1,272 @@
+"""Постоянные id сущностей на карте: один и тот же юнит на разных кадрах.
+
+Зачем (#782). Детектор юнитов (unit_net.py) отвечает про один кадр: «миньон
+в точке (x, y)». Для контекста матча (#780) нужно знать, что это тот же
+крип, что секунду назад, найти его снова после короткой потери и отличить
+«умер» от «ушёл из кадра». У каждой сущности — свой id, у экземпляра, а не у
+места: следующая волна, новый вард на том же месте — новые id.
+
+Как.
+
+* Сопоставление идёт **на карте**, а не на экране: камера двигается, и
+  экранные координаты одного крипа на соседних кадрах расходятся на сотни
+  пикселей. Точка экрана переводится в смещение от центра камеры
+  гомографией dataset/layouts/projection.json (камера наклонена: масштаб по
+  высоте кадра меняется на ~28%, «центр плюс доля вида» неверен), центр
+  камеры — ответ модели камеры.
+* Предсказание места — по скорости трека; сопоставление — венгерским
+  алгоритмом внутри (класс, команда) со стробом по расстоянию: юнит не может
+  пройти больше, чем позволяет его скорость за прошедшее время. У миньона
+  ХП не растёт — рост ХП штрафуется.
+* Чемпион с именем (live_champions) — трек `champ-<команда>-<имя>`: имя
+  важнее геометрии.
+* Трек без пары: если он должен быть виден (предсказанное место внутри
+  зоны ответов детектора) и ХП было на исходе — **умер**; виден, но не
+  найден несколько кадров подряд — **потерян**; вне кадра — **не виден**,
+  и живёт, пока срок не выйдет (миньон 20 с, вард 3 мин). Найден снова в
+  пределах строба — прежний id.
+
+id: `<линия>-<класс>-<8 знаков>` для миньонов (линия по месту рождения:
+top / mid / bot / jungle), `ward-…`, `champ-ORDER-Volibear`.
+
+Ограничение: при 1 кадре/с миньон проходит ~325 ед. — больше шага между
+соседями в волне (~100–150 ед.), и пары внутри плотной волны путаются;
+для трекинга волн нужен поток 3+ кадр/с.
+"""
+
+from __future__ import annotations
+
+import secrets
+import string
+from dataclasses import dataclass, field
+
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+
+from lolvision.geometry import MAP_UNITS, apply_h
+
+# Скорость с запасом, ед./с (миньон 325, чемпион до ~500 с бонусами), и
+# базовый строб — ошибка проекции и детектора (~60–100 ед.).
+SPEED = {"champion": 600.0, "minion": 420.0, "ward": 0.0}
+GATE0 = {"champion": 260.0, "minion": 160.0, "ward": 120.0}
+EXPIRE = {"champion": 1e9, "minion": 20.0, "ward": 180.0}   # с без наблюдений
+CONFIRM = 2              # пар подряд, чтобы трек стал настоящим (не мусор детектора)
+MISS_IN_VIEW = 3         # кадров «должен быть виден, но нет» — потерян
+DEATH_HP = 0.3           # ХП на последнем наблюдении, ниже — исчезновение в кадре = смерть
+HP_RISE_COST = 400.0     # ед. штрафа за рост ХП у миньона на всю шкалу
+ALPHABET = string.ascii_lowercase + string.digits
+
+
+# Линии как ломаные на миникарте (доли, синяя база внизу слева): верхняя —
+# по левому краю и верху, нижняя — по низу и правому краю, средняя —
+# диагональ между базами.
+LANES = {"top": ((0.08, 0.80), (0.08, 0.08), (0.80, 0.08)),
+         "bot": ((0.20, 0.92), (0.92, 0.92), (0.92, 0.20)),
+         "mid": ((0.20, 0.80), (0.80, 0.20))}
+LANE_DIST = 0.13          # дальше от всех линий — лес
+
+
+def _seg_dist(p: np.ndarray, a, b) -> float:
+    a, b = np.asarray(a), np.asarray(b)
+    t = np.clip(np.dot(p - a, b - a) / np.dot(b - a, b - a), 0, 1)
+    return float(np.hypot(*(p - a - t * (b - a))))
+
+
+def lane_of(u: float, v: float) -> str:
+    """Линия по месту на карте: ближайшая из LANES или лес."""
+    p = np.array([u, v])
+    d = {k: min(_seg_dist(p, a, b) for a, b in zip(pts, pts[1:])) for k, pts in LANES.items()}
+    k = min(d, key=d.get)
+    return k if d[k] < LANE_DIST else "jungle"
+
+
+def new_id(kind: str, team: str, u: float, v: float, name: str | None = None) -> str:
+    if kind == "champion" and name:
+        return f"champ-{team}-{name}"
+    tail = "".join(secrets.choice(ALPHABET) for _ in range(8))
+    if kind == "minion":
+        return f"{lane_of(u, v)}-minion-{tail}"
+    return f"{kind}-{tail}"
+
+
+class Projection:
+    """Пиксель кадра ↔ точка карты (доли) при данном центре камеры."""
+
+    def __init__(self, h: np.ndarray, scene_size: tuple[int, int], crop: tuple[int, int, int, int]):
+        self.h, self.hi = h, np.linalg.inv(h)
+        self.sw, self.sh = scene_size
+        self.crop = crop
+
+    def to_map(self, xy: np.ndarray, cam: tuple[float, float]) -> np.ndarray:
+        cx0, cy0, cx1, cy1 = self.crop
+        s = np.c_[(xy[:, 0] - cx0) / (cx1 - cx0) * self.sw, (xy[:, 1] - cy0) / (cy1 - cy0) * self.sh]
+        return apply_h(self.h, s) + np.asarray(cam)
+
+    def to_frame(self, uv: np.ndarray, cam: tuple[float, float]) -> np.ndarray:
+        cx0, cy0, cx1, cy1 = self.crop
+        s = apply_h(self.hi, uv - np.asarray(cam))
+        return np.c_[s[:, 0] / self.sw * (cx1 - cx0) + cx0, s[:, 1] / self.sh * (cy1 - cy0) + cy0]
+
+
+@dataclass
+class Track:
+    id: str
+    kind: str
+    team: str
+    uv: np.ndarray                 # место на карте (доли)
+    vel: np.ndarray                # доли карты в секунду
+    t: float                       # последнее наблюдение
+    born: float
+    hp: float
+    name: str | None = None
+    hits: int = 1
+    miss: int = 0                  # кадров подряд «должен быть виден, но нет»
+    state: str = "new"             # new / seen / unseen / lost / dead
+    xy: tuple[float, float] | None = None   # место в кадре на последнем наблюдении (доли)
+
+    def predict(self, t: float) -> np.ndarray:
+        return self.uv + self.vel * (t - self.t)
+
+
+@dataclass
+class UnitTracker:
+    proj: Projection
+    frame_size: tuple[int, int] = (1920, 1080)
+    valid: np.ndarray | None = None        # (H, W) 0/1: где детектор отвечает
+    tracks: list[Track] = field(default_factory=list)
+    gone: list[Track] = field(default_factory=list)   # умершие и истёкшие (для отчёта)
+
+    def visible(self, uv: np.ndarray, cam) -> np.ndarray:
+        """Должна ли точка карты быть видна детектору при этой камере."""
+        if not len(uv):
+            return np.zeros(0, bool)
+        xy = self.proj.to_frame(uv, cam)
+        w, h = self.frame_size
+        ok = (xy[:, 0] >= 0) & (xy[:, 0] < w) & (xy[:, 1] >= 0) & (xy[:, 1] < h)
+        if self.valid is not None:
+            ix = np.clip(xy[:, 0].astype(int), 0, w - 1)
+            iy = np.clip(xy[:, 1].astype(int), 0, h - 1)
+            ok &= self.valid[iy, ix] > 0
+        return ok
+
+    def update(self, t: float, cam: tuple[float, float] | None, units: list) -> list[dict]:
+        """Кадр: время (с), центр камеры (доли карты) и юниты строки live
+        [класс, команда, x, y (доли кадра), ХП, оценка, имя?] → события.
+        Без камеры (нет ответа модели) кадр пропускается: на карту его не
+        перевести."""
+        ev: list[dict] = []
+        if cam is None or not np.all(np.isfinite(cam)):
+            return ev
+        w, h = self.frame_size
+        dets = [u for u in units if u[0] in SPEED]
+        xy = np.array([[u[2] * w, u[3] * h] for u in dets]).reshape(-1, 2)
+        uv = self.proj.to_map(xy, cam) if len(dets) else np.zeros((0, 2))
+        used = set()
+        matched_tracks = set()
+        live = [k for k, tr in enumerate(self.tracks) if tr.state not in ("dead",)]
+        for kind in SPEED:
+            for team in ("ORDER", "CHAOS"):
+                di = [i for i, u in enumerate(dets) if u[0] == kind and u[1] == team]
+                ti = [k for k in live if self.tracks[k].kind == kind and self.tracks[k].team == team]
+                if not di or not ti:
+                    continue
+                cost = np.full((len(di), len(ti)), 1e9)
+                for a, i in enumerate(di):
+                    name = dets[i][6] if len(dets[i]) > 6 else None
+                    for b, k in enumerate(ti):
+                        tr = self.tracks[k]
+                        if name and tr.name:
+                            cost[a, b] = 0.0 if name == tr.name else 1e9
+                            continue
+                        dt = max(0.0, t - tr.t)
+                        d = np.hypot(*(uv[i] - tr.predict(t))) * MAP_UNITS
+                        gate = GATE0[kind] + SPEED[kind] * dt
+                        if d > gate:
+                            continue
+                        c = d
+                        if kind == "minion" and dets[i][4] > tr.hp + 0.1:
+                            c += HP_RISE_COST * (dets[i][4] - tr.hp)
+                        cost[a, b] = c
+                rows, cols = linear_sum_assignment(cost)
+                for a, b in zip(rows, cols):
+                    if cost[a, b] >= 1e9:
+                        continue
+                    i, k = di[a], ti[b]
+                    self._observe(self.tracks[k], t, uv[i], dets[i], ev)
+                    used.add(i)
+                    matched_tracks.add(k)
+        # Треки без пары: умер / потерян / не виден.
+        vis = self.visible(np.array([tr.predict(t) for tr in self.tracks]).reshape(-1, 2), cam)
+        for k, tr in enumerate(self.tracks):
+            if k in matched_tracks or tr.state == "dead":
+                continue
+            if vis[k]:
+                tr.miss += 1
+                if tr.kind == "minion" and tr.hp <= DEATH_HP and tr.state != "new":
+                    tr.state = "dead"
+                    ev.append({"t": t, "type": "unit_death", "id": tr.id, "kind": tr.kind,
+                               "team": tr.team, "at": [round(float(x), 4) for x in tr.uv]})
+                elif tr.miss >= MISS_IN_VIEW:
+                    tr.state = "lost"
+            else:
+                tr.state = "unseen" if tr.state != "new" else "new"
+        # Новые треки из детекций без пары.
+        for i, u in enumerate(dets):
+            if i in used:
+                continue
+            name = u[6] if len(u) > 6 else None
+            if name and any(tr.name == name for tr in self.tracks):
+                continue                    # чемпион с этим именем уже есть
+            self.tracks.append(Track(new_id(u[0], u[1], *uv[i], name), u[0], u[1], uv[i].copy(),
+                                     np.zeros(2), t, t, float(u[4]), name,
+                                     xy=(float(u[2]), float(u[3]))))
+        # Сроки: умершие и давно не виденные уходят из активных.
+        keep = []
+        for tr in self.tracks:
+            old = t - tr.t > EXPIRE[tr.kind] or (tr.state == "new" and t - tr.t > 3.0)
+            if tr.state == "dead" or old:
+                if tr.state != "new":
+                    self.gone.append(tr)
+                continue
+            keep.append(tr)
+        self.tracks = keep
+        return ev
+
+    def _observe(self, tr: Track, t: float, uv: np.ndarray, det: list, ev: list) -> None:
+        dt = t - tr.t
+        if dt > 0:
+            v = (uv - tr.uv) / dt
+            # Скорость сглаживается: одно наблюдение с ошибкой проекции не
+            # должно развернуть трек.
+            tr.vel = v if tr.hits == 1 else 0.5 * tr.vel + 0.5 * v
+            if np.hypot(*tr.vel) * MAP_UNITS > SPEED[tr.kind] * 1.5:
+                tr.vel = np.zeros(2)
+        tr.uv, tr.t, tr.hp = uv.copy(), t, float(det[4])
+        tr.xy = (float(det[2]), float(det[3]))
+        tr.hits += 1
+        tr.miss = 0
+        if len(det) > 6 and det[6] and not tr.name:
+            # Имя прочиталось позже рождения трека: id становится именным —
+            # один раз, дальше он не меняется.
+            tr.name = det[6]
+            tr.id = new_id(tr.kind, tr.team, *tr.uv, tr.name)
+        if tr.state == "new" and tr.hits >= CONFIRM:
+            tr.state = "seen"
+            ev.append({"t": t, "type": "unit_new", "id": tr.id, "kind": tr.kind, "team": tr.team})
+        elif tr.state != "new":
+            tr.state = "seen"
+
+    def frame_view(self, t: float) -> list[list]:
+        """Активные треки для строки кадра: [id, класс, команда, состояние,
+        u, v, x, y (доли кадра или None), ХП, возраст (с)]. Неподтверждённые
+        («new») не выдаются: это может быть мусор детектора."""
+        out = []
+        for tr in self.tracks:
+            if tr.state == "new":
+                continue
+            p = tr.predict(t) if tr.state != "seen" else tr.uv
+            xy = tr.xy if tr.state == "seen" else None
+            out.append([tr.id, tr.kind, tr.team, tr.state, round(float(p[0]), 4), round(float(p[1]), 4),
+                        xy[0] if xy else None, xy[1] if xy else None, round(tr.hp, 2),
+                        round(t - tr.t, 1)])
+        return out

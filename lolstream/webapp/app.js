@@ -303,10 +303,14 @@ function render() {
 function drawUnits(f) {
   const W = 640, H = 360;
   let s = "";
+  // id трека (unit_tracker.py, #782) — у видимых треков место в кадре то же,
+  // что у юнита детектора.
+  const ids = new Map((f.tracks || []).filter((t) => t[3] === "seen").map((t) => [`${t[6]},${t[7]}`, t[0]]));
   for (const [k, team, ux, uy, hp, sc, name] of f.units || []) {
     const x = ux * W, y = uy * H, c = team === "ORDER" ? "uo" : "uc";
     const who = name ? `${name} · ` : "";
-    const tip = `<title>${esc(who)}${k} · ${team} · ХП ${Math.round(hp * 100)}% · ${num(sc, 2)}</title>`;
+    const id = ids.get(`${ux},${uy}`);
+    const tip = `<title>${id ? `${esc(id)} · ` : ""}${esc(who)}${k} · ${team} · ХП ${Math.round(hp * 100)}% · ${num(sc, 2)}</title>`;
     if (k === "champion") {
       s += `<g class="unit ${c}">${tip}<circle cx="${x}" cy="${y}" r="13"/>` +
         `<rect class="hpbg" x="${x - 14}" y="${y - 24}" width="28" height="4"/>` +
@@ -316,7 +320,8 @@ function drawUnits(f) {
     } else if (k === "minion") {
       s += `<g class="unit ${c}">${tip}<circle class="dot" cx="${x}" cy="${y}" r="3.2"/>` +
         `<rect class="hpbg" x="${x - 7}" y="${y - 9}" width="14" height="2"/>` +
-        `<rect class="hp" x="${x - 7}" y="${y - 9}" width="${14 * hp}" height="2"/></g>`;
+        `<rect class="hp" x="${x - 7}" y="${y - 9}" width="${14 * hp}" height="2"/>` +
+        (id && S.names ? `<text class="uid" x="${x}" y="${y + 10}">${esc(id.slice(-4))}</text>` : "") + "</g>";
     } else {
       s += `<g class="unit ${c}">${tip}<path class="ward" d="M${x} ${y - 6}L${x + 5} ${y}` +
         `L${x} ${y + 6}L${x - 5} ${y}Z"/></g>`;
@@ -354,6 +359,15 @@ function drawChamps(f) {
       ` width="${2 * r}" height="${2 * r}" clip-path="url(#chClip)"/>` +
       `<circle cx="${x}" cy="${y}" r="${r}"/>` +
       `<text x="${Math.min(Math.max(x, 24), 232)}" y="${Math.min(y + r + 7, 254)}">${Math.round(age)}с</text></g>`;
+  }
+  // Треки миньонов и вардов на миникарте — поверх иконок: волна часто стоит
+  // прямо под чемпионом. Видимые — ярко, ушедшие из кадра (трекер помнит,
+  // где они должны быть) — тускло.
+  for (const [id, k, team, st, u, v, , , hp, age] of f.tracks || []) {
+    if (k === "champion") continue;
+    const c = team === "ORDER" ? "uo" : "uc";
+    s += `<circle class="trk ${c} ${st}" cx="${u * 256}" cy="${v * 256}" r="${k === "ward" ? 2.6 : 2}">` +
+      `<title>${esc(id)} · ${st === "seen" ? "виден" : `не виден ${age} с`} · ХП ${Math.round(hp * 100)}%</title></circle>`;
   }
   $("champSvg").innerHTML = s;
 }
