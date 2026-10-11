@@ -47,12 +47,14 @@ import io
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Protocol
 
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from lolvision.paths import DEFAULT_LAYOUT, RUNS, run_dir
@@ -256,6 +258,10 @@ class Session:
         self._stop = threading.Event()
         self._champs: LiveChampions | None = None
         self._lock = threading.Lock()
+        # Сжатие картинок и запись кадра в сеанс — в своём потоке: путь кадра
+        # его не ждёт. Один исполнитель — кадры ложатся строго по порядку.
+        self._n_emit = 0
+        self._out = ThreadPoolExecutor(1, thread_name_prefix="live-out")
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
 
@@ -292,6 +298,7 @@ class Session:
         except Exception as exc:                              # noqa: BLE001
             self._fail(f"{type(exc).__name__}: {exc}")
         finally:
+            self._out.shutdown(wait=True)
             if self._champs is not None:
                 self._champs.close()             # поток чтения состава
 
@@ -361,6 +368,15 @@ class Session:
         kind_p = None
         n_frame = 0
 
+        # Кадр грузится в видеопамять один раз, через закреплённый буфер, и
+        # дальше его режут на месте подготовка камеры, детектор юнитов и
+        # уменьшенная копия для показа. Раньше каждая модель грузила свои
+        # 6 МБ сама.
+        fr_pin = fr_dev = None
+        if self.device.startswith("cuda"):
+            fr_pin = torch.empty((h, w, 3), dtype=torch.uint8).pin_memory()
+            fr_dev = torch.empty((h, w, 3), dtype=torch.uint8, device=self.device)
+
         self.state = State.RUNNING
 
         # Размер рамки вьюпорта постоянен внутри ролика, но по первому кадру
@@ -387,8 +403,11 @@ class Session:
                 fr[mmbox[1]:mmbox[3], mmbox[0]:mmbox[2]])).resize((MM, MM), Image.LANCZOS)
             mask = white_mask(np.asarray(mini, dtype=np.float32))
             t2 = time.perf_counter()
+            if fr_dev is not None:
+                fr_pin.numpy()[:] = fr
+                fr_dev.copy_(fr_pin, non_blocking=True)
             if gpu_prep is not None:
-                prep, scene = gpu_prep(fr)
+                prep, scene = gpu_prep(fr_dev)
             else:
                 scene = cpu_scene(fr)
                 prep = model.prepare(Image.fromarray(scene))
@@ -404,7 +423,7 @@ class Session:
             units = None
             if unit_model is not None:
                 t4 = time.perf_counter()
-                units = unit_model.units(fr)
+                units = unit_model.units(fr_dev)
                 ms["units_list"] = [
                     [u.kind, u.team, round(u.x / w, 4), round(u.y / h, 4), round(u.hp, 2),
                      round(u.score, 2)] for u in units]
@@ -421,8 +440,7 @@ class Session:
                     for row_u, name in zip(ms["units_list"], champs.who(fr, units)):
                         row_u.append(name)
                     ms["who"] = (time.perf_counter() - t6) * 1000
-            ms["full_img"] = cv2.resize(fr, (FULL_STORE_W, FULL_STORE_W * h // w),
-                                        interpolation=cv2.INTER_AREA)
+            ms["full_img"] = _full_small(fr, fr_dev)
             n_frame += 1
 
             if bw is None:
@@ -449,6 +467,7 @@ class Session:
             for m, s, p, mi, t in warm:
                 self._emit(m, s, p, mi, bw, bh, model, t)
 
+        self._out.shutdown(wait=True)    # все кадры записаны — тогда конец
         if self.state is State.RUNNING:
             self.state = State.STOPPED if self._stop.is_set() else State.ENDED
 
@@ -468,7 +487,10 @@ class Session:
         ms.update(mt)
 
         t0 = time.perf_counter()
-        i = len(self.rows)
+        # Номер кадра — свой счётчик: строки ложатся в self.rows позже, из
+        # потока сжатия.
+        i = self._n_emit
+        self._n_emit += 1
         row = {"i": i, "t": round(self.start + i / self.fps, 2),
                "cx": round(cx, 4), "cy": round(cy, 4),
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
@@ -496,11 +518,21 @@ class Session:
                 c = KIND_CLASSES.index("other")
             row["kind"] = KIND_CLASSES[c]
             row["kind_p"] = round(float(kp[int(np.argmax(kp))]), 3)
+        ms["out"] = (time.perf_counter() - t0) * 1000
+        row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
+        self._out.submit(self._store, row, scene, full_img, mini, hm)
+
+    def _store(self, row: dict, scene: np.ndarray, full_img: np.ndarray | None,
+               mini: Image.Image, hm: np.ndarray) -> None:
+        """Сжать картинки кадра и положить кадр в сеанс (поток self._out).
+        Строка появляется вместе с картинками: смотрелка не попросит кадр,
+        которого ещё нет. Время сжатия — row["ms"]["enc"], вне пути кадра."""
+        t0 = time.perf_counter()
         sj = _jpeg(Image.fromarray(scene), 85)
         fj = _jpeg(Image.fromarray(full_img), 80) if full_img is not None else None
         mj = _jpeg(mini.resize((MINI_STORE, MINI_STORE)), 82)
-        ms["out"] = (time.perf_counter() - t0) * 1000
-        row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
+        row["ms"]["enc"] = round((time.perf_counter() - t0) * 1000, 2)
+        i = row["i"]
         with self._lock:
             self.scene[i] = sj
             self.mini[i] = mj
@@ -510,6 +542,18 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+def _full_small(fr: np.ndarray, fr_dev: torch.Tensor | None) -> np.ndarray:
+    """Кадр целиком шириной FULL_STORE_W для показа юнитов: на видеокарте из
+    уже загруженного кадра (среднее по площади, как cv2.INTER_AREA), без неё —
+    на процессоре."""
+    h, w = fr.shape[:2]
+    size = (FULL_STORE_W * h // w, FULL_STORE_W)
+    if fr_dev is None:
+        return cv2.resize(fr, size[::-1], interpolation=cv2.INTER_AREA)
+    x = F.interpolate(fr_dev.permute(2, 0, 1)[None].float(), size=size, mode="area")
+    return x[0].permute(1, 2, 0).round_().to(torch.uint8).cpu().numpy()
 
 
 def _r(v, n: int):
