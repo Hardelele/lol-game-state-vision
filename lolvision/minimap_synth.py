@@ -140,7 +140,8 @@ def _distractors(img: np.ndarray, rng: np.random.Generator) -> None:
             x += 4 * np.cos(ang) + rng.normal(0, 0.6)
             y += 4 * np.sin(ang) + rng.normal(0, 0.6)
             cv2.circle(img, (int(x * 4), int(y * 4)), int(rng.uniform(1.6, 2.6) * 4),
-                       tuple(float(v) for v in np.clip(np.array(col) * rng.uniform(0.8, 1.3), 0, 255)),
+                       tuple(float(v) for v in
+                             np.clip(np.array(col) * rng.uniform(0.8, 1.3), 0, 255)),
                        -1, cv2.LINE_AA, shift=2)
     # Значки вардов, пингов, лагерей: мелкие фигуры разных цветов.
     for _ in range(int(rng.integers(0, 10))):
@@ -202,7 +203,8 @@ def synth(bg: np.ndarray, icons: list[np.ndarray], rng: np.random.Generator,
     img = bg.astype(np.float32) * rng.uniform(0.9, 1.1) + rng.normal(0, 3, 3)
     _distractors(img, rng)
     if k is None:
-        k = int(rng.choice(np.arange(0, 11), p=[.04, .08, .1, .12, .12, .12, .11, .1, .08, .07, .06]))
+        k = int(rng.choice(np.arange(0, 11),
+                           p=[.04, .08, .1, .12, .12, .12, .11, .1, .08, .07, .06]))
     champs = rng.choice(len(icons), size=k, replace=False)
     out: list[Icon] = []
     shapes: list[tuple[int, int, np.ndarray]] = []    # (x0, y0, маска круга) для видимости

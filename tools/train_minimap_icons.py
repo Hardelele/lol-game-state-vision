@@ -1,7 +1,7 @@
 """Обучить детектор и классификатор иконок миникарты (lolvision/minimap_icons.py).
 
 Этап 1 — только синтетика: иконки Data Dragon на чистых фонах
-(tools/minimap_backgrounds.py), генерация на лету в процессах DataLoader.
+(tools/minimap_backgrounds.py), генерация на лету в пуле процессов.
 Этап 2 (`--real`) — к синтетике подмешиваются реальные миникарты обучающих
 роликов с псевдо-метками (tools/pseudo_minimap.py): уверенные детекции —
 положительные, сомнительные — «не учитывать»; вырезы для классификатора —
@@ -10,7 +10,7 @@
 Пример:
     python tools/train_minimap_icons.py --out runs/minimap/icons-syn
     python tools/train_minimap_icons.py --init runs/minimap/icons-syn \
-        --real data/minimap/pseudo.npz --out runs/minimap/icons
+        --real data/minimap --out runs/minimap/icons
 """
 
 from __future__ import annotations
@@ -69,7 +69,13 @@ def _init_worker(real: str | None) -> None:
     cv2.setNumThreads(1)          # иначе процессы пула душат друг друга потоками
     _W["icons"] = list(ddragon.load_icons().values())
     _W["bgs"] = np.load(BG)["bg"]
-    _W["real"] = dict(np.load(real, allow_pickle=True)) if real else None
+    if real:
+        # Миникарты — через mmap: каждому процессу пула не нужна своя копия.
+        _W["real"] = {"mini": np.load(Path(real) / "pseudo_mini.npy", mmap_mode="r"),
+                      "labels": json.loads((Path(real) / "pseudo_labels.json")
+                                           .read_text(encoding="utf-8"))["labels"]}
+    else:
+        _W["real"] = None
 
 
 def make_chunk(seed: int, n: int, real_frac: float) -> list[tuple]:
@@ -84,7 +90,7 @@ def make_chunk(seed: int, n: int, real_frac: float) -> list[tuple]:
     for _ in range(n):
         if real is not None and rng.random() < real_frac:
             i = int(rng.integers(len(real["mini"])))
-            img = real["mini"][i]
+            img = np.array(real["mini"][i])
             labs = real["labels"][i]
             ics = [(float(a[0]), float(a[1]), int(a[2]), bool(a[3])) for a in labs]
             cl = [(float(a[0]), float(a[1]), int(a[4]), int(a[2])) for a in labs
@@ -114,7 +120,8 @@ def stream(workers: int, batch: int, seed: int, real: str | None, real_frac: flo
         buf: list = []
         while True:
             while len(pending) < workers * 3:
-                pending.append(pool.apply_async(make_chunk, (seed * 1_000_003 + k, chunk, real_frac)))
+                pending.append(pool.apply_async(
+                    make_chunk, (seed * 1_000_003 + k, chunk, real_frac)))
                 k += 1
             buf += pending.popleft().get()
             while len(buf) >= batch:
@@ -183,6 +190,14 @@ def evaluate(det, cls, val, dev) -> dict:
             "cls_top1_all": round(ok / max(1, tot), 4)}
 
 
+def save(out: Path, det, cls, champs, args, rep) -> None:
+    tmp = out / "model.pt.tmp"
+    torch.save({"det": det.state_dict(), "cls": cls.state_dict(), "champions": champs,
+                "ddragon": ddragon.DEFAULT_VERSION, "det_w": 32, "cls_w": 48, "thr": 0.3,
+                "args": vars(args), "synth_val": rep}, tmp)
+    tmp.replace(out / "model.pt")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", required=True)
@@ -191,7 +206,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--init", default=None, help="прогон, с которого продолжить")
-    ap.add_argument("--real", default=None, help="псевдо-метки реальных миникарт (.npz)")
+    ap.add_argument("--real", default=None,
+                    help="каталог псевдо-меток (pseudo_mini.npy, pseudo_labels.json)")
     ap.add_argument("--real-frac", type=float, default=0.5)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -238,16 +254,16 @@ def main() -> None:
             msg = (f"it {it} loss {loss.item():.3f} heat {l_heat.item():.3f} off {l_off.item():.3f}"
                    f" cls {l_cls.item() if len(cr) else 0:.3f} {time.time() - t0:.0f}s")
             if it % 2000 == 0 or it == args.iters:
-                msg += " " + json.dumps(evaluate(det, cls, val, dev))
+                rep = evaluate(det, cls, val, dev)
+                msg += " " + json.dumps(rep)
+                save(out, det, cls, champs, args, rep)      # прерванный прогон не пропадает
             print(msg, flush=True)
             log.write(msg + "\n")
             log.flush()
         if it >= args.iters:
             break
     rep = evaluate(det, cls, val, dev)
-    torch.save({"det": det.state_dict(), "cls": cls.state_dict(), "champions": champs,
-                "ddragon": ddragon.DEFAULT_VERSION, "det_w": 32, "cls_w": 48, "thr": 0.3,
-                "args": vars(args), "synth_val": rep}, out / "model.pt")
+    save(out, det, cls, champs, args, rep)
     (out / "report.json").write_text(json.dumps({"synth_val": rep, "args": vars(args),
                                                  "seconds": round(time.time() - t0)},
                                                 indent=1, ensure_ascii=False), encoding="utf-8")
