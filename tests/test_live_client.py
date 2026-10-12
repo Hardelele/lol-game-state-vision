@@ -30,6 +30,7 @@ from lolstream.live_client import (
     parse_events,
     read_journal,
     replay,
+    spell_id,
     status_observation,
 )
 
@@ -104,6 +105,77 @@ def test_champion_is_ddragon_id_not_localized_name():
     assert cid is None and "формат" in why
     cid, why = champion_id("game_character_displayname_Annie", None)
     assert cid is None and "Data Dragon" in why
+
+
+# --- заклинания призывателя (#804) ---
+
+def spell(raw_id: str, name: str = "") -> dict:
+    return {"displayName": name,
+            "rawDescription": f"GeneratedTip_SummonerSpell_{raw_id}_Description",
+            "rawDisplayName": f"GeneratedTip_SummonerSpell_{raw_id}_DisplayName"}
+
+
+def test_riot_sample_spells_by_slot():
+    (p,) = parse_allgamedata(sample(), champion_index(IDS)).players
+    assert [(x.slot, x.family, x.variant, x.name) for x in p.spells] == [
+        (1, "SummonerFlash", "SummonerFlash", "Flash"), (2, "SummonerDot", "SummonerDot", "Ignite")]
+    assert p.spells_reason is None
+    assert p.to_dict()["spells"][0]["raw"] == "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+
+
+@pytest.mark.parametrize("raw_id, family", [
+    # сырые значения журналов своей игры 2026-10-12
+    ("SummonerTeleport", "SummonerTeleport"),
+    ("S12_SummonerTeleportUpgrade", "SummonerTeleport"),
+    ("SummonerSmite", "SummonerSmite"),
+    ("S5_SummonerSmitePlayerGanker", "SummonerSmite"),
+    ("SummonerSmiteAvatarOffensive", "SummonerSmite"),
+    ("SummonerSmiteAvatarDefensive", "SummonerSmite"),
+    ("SummonerHaste", "SummonerHaste"),
+    ("SummonerBarrier", "SummonerBarrier"),
+])
+def test_spell_id_strips_season_and_groups_family(raw_id, family):
+    variant = raw_id.split("_", 1)[1] if raw_id.startswith("S") and "_" in raw_id else raw_id
+    assert spell_id(f"GeneratedTip_SummonerSpell_{raw_id}_DisplayName") == (family, variant)
+
+
+def test_spell_id_unknown_format():
+    assert spell_id("Телепорт") is None
+    assert spell_id("GeneratedTip_SummonerSpell__DisplayName") is None
+
+
+def test_upgraded_teleport_in_a_game():
+    d = sample()
+    d["allPlayers"][0]["summonerSpells"] = {
+        "summonerSpellOne": spell("S12_SummonerTeleportUpgrade", "Усиленный телепорт"),
+        "summonerSpellTwo": spell("SummonerFlash", "Скачок")}
+    (p,) = parse_allgamedata(d, champion_index(IDS)).players
+    assert [x.family for x in p.spells] == ["SummonerTeleport", "SummonerFlash"]
+    assert [x.variant for x in p.spells] == ["SummonerTeleportUpgrade", "SummonerFlash"]
+
+
+@pytest.mark.parametrize("spells, word", [
+    (None, "summonerSpells"),                                   # старая сборка
+    ({"summonerSpellOne": spell("SummonerFlash")}, "summonerSpellTwo"),
+    ({"summonerSpellOne": spell("SummonerFlash"),
+      "summonerSpellTwo": {"displayName": "Скачок", "rawDisplayName": "Скачок"}}, "формат"),
+])
+def test_missing_or_strange_spells_are_a_reason_not_an_error(spells, word):
+    d = sample()
+    if spells is None:
+        del d["allPlayers"][0]["summonerSpells"]
+    else:
+        d["allPlayers"][0]["summonerSpells"] = spells
+    (p,) = parse_allgamedata(d, champion_index(IDS)).players
+    assert p.spells is None and word in p.spells_reason
+    assert p.champion == "Annie"                     # остальная игра разобрана
+
+
+def test_spells_fall_back_to_raw_description():
+    d = sample()
+    d["allPlayers"][0]["summonerSpells"]["summonerSpellOne"].pop("rawDisplayName")
+    (p,) = parse_allgamedata(d, champion_index(IDS)).players
+    assert p.spells[0].variant == "SummonerFlash"
 
 
 def test_active_player_missing_is_a_reason():
@@ -298,6 +370,8 @@ def test_own_game_journal():
     assert all(p.champion is not None for p in first.players)
     assert [p.team for p in first.players] == ["ORDER"] * 5 + ["CHAOS"] * 5
     assert first.me is not None and first.my_player.riot_id.startswith("Player")
+    # обезличенный журнал без summonerSpells — причина, а не ошибка разбора
+    assert all(p.spells is None and "summonerSpells" in p.spells_reason for p in first.players)
     # время матча не идёт назад, события — без повторов и по порядку
     times = [g.game_time for g in games]
     assert times == sorted(times)

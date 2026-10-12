@@ -13,7 +13,7 @@
 | Поле | Что берём | Запись |
 | --- | --- | --- |
 | `gameData` | время матча (с), режим, номер карты | `GameSnapshot.game_time`, `game_mode`, `map_number` |
-| `allPlayers[]` | чемпион (Id Data Dragon), команда ORDER/CHAOS, riotId, уровень, `isDead`, `respawnTimer`, предметы (id, слот, число), счёт (K/D/A, CS, варды), позиция, бот, скин | `PlayerRecord` |
+| `allPlayers[]` | чемпион (Id Data Dragon), команда ORDER/CHAOS, riotId, уровень, `isDead`, `respawnTimer`, предметы (id, слот, число), счёт (K/D/A, CS, варды), позиция, бот, скин, заклинания призывателя (`summonerSpells`, #804) | `PlayerRecord`, `SpellRecord` |
 | `activePlayer` | riotId, уровень, золото, `championStats` как есть | `ActivePlayerRecord`; себя находим среди десяти по riotId → `GameSnapshot.me` |
 | `events.Events[]` | `EventID`, имя, время и прочие поля (KillerName, VictimName, Assisters, DragonType, Stolen, Result…) | `EventRecord` |
 
@@ -35,6 +35,19 @@ Data Dragon); на журнале своей игры все десять све
 из API в этой игре не работали ни на одном из 1843 снимков. После — обе игры:
 смертей из API столько же, сколько `ChampionKill` (52 и 70), сбросов памяти
 нет, своя сторона ORDER и CHAOS.
+
+**Заклинания призывателя (#804).** `summonerSpells.summonerSpellOne/Two` —
+`{displayName, rawDisplayName, rawDescription}`; `displayName` локализован
+(«Телепорт»), поэтому id берётся из `rawDisplayName`
+(`GeneratedTip_SummonerSpell_<id>_DisplayName`, запасной — `rawDescription`):
+`spell_id` срезает сезонную приставку (`S12_SummonerTeleportUpgrade` →
+вариант `SummonerTeleportUpgrade`) и относит вариант к семье
+(`SPELL_FAMILIES`: Телепорт, Кара). `PlayerRecord.spells` — два
+`SpellRecord(slot, family, variant, raw, name)`; поля нет (старые сборки,
+обезличенные фикстуры `own_game*.jsonl`) или формат другой — `spells = None`
+и `spells_reason`, остальной снимок разбирается. Все сырые значения журналов
+своей игры и их нормализация — docs/state-api.md, «Заклинания призывателя».
+Перезарядки API не отдаёт.
 
 **Ники в событиях.** `KillerName`/`VictimName` в журнале своей игры — это
 `riotIdGameName` (без тега), а не riotId целиком.

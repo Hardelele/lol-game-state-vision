@@ -34,6 +34,16 @@ ORDER/CHAOS, уровень, предметы, счёт, `isDead`, `respawnTimer
 списком Id Data Dragon без учёта регистра (внутреннее имя бывает
 «FiddleSticks»). Не нашлось или списка нет — `champion = None` и причина.
 
+Заклинания призывателя (#804) — из `summonerSpells` игрока
+(`summonerSpellOne` / `summonerSpellTwo` — слоты 1 и 2, по умолчанию клавиши
+D и F): id берётся из `rawDisplayName` («GeneratedTip_SummonerSpell_
+SummonerTeleport_DisplayName» → «SummonerTeleport»), а не из локализованного
+`displayName` («Телепорт»). Сезонная приставка срезается
+(«S12_SummonerTeleportUpgrade» → «SummonerTeleportUpgrade»), семья — по
+приставке id (`SPELL_FAMILIES`: улучшенный Телепорт — семья Телепорт, все
+Кары — семья Кара). Поля нет (старые сборки, обезличенные журналы) или формат
+незнакомый — `spells = None` и причина, разбор игры не падает.
+
 Чтение — `LiveClient` в своём потоке (~2 Гц), наружу последний `LiveStatus`
 и очередь новых событий; ошибки транспорта и разбора не выходят наружу.
 Разбор и состояния — `Tracker` без потока и сети, на нём же воспроизведение
@@ -69,6 +79,18 @@ BASE_URL = f"https://{HOST}:{PORT}/liveclientdata/"
 RAW_CHAMPION_FORMATS = (re.compile(r"game_character_displayname_(\w+)"),
                         re.compile(r"Character_(\w+?)_Name"))
 SOURCE = "api"
+# Ключ заклинания призывателя: «GeneratedTip_SummonerSpell_<id>_DisplayName»
+# (в rawDescription — «…_<id>_Description»). Журналы своей игры 2026-10-12.
+RAW_SPELL_FORMAT = re.compile(r"GeneratedTip_SummonerSpell_(\w+?)_(?:DisplayName|Description)")
+# Сезонная приставка у вариантов: «S12_SummonerTeleportUpgrade» (Телепорт после
+# 10-й минуты), «S5_SummonerSmitePlayerGanker» (Кара после роста питомца).
+SPELL_SEASON = re.compile(r"S\d+_(\w+)")
+# Семьи вариантов: id варианта начинается с id семьи. Телепорт: SummonerTeleport →
+# SummonerTeleportUpgrade; Кара: SummonerSmite → SummonerSmitePlayerGanker →
+# SummonerSmiteAvatarOffensive / Defensive (и, по той же приставке, прочие
+# «первобытные»). Остальные заклинания — сами себе семья.
+SPELL_FAMILIES = ("SummonerTeleport", "SummonerSmite")
+SPELL_SLOTS = ("summonerSpellOne", "summonerSpellTwo")
 
 
 class State(str, Enum):
@@ -153,9 +175,28 @@ class ScoreRecord:
 
 
 @dataclass(frozen=True)
+class SpellRecord:
+    """Заклинание призывателя в слоте 1 или 2 (`summonerSpellOne` / `Two`).
+
+    `variant` — id без сезонной приставки («SummonerTeleportUpgrade»), `family`
+    — семья («SummonerTeleport»), `raw` — rawDisplayName как есть, `name` —
+    локализованное displayName (может быть пустым)."""
+    slot: int
+    family: str
+    variant: str
+    raw: str
+    name: str
+
+    def to_dict(self) -> dict:
+        return {"slot": self.slot, "family": self.family, "variant": self.variant,
+                "raw": self.raw, "name": self.name}
+
+
+@dataclass(frozen=True)
 class PlayerRecord:
     """Один из десяти. `champion` — Id Data Dragon или None с `champion_reason`;
-    `riot_id` — «Имя#тег» (в старых сборках и образце Riot — summonerName)."""
+    `riot_id` — «Имя#тег» (в старых сборках и образце Riot — summonerName).
+    `spells` — два заклинания призывателя по слотам или None с `spells_reason`."""
     riot_id: str
     champion: str | None
     champion_reason: str | None
@@ -169,6 +210,8 @@ class PlayerRecord:
     position: str                   # TOP/JUNGLE/… или "" (не во всех режимах)
     is_bot: bool
     skin_id: int
+    spells: tuple[SpellRecord, ...] | None = None
+    spells_reason: str | None = "заклинания не разбирались"
 
     def to_dict(self) -> dict:
         return {"riot_id": self.riot_id, "champion": self.champion,
@@ -177,7 +220,9 @@ class PlayerRecord:
                 "respawn_timer": self.respawn_timer,
                 "items": [i.to_dict() for i in self.items],
                 "scores": self.scores.to_dict(), "position": self.position,
-                "is_bot": self.is_bot, "skin_id": self.skin_id, "source": SOURCE}
+                "is_bot": self.is_bot, "skin_id": self.skin_id,
+                "spells": None if self.spells is None else [x.to_dict() for x in self.spells],
+                "spells_reason": self.spells_reason, "source": SOURCE}
 
 
 @dataclass(frozen=True)
@@ -286,6 +331,43 @@ def champion_id(raw: str, index: Mapping[str, str] | None) -> tuple[str | None, 
     return cid, None
 
 
+def spell_id(raw: str) -> tuple[str, str] | None:
+    """Ключ заклинания («GeneratedTip_SummonerSpell_S12_SummonerTeleportUpgrade_
+    DisplayName») → (семья, вариант): («SummonerTeleport»,
+    «SummonerTeleportUpgrade»); формат незнакомый — None."""
+    m = RAW_SPELL_FORMAT.fullmatch(raw)
+    if m is None:
+        return None
+    variant = m.group(1)
+    if (season := SPELL_SEASON.fullmatch(variant)) is not None:
+        variant = season.group(1)
+    family = next((f for f in SPELL_FAMILIES if variant.startswith(f)), variant)
+    return family, variant
+
+
+def parse_spells(p: Mapping) -> tuple[tuple[SpellRecord, ...] | None, str | None]:
+    """`summonerSpells` игрока → (два заклинания, None) или (None, причина).
+    Не бросает: нет поля в старой сборке — не повод терять всю игру."""
+    ss = p.get("summonerSpells")
+    if not isinstance(ss, Mapping):
+        return None, "API не дал summonerSpells"
+    out = []
+    for slot, key in enumerate(SPELL_SLOTS, 1):
+        d = ss.get(key)
+        if not isinstance(d, Mapping):
+            return None, f"API не дал summonerSpells.{key}"
+        raws = [d.get(k) for k in ("rawDisplayName", "rawDescription")]
+        hit = next(((r, ids) for r in raws if isinstance(r, str)
+                    and (ids := spell_id(r)) is not None), None)
+        if hit is None:
+            return None, (f"summonerSpells.{key}: ключ в незнакомом формате: "
+                          f"{d.get('rawDisplayName')!r}")
+        raw, (family, variant) = hit
+        name = d.get("displayName")
+        out.append(SpellRecord(slot, family, variant, raw, name if isinstance(name, str) else ""))
+    return tuple(out), None
+
+
 def _get(d: Mapping, key: str, kind: type | tuple[type, ...], where: str):
     if not isinstance(d, Mapping) or key not in d:
         raise ParseError(f"{where}: нет поля {key}")
@@ -327,12 +409,14 @@ def _player(p: Mapping, i: int, index: Mapping[str, str] | None) -> PlayerRecord
     scores = ScoreRecord(_get(s, "kills", int, ws), _get(s, "deaths", int, ws),
                          _get(s, "assists", int, ws), _get(s, "creepScore", int, ws),
                          float(_get(s, "wardScore", _NUM, ws)))
+    spells, spells_why = parse_spells(p)
     return PlayerRecord(
         riot_id=_riot_id(p, w), champion=cid, champion_reason=why, champion_raw=raw,
         team=team, level=_get(p, "level", int, w), is_dead=_get(p, "isDead", bool, w),
         respawn_timer=float(_get(p, "respawnTimer", _NUM, w)), items=tuple(items),
         scores=scores, position=p.get("position") or "",
-        is_bot=bool(p.get("isBot", False)), skin_id=int(p.get("skinID", 0)))
+        is_bot=bool(p.get("isBot", False)), skin_id=int(p.get("skinID", 0)),
+        spells=spells, spells_reason=spells_why)
 
 
 def _event(e: Mapping, i: int) -> EventRecord:

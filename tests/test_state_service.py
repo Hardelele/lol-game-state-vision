@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 
 from lolstream import state_service as ss
-from lolstream.live_client import (EventRecord, LiveStatus, State, read_journal, replay,
-                                   status_observation)
+from lolstream.live_client import (EventRecord, LiveStatus, SpellRecord, State, read_journal,
+                                   replay, status_observation)
 from lolstream.state_service import (FrameStatus, StateHub, StateInputs, StateServer,
                                      VisionFrame, build_snapshot, check_snapshot, match_view)
 from lolvision.match_state import API_SLACK, MatchState
@@ -214,6 +214,7 @@ def test_no_api_roster_from_hud_and_api_fields_refused():
     ch = by_champ(snap)
     assert ch["Lux"]["team"]["source"] == "hud"
     assert ch["Lux"]["relation"]["value"] is None and ch["Lux"]["level"]["reason"] == ss.WHY_NO_API
+    assert ch["Lux"]["spells"]["reason"] == ss.WHY_NO_API
     assert snap["enemies"]["value"] is None and "сторона" in snap["enemies"]["reason"]
 
 
@@ -910,3 +911,49 @@ def test_example_client_prints_recent_events():
     # без API строки нет: отказ не становится утверждением
     assert "events.recent" not in {f["id"] for f in
                                    ex.to_source_facts(build_snapshot(StateInputs(), 1.0))}
+
+
+# ---------------------------------------------------------------- заклинания (#804)
+
+def spells(*variants: str) -> tuple[SpellRecord, ...]:
+    fam = {"SummonerTeleportUpgrade": "SummonerTeleport",
+           "SummonerSmiteAvatarOffensive": "SummonerSmite"}
+    return tuple(SpellRecord(n, fam.get(v, v), v, f"GeneratedTip_SummonerSpell_{v}_DisplayName",
+                             "") for n, v in enumerate(variants, 1))
+
+
+def with_spells(st: LiveStatus, by_champ: dict) -> LiveStatus:
+    g = st.game
+    players = tuple(replace(p, spells=by_champ[p.champion], spells_reason=None)
+                    if p.champion in by_champ else p for p in g.players)
+    return replace(st, game=replace(g, players=players))
+
+
+def test_spells_of_me_and_champions_from_api():
+    inp, now = full_inputs()
+    api = with_spells(inp.api, {"Zilean": spells("SummonerTeleportUpgrade", "SummonerFlash"),
+                                "Diana": spells("SummonerFlash", "SummonerSmiteAvatarOffensive")})
+    snap = build_snapshot(replace(inp, api=api), now)
+    assert check_snapshot(snap) == []
+    me = snap["me"]
+    assert me["spells"] == {"value": ["SummonerTeleport", "SummonerFlash"], "source": "api",
+                            "age": 0.2, "reason": None}
+    assert me["spell_variants"]["value"] == ["SummonerTeleportUpgrade", "SummonerFlash"]
+    ch = by_champ(snap)
+    assert ch["Diana"]["spells"]["value"] == ["SummonerFlash", "SummonerSmite"]
+    assert ch["Diana"]["spell_variants"]["value"] == ["SummonerFlash",
+                                                      "SummonerSmiteAvatarOffensive"]
+    # у остальных API заклинаний не дал (обезличенный журнал) — причина разбора
+    assert ch["Lux"]["spells"]["value"] is None
+    assert "summonerSpells" in ch["Lux"]["spells"]["reason"]
+
+
+def test_spells_refused_with_parse_reason_and_schema_closes_them():
+    inp, now = full_inputs()
+    snap = build_snapshot(inp, now)
+    assert "summonerSpells" in snap["me"]["spells"]["reason"]
+    assert snap["me"]["spell_variants"]["reason"] == snap["me"]["spells"]["reason"]
+    bad = json.loads(json.dumps(snap))
+    bad["me"]["spells"] = {"value": ["SummonerFlash"], "source": "api", "age": 0.0,
+                           "reason": None}
+    assert any("me.spells" in e for e in check_snapshot(bad))
