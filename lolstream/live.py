@@ -94,7 +94,7 @@ from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 # Поиск миникарты (#785): ~40 мс на кадр «игра», только пока не найдена; не
 # нашлась за LOCATE_MAX попыток — остаётся раскладка.
-from lolvision.minimap_locate import AGREE_PX, LOCATE_MAX, Locator, _corner_px, box_px
+from lolvision.minimap_locate import AGREE_PX, LOCATE_MAX, Locator, corner_px, box_px
 from lolstream.live_champions import VIEW_MIN, LiveChampions
 from lolvision.match_state import API_STALE, ApiObs, MatchState
 from lolvision.passport import UNKNOWN, Change, Passport
@@ -916,7 +916,7 @@ class Session:
             return
         # Перепроверка в том же месте: ответ в другом прямоугольнике — не она.
         fit = locator.locate(region)
-        same = fit is not None and _corner_px(fit.box, locator.box, pl.size) <= AGREE_PX
+        same = fit is not None and corner_px(fit.box, locator.box, pl.size) <= AGREE_PX
         self._sig(lambda p: p.check_minimap(fit.score if same else 0.0, t))
         if not self.passport.items["minimap"].value["found"]:
             self._lost(pl)

@@ -181,7 +181,7 @@ class Locator:
         # совпадение на краю, и обрезка по нему вышла бы за кадр.
         if x0 < self.region[0] or y0 < self.region[1] or box[2] > 1.0 or box[3] > 1.0:
             return None
-        if _corner_px(box, STD_BOX, self.size) <= SNAP_PX:
+        if corner_px(box, STD_BOX, self.size) <= SNAP_PX:
             return Fit(STD_BOX, 1.0, round(v, 3))
         return Fit(tuple(round(b, 5) for b in box), round(s, 4), round(v, 3))
 
@@ -201,7 +201,7 @@ class Locator:
             self._run.clear()
             return False
         w, h = self.size
-        if self._run and _corner_px(self._run[-1].box, fit.box, (w, h)) > AGREE_PX:
+        if self._run and corner_px(self._run[-1].box, fit.box, (w, h)) > AGREE_PX:
             self._run.clear()
         self._run.append(fit)
         if len(self._run) < AGREE:
@@ -211,7 +211,7 @@ class Locator:
         return True
 
 
-def _corner_px(a, b, size) -> float:
+def corner_px(a, b, size) -> float:
     w, h = size
     return max(abs(a[0] - b[0]) * w, abs(a[1] - b[1]) * h,
                abs(a[2] - b[2]) * w, abs(a[3] - b[3]) * h)
