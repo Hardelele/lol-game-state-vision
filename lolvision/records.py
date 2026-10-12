@@ -21,10 +21,20 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 SCHEMA = 1
+# Причина по умолчанию у relation/side: запись прошла мимо sides.assign.
+UNSET = "не определялось"
 
 
 def _r(v: float | None, n: int) -> float | None:
     return None if v is None else round(float(v), n)
+
+
+def _sides(r) -> dict:
+    """Поля отношения и стороны (sides.py): значение или None с причиной;
+    причина — только при None."""
+    return {"relation": r.relation,
+            "relation_reason": None if r.relation is not None else r.relation_reason,
+            "side": r.side, "side_reason": None if r.side is not None else r.side_reason}
 
 
 @dataclass(frozen=True)
@@ -40,6 +50,14 @@ class UnitRec:
     # None — не чемпион, имя не прочиталось или не читалось (вид игрока,
     # нет состава, нет банка имён: это сказано в note сеанса).
     name: str | None = None
+    # Отношение к своему игроку и сторона (lolvision/sides.py, #790).
+    # `team` выше — сырой ответ детектора: логит «синий = ORDER, красный =
+    # CHAOS», выученный на наблюдателе; сторона он только у наблюдателя.
+    color: str | None = None              # корзина цвета полоски по пикселям (вид игрока)
+    relation: str | None = None           # ally / enemy / self; у наблюдателя None
+    relation_reason: str | None = UNSET   # почему relation None
+    side: str | None = None               # ORDER / CHAOS
+    side_reason: str | None = UNSET       # почему side None
 
     @classmethod
     def from_unit(cls, u, frame_size: tuple[int, int], name: str | None = None) -> UnitRec:
@@ -49,7 +67,8 @@ class UnitRec:
 
     def to_dict(self) -> dict:
         return {"kind": self.kind, "team": self.team, "x": _r(self.x, 4), "y": _r(self.y, 4),
-                "hp": _r(self.hp, 2), "score": _r(self.score, 2), "name": self.name}
+                "hp": _r(self.hp, 2), "score": _r(self.score, 2), "name": self.name,
+                "color": self.color, **_sides(self)}
 
 
 @dataclass(frozen=True)
@@ -65,11 +84,18 @@ class TrackRec:
     y: float | None
     hp: float                  # ХП на последнем наблюдении
     age: float                 # с от последнего наблюдения
+    # Отношение и сторона трека: первое известное значение среди его
+    # наблюдений (трек не склеивает юнитов с разными известными значениями),
+    # пока его нет — None с причиной последнего наблюдения.
+    relation: str | None = None
+    relation_reason: str | None = UNSET
+    side: str | None = None
+    side_reason: str | None = UNSET
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "team": self.team, "state": self.state,
                 "u": _r(self.u, 4), "v": _r(self.v, 4), "x": _r(self.x, 4), "y": _r(self.y, 4),
-                "hp": _r(self.hp, 2), "age": _r(self.age, 1)}
+                "hp": _r(self.hp, 2), "age": _r(self.age, 1), **_sides(self)}
 
 
 @dataclass(frozen=True)
@@ -164,10 +190,15 @@ class UnitNewEvent(Event):
     id: str
     kind: str
     team: str
+    # Отношение и сторона трека на момент события; почему None — у трека
+    # в tracks той же строки.
+    relation: str | None = None
+    side: str | None = None
     type: ClassVar[str] = "unit_new"
 
     def to_dict(self) -> dict:
-        return {**super().to_dict(), "id": self.id, "kind": self.kind, "team": self.team}
+        return {**super().to_dict(), "id": self.id, "kind": self.kind, "team": self.team,
+                "relation": self.relation, "side": self.side}
 
 
 @dataclass(frozen=True)
@@ -178,11 +209,14 @@ class UnitDeathEvent(Event):
     team: str
     u: float                   # последнее место на карте
     v: float
+    relation: str | None = None    # как у UnitNewEvent; трек умер — в tracks его уже нет,
+    side: str | None = None        # причина отказа — в tracks прошлых строк
     type: ClassVar[str] = "unit_death"
 
     def to_dict(self) -> dict:
         return {**super().to_dict(), "id": self.id, "kind": self.kind, "team": self.team,
-                "u": _r(self.u, 4), "v": _r(self.v, 4)}
+                "u": _r(self.u, 4), "v": _r(self.v, 4), "relation": self.relation,
+                "side": self.side}
 
 
 def dicts(recs) -> list[dict]:

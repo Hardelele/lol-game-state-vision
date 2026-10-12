@@ -8,7 +8,7 @@ import numpy as np
 
 from lolstream import live
 from lolvision.geometry import Projection
-from lolvision.records import SCHEMA, MinimapChamp, UnitRec
+from lolvision.records import SCHEMA, UNSET, MinimapChamp, UnitRec
 from lolvision.unit_tracker import UnitTracker
 
 
@@ -139,8 +139,12 @@ def test_emit_glues_units_tracks_context_and_events_by_name():
     # Юниты: доли кадра, имя у чемпиона, None у прочих.
     assert [(u["kind"], u["name"]) for u in last["units"]] == [
         ("champion", "Volibear"), ("minion", None), ("ward", None)]
+    # relation/side (sides.py, #790): пока live.py не зовёт sides.assign —
+    # None с причиной UNSET, а не выдуманное значение.
     assert last["units"][0] == {"kind": "champion", "team": "CHAOS", "x": 0.6, "y": 0.5,
-                                "hp": 0.7, "score": 0.95, "name": "Volibear"}
+                                "hp": 0.7, "score": 0.95, "name": "Volibear", "color": None,
+                                "relation": None, "relation_reason": UNSET,
+                                "side": None, "side_reason": UNSET}
     # Чемпионы миникарты — по составу, именованные поля.
     jinx = next(c for c in last["champs"] if c["name"] == "Jinx")
     assert jinx == {"name": "Jinx", "team": "CHAOS", "slot": "R4", "visible": False,
@@ -155,7 +159,8 @@ def test_emit_glues_units_tracks_context_and_events_by_name():
     assert (vb["u"], vb["v"]) == (0.41, 0.6)
     assert {t["kind"] for t in last["tracks"]} == {"champion", "minion", "ward"}
     assert set(tracks[next(iter(tracks))]) == {"id", "kind", "team", "state", "u", "v",
-                                               "x", "y", "hp", "age"}
+                                               "x", "y", "hp", "age", "relation",
+                                               "relation_reason", "side", "side_reason"}
     # События трекера — на втором кадре (подтверждение треков).
     assert sorted(e["type"] for e in rows[1]["uev"]) == ["unit_new"] * 3
     assert all({"t", "type", "id", "kind", "team"} <= set(e) for e in rows[1]["uev"])
