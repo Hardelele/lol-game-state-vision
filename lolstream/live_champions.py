@@ -34,6 +34,11 @@
 заставка стримера случайно прошла проверку HUD, состав решился по ней, и
 Brand был «Ivern» в 100% кадров (ANXVB571YkE).
 
+Своя игра (#798, 2B). Если есть Live Client API, состав берётся из него
+(`set_api`): портреты HUD и боковые панели не читаются, иконки миникарты
+назначаются только среди десяти из API, у вида игрока синие иконки —
+своя команда, раскладка — «player» (свой игрок есть) или «spectator».
+
 Облик (appearance.py, DINOv2) сюда не взят: признак стоит ~10 мс на вырез
 и вторую модель в видеопамяти, а без имени по соседним кадрам он даёт
 лишь +2–5 п. п. (docs/champion-identity.md).
@@ -55,6 +60,7 @@ from scipy.optimize import linear_sum_assignment
 from lolvision import ddragon, hud_panels
 from lolvision.health_bars import W as PLATE_W
 from lolvision.identity import NAME_BOX, crop_pad
+from lolvision.match_state import ApiObs
 from lolvision.minimap_champions import PORTRAIT_MIN, assign
 from lolvision.minimap_icons import (CROP, DEFAULT_RUN as MINI_RUN, MM, TEAMS, IconModel,
                                      crops, decode)
@@ -159,16 +165,31 @@ class IconGraph:
 
 
 class Match:
-    """Состав и всё, что от него зависит; заменяется целиком, не правится."""
+    """Состав и всё, что от него зависит; заменяется целиком, не правится.
 
-    def __init__(self, roster: list[str], model: IconModel, icons: dict):
+    `roster` — по пять чемпионов на цвет иконок миникарты: сначала синие,
+    затем красные. `sides` — какая команда у синих и у красных: у
+    наблюдателя (и состава по портретам HUD) — ORDER и CHAOS, у вида игрока
+    цвета относительны — синие свои (`api=True`, состав из Live Client API).
+    У состава из API нет порядка слотов HUD, поэтому панели и портреты не
+    читаются: жив / мёртв даёт сам API."""
+
+    def __init__(self, roster: list[str], model: IconModel, icons: dict,
+                 sides: tuple[str, str] = TEAMS, api: bool = False):
         self.roster = roster
+        self.sides, self.api = sides, api
         idx = {n: i for i, n in enumerate(model.champions)}
         self.ids = [idx[n] for n in roster]
         self.teams = [self.ids[:5], self.ids[5:]]
-        self.tm = hud_panels.portrait_templates({n: icons[n] for n in roster})
+        self.tm = None if api else hud_panels.portrait_templates({n: icons[n] for n in roster})
         self.own = np.zeros(10, np.float32)       # видны ли портреты (portrait_own)
         self.scales: list[int] | None = None
+        self.me_team: str | None = None           # своя команда по API
+
+    def slot(self, s: int) -> tuple[str, str]:
+        """Команда и слот (L1…L5 — ORDER, R1…R5 — CHAOS) записи `s`."""
+        team = self.sides[s // 5]
+        return team, f"{'LR'[TEAMS.index(team)]}{s % 5 + 1}"
 
 
 class LiveChampions:
@@ -189,6 +210,7 @@ class LiveChampions:
             self.notes.append("без имён: нет банка имён")
         # Списки чемпионов модели миникарты и Data Dragon должны совпадать:
         # чемпион состава, которого нет у модели, роняет Match (KeyError).
+        self._model_ids = set(self.model.champions)
         no_dd = sorted(set(self.model.champions) - set(self.icons))
         no_model = sorted(set(self.icons) - set(self.model.champions))
         if no_dd:
@@ -197,6 +219,7 @@ class LiveChampions:
             self.notes.append(f"модель миникарты не знает: {_few(no_model)}")
         # Последняя ошибка потока состава: {"text", "time"} или None.
         self.error: dict | None = None
+        self.api_error: str | None = None     # почему состав из API не принят
         # Образцы имён окнами (WIN_H, WIN_W) для cv2.matchTemplate.
         self.name_tm = (None if self.names is None else
                         np.ascontiguousarray(self.names.bank.T.reshape(-1, WIN_H, WIN_W)))
@@ -222,7 +245,12 @@ class LiveChampions:
 
     @property
     def view(self) -> str | None:
-        """«spectator», «player» или None — чтений пока мало."""
+        """«spectator», «player» или None — чтений пока мало. При составе из
+        Live Client API — по нему: есть свой игрок — вид игрока, нет —
+        наблюдатель в клиенте."""
+        m = self.match
+        if m is not None and m.api:
+            return "player" if m.me_team is not None else "spectator"
         n, spec = len(self.reads), sum(self.reads)
         if n < VIEW_MIN:
             return None
@@ -238,12 +266,45 @@ class LiveChampions:
         self._closed = True
         self._wake.set()
 
+    # ---------- состав из Live Client API ----------
+
+    def set_api(self, obs: ApiObs | None) -> str | None:
+        """Состав из Live Client API (match_state.ApiObs) вместо портретов HUD;
+        None — API пропал, состав снова по портретам. Возвращает причину
+        отказа или None. Иконки миникарты назначаются только среди этих
+        десяти; у вида игрока синие — своя команда."""
+        if obs is None:
+            if self.match is not None and self.match.api:
+                self.match = None
+                self.hud.clear()
+            return None
+        why = obs.problem()
+        if why is None:
+            unknown = [p.name for p in obs.players if p.name not in self._model_ids]
+            if unknown:
+                why = f"модель миникарты не знает: {_few(unknown)}"
+        if why is not None:
+            self.api_error = why
+            return why
+        self.api_error = None
+        first = obs.me_team or TEAMS[0]           # синие на миникарте
+        sides = (first, TEAMS[1 - TEAMS.index(first)])
+        roster = [p.name for side in sides for p in obs.players if p.team == side]
+        m = self.match
+        if m is None or not m.api or m.roster != roster or m.sides != sides:
+            m = Match(roster, self.model, self.icons, sides, api=True)
+        m.me_team = obs.me_team
+        self.match = m
+        return None
+
     # ---------- состав (свой поток) ----------
 
     def offer(self, frame: np.ndarray, t: float) -> None:
         """Игровой кадр потока: раз в ROSTER_EVERY с уходит на чтение портретов.
-        Пока прошлый кадр не прочитан, новые не копятся."""
-        if t < self.next_roster or self._busy:
+        Пока прошлый кадр не прочитан, новые не копятся. При составе из API
+        портреты не читаются."""
+        m = self.match
+        if (m is not None and m.api) or t < self.next_roster or self._busy:
             return
         self.next_roster = t + ROSTER_EVERY
         self._busy = True
@@ -272,6 +333,8 @@ class LiveChampions:
 
     def read_roster(self, frame: np.ndarray) -> bool:
         """Портреты HUD кадра 1080p → состав. True — состав сменился."""
+        if self.match is not None and self.match.api:
+            return False                    # состав дал API: портреты не нужны
         fs = read_frame(frame, self.bank)
         self.reads.append(fs.hud)
         if not fs.hud:
@@ -294,8 +357,8 @@ class LiveChampions:
         if m.scales is None and (own >= PORTRAIT_MIN).all():
             m.scales = best
         m.own = own
-        if changed:
-            self.match = m
+        if changed and not (self.match is not None and self.match.api):
+            self.match = m                  # пока читали, состав мог прийти из API
         return changed
 
     # ---------- миникарта и панели ----------
@@ -310,22 +373,31 @@ class LiveChampions:
         if m is None:
             return None
         dets = self.icon_net(mini)
-        f = as_1080(frame)
-        y0, y1 = PANEL_ROWS
-        for x0, x1 in PANEL_COLS:
-            self.bgr[y0:y1, x0:x1] = f[y0:y1, x0:x1, ::-1]
-        slots = hud_panels.read_panels(self.bgr, self.digits)
+        slots = None
+        if not m.api:
+            # Панели HUD — по слотам портретов; у состава из API слотов нет,
+            # а жив / мёртв даёт сам API.
+            f = as_1080(frame)
+            y0, y1 = PANEL_ROWS
+            for x0, x1 in PANEL_COLS:
+                self.bgr[y0:y1, x0:x1] = f[y0:y1, x0:x1, ::-1]
+            slots = hud_panels.read_panels(self.bgr, self.digits)
+        # Только среди десяти состава: детекция без пары — «лишняя».
         who = assign(dets, m.teams)
         seen = {c: d for d, c in zip(dets, who) if c >= 0}
         out = []
         for s, (name, cid) in enumerate(zip(m.roster, m.ids)):
-            d, sl = seen.get(cid), slots[s]
-            hud_ok = sl.dead or m.own[s] >= PORTRAIT_MIN
-            out.append(MinimapChamp(name, TEAMS[s // 5], f"{'LR'[s // 5]}{s % 5 + 1}",
-                                    d is not None,
+            d = seen.get(cid)
+            alive = timer = None
+            if slots is not None:
+                sl = slots[s]
+                if sl.dead or m.own[s] >= PORTRAIT_MIN:
+                    alive = not sl.dead
+                timer = sl.timer if sl.dead else None
+            team, slot = m.slot(s)
+            out.append(MinimapChamp(name, team, slot, d is not None,
                                     d["x"] / MM if d else None, d["y"] / MM if d else None,
-                                    (not sl.dead) if hud_ok else None,
-                                    sl.timer if sl.dead else None))
+                                    alive, timer))
         return out
 
     # ---------- кто есть кто на основном виде ----------

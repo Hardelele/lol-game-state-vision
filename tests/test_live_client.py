@@ -17,9 +17,11 @@ import pytest
 from lolstream.live_client import (
     HttpTransport,
     LiveClient,
+    LiveStatus,
     Response,
     State,
     Tracker,
+    api_observation,
     champion_id,
     champion_index,
     journal_transport,
@@ -27,6 +29,7 @@ from lolstream.live_client import (
     parse_events,
     read_journal,
     replay,
+    status_observation,
 )
 
 FIX = Path(__file__).parent / "fixtures" / "live_client"
@@ -306,3 +309,64 @@ def test_own_game_journal():
     assert any(p.is_dead for g in games for p in g.players)
     kills = [e for _, new in out for e in new if e.name == "ChampionKill"]
     assert len(kills) == deaths[-1]                # каждое убийство — одна смерть в счёте
+
+
+# --- наблюдение для контекста матча (#798) ---
+
+def own_statuses():
+    return [st for st, _ in replay(read_journal(OWN), IDS)]
+
+
+@pytest.mark.skipif(not OWN.exists(), reason="нет журнала своей игры")
+def test_api_observation_of_own_game():
+    st = next(s for s in own_statuses()
+              if s.game is not None and any(p.is_dead for p in s.game.players))
+    obs, why = api_observation(st.game)
+    assert why is None and obs.me_team == "ORDER" and obs.game_time == st.game.game_time
+    assert [(p.name, p.team) for p in obs.players] == \
+        [(p.champion, p.team) for p in st.game.players]
+    dead = {p.champion: p.respawn_timer for p in st.game.players if p.is_dead}
+    assert {p.name: p.respawn_in for p in obs.players if p.dead} == dead
+    # Снимку 2 с: время матча вперёд, таймеры назад (не ниже нуля).
+    old, _ = api_observation(st.game, age=2.0)
+    assert old.game_time == st.game.game_time + 2.0
+    assert {p.name: p.respawn_in for p in old.players if p.dead} == \
+        {n: max(0.0, v - 2.0) for n, v in dead.items()}
+
+
+def test_api_observation_refuses_unknown_champion_and_sorts_teams():
+    d = json.loads(json.dumps(sample()))
+    me = d["allPlayers"][0]
+    chaos = dict(me, team="CHAOS", riotId="X#1", summonerName="X")
+    d["allPlayers"] = [chaos] + [me]
+    snap = parse_allgamedata(d, champion_index(IDS))
+    obs, why = api_observation(snap)
+    assert obs is None and "игроков 2" in why       # не десять — отказ, не полсостава
+    snap = parse_allgamedata(d, champion_index(["Zilean"]))   # Annie не опознана
+    obs, why = api_observation(snap)
+    assert obs is None and "чемпион не опознан" in why and "Annie" in why
+    # Десять разных: CHAOS в ответе первыми, в наблюдении — после ORDER.
+    names = IDS[:10]
+    d["allPlayers"] = [dict(me, team="CHAOS" if k < 5 else "ORDER", riotId=f"P{k}#1",
+                            rawChampionName=f"game_character_displayname_{n}")
+                       for k, n in enumerate(names)]
+    snap = parse_allgamedata(d, champion_index(IDS))
+    obs, why = api_observation(snap)
+    assert why is None and obs.me_team is None      # своего игрока среди десяти нет
+    assert obs.roster == tuple(names[5:] + names[:5])
+
+
+@pytest.mark.skipif(not OWN.exists(), reason="нет журнала своей игры")
+def test_status_observation_states():
+    sts = own_statuses()
+    load = next(s for s in sts if s.state is State.LOADING)
+    obs, _ = status_observation(load, load.t + 3.0)
+    assert obs.game_time == load.game.game_time      # на загрузке время стоит
+    game = next(s for s in sts if s.state is State.IN_GAME)
+    obs, _ = status_observation(game, game.t + 1.5)
+    assert obs.game_time == game.game.game_time + 1.5
+    ended = LiveStatus(State.ENDED, "GameEnd Win", game.t, game.game, game.t)
+    obs, why = status_observation(ended, game.t)
+    assert obs is None and why == "API: ended (GameEnd Win)"
+    obs, why = status_observation(LiveStatus(State.NO_GAME, "нет соединения", 0.0), 0.0)
+    assert obs is None and why.startswith("API: no_game")

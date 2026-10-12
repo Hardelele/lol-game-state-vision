@@ -1,10 +1,19 @@
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
+import pytest
 
+from lolstream.live_client import read_journal, replay, status_observation
 from lolvision.geometry import Projection
-from lolvision.match_state import FOUNTAIN, MatchState
-from lolvision.records import DeathEvent, MinimapChamp, UnitRec
+from lolvision.match_state import (API_STALE, FOUNTAIN, ApiObs, ApiPlayer, MatchState,
+                                   SourcedDeath)
+from lolvision.records import DeathEvent, MinimapChamp, RosterEvent, UnitRec
+
+OWN = Path(__file__).parent / "fixtures" / "live_client" / "own_game.jsonl"
+# Id Data Dragon чемпионов журнала своей игры (в тестах кэша Data Dragon нет).
+IDS = ["Zilean", "Amumu", "Yone", "Caitlyn", "Nami", "Darius", "Diana", "Lux", "Twitch",
+       "Yuumi"]
 
 NAMES = ["Irelia", "Evelynn", "TwistedFate", "Jhin", "Zyra",
          "Volibear", "Hecarim", "Locke", "Jinx", "Lulu"]
@@ -133,3 +142,171 @@ def test_shop_frame_still_reads_minimap():
     m.update(5, "shop", champs(Jinx=dict(visible=True, u=.3, v=.4)))
     r = view(m, "Jinx")
     assert r.state == "visible" and (r.u, r.v) == (.3, .4)
+
+
+# ---------- Live Client API как источник (#798, 2B) ----------
+
+def api(game_time=60.0, dead=None, names=NAMES, me_team="ORDER"):
+    """Снимок API: все живы, `dead` — {имя: таймер}."""
+    dead = dead or {}
+    return ApiObs(game_time, tuple(ApiPlayer(n, "ORDER" if s < 5 else "CHAOS", n in dead,
+                                             float(dead.get(n, 0.0)))
+                                   for s, n in enumerate(names)), me_team)
+
+
+def test_api_gives_roster_deaths_and_clock_without_frames():
+    m = MatchState()
+    assert m.update(0, "loading", api=api(0.07)) == []      # состав уже на загрузке
+    assert m.order == NAMES and m.api_live()
+    ev = m.update(10, "game", api=api(70.0, {"Jinx": 12.0}))
+    assert ev == [SourcedDeath(10, "Jinx", "CHAOS", None, None, 12.0, "api")]
+    assert ev[0].to_dict()["src"] == "api"
+    r = view(m, "Jinx")
+    assert r.state == "dead" and r.respawn_in == 12.0
+    assert m.game_clock().value == 70.0 and m.game_clock().src == "api"
+    m.update(11.5, "game")                                   # кадр без нового снимка
+    assert m.game_clock().value == 71.5 and view(m, "Jinx").respawn_in == 10.5
+    ev = m.update(22, "game", api=api(82.0))
+    assert [(e.type, e.src) for e in ev] == [("respawn", "api")]
+    assert (view(m, "Jinx").u, view(m, "Jinx").v) == FOUNTAIN["CHAOS"]
+    assert not m.conflicts
+
+
+def test_api_beats_hud_and_disagreement_is_counted():
+    m = MatchState()
+    m.update(0, "game", champs(), api=api())
+    # HUD читает Jinx мёртвой — API: жива. Значение из API, расхождение — в счётчик.
+    ev = m.update(2, "game", champs(Jinx=dict(alive=False, timer=10)))
+    ev += m.update(3, "game", champs(Jinx=dict(alive=False, timer=9)))
+    assert ev == [] and view(m, "Jinx").state != "dead"
+    assert m.conflicts == {"alive": 2}
+    # API: Lulu мертва 20 с, панель — 9 с: таймер расходится.
+    m.update(7, "game", api=api(67.0, {"Lulu": 20.0}))
+    m.update(10, "game", champs(Lulu=dict(alive=False, timer=9)))
+    assert m.conflicts["timer"] == 1 and view(m, "Lulu").respawn_in == 17.0
+    # Иконка мёртвой Lulu на миникарте — назначение не тому, место не берётся.
+    m.update(11, "game", champs(Lulu=dict(visible=True, u=.5, v=.5, alive=None)))
+    assert m.conflicts["minimap_dead"] == 1 and view(m, "Lulu").u is None
+    assert view(m, "Lulu").state == "dead"
+
+
+def test_hud_lag_right_after_api_change_is_not_a_conflict():
+    m = MatchState()
+    m.update(0, "game", champs(), api=api())
+    m.update(1, "game", champs(), api=api(61.0, {"Jinx": 10.0}))   # панель ещё «жива»
+    m.update(1.5, "game", champs(Jinx=dict(alive=False, timer=9)))
+    assert not m.conflicts
+
+
+def test_minimap_place_is_still_taken_with_api():
+    m = MatchState()
+    m.update(0, "game", champs(Jinx=dict(visible=True, u=.6, v=.7)), api=api())
+    r = view(m, "Jinx")
+    assert r.state == "visible" and (r.u, r.v, r.src) == (.6, .7, "minimap")
+
+
+def test_hud_roster_window_does_not_reset_when_api_is_there():
+    m = MatchState()
+    m.update(0, "game", champs(Jinx=dict(visible=True, u=.6, v=.7)), api=api())
+    other = champs()
+    other[0] = replace(other[0], name="Garen")
+    for t in range(1, 6):                           # больше ROSTER_SWITCH кадров
+        assert m.update(t, "game", other) == []
+    assert m.order == NAMES and m.conflicts == {"roster": 5}
+    assert view(m, "Jinx").u == .6                  # память на месте
+
+
+def test_hud_roster_before_api_same_set_keeps_memory():
+    m = MatchState()
+    m.update(0, "game", champs(Jinx=dict(visible=True, u=.6, v=.7)))
+    assert m.update(1, "game", api=api()) == []
+    assert view(m, "Jinx").u == .6 and not m.conflicts
+
+
+def test_hud_roster_before_api_wrong_is_replaced():
+    m = MatchState()
+    wrong = champs()
+    wrong[0] = replace(wrong[0], name="Garen")
+    m.update(0, "game", wrong)
+    ev = m.update(1, "game", api=api())
+    assert [e.type for e in ev] == ["roster"] and m.order == NAMES
+    assert m.conflicts == {"roster": 1}
+
+
+def test_new_game_in_api_resets_memory():
+    m = MatchState()
+    m.update(0, "game", champs(Jinx=dict(visible=True, u=.6, v=.7)), api=api(600.0))
+    # Тот же состав (ремейк), но время матча пошло с нуля — новая игра.
+    ev = m.update(10, "game", api=api(1.0))
+    assert [e.type for e in ev] == ["roster"] and view(m, "Jinx").u is None
+    # Другой состав — тоже новая игра, сразу, без окна кадров.
+    names = ["Garen"] + NAMES[1:]
+    ev = m.update(20, "game", api=api(2.0, names=names))
+    assert [e.type for e in ev] == ["roster"] and m.order == names
+    # Обычный ход времени и повтор снимка — не новая игра.
+    assert m.update(21, "game", api=api(3.0, names=names)) == []
+    assert m.update(22, "game", api=api(3.0, names=names)) == []
+
+
+def test_refused_api_snapshot_changes_nothing():
+    m = MatchState()
+    half = ApiObs(60.0, api().players[:9], "ORDER")
+    assert m.update(0, "game", api=half) == []
+    assert m.order == [] and m.api is None and "9" in m.api_refused
+    dup = ApiObs(60.0, api().players[:9] + (ApiPlayer("Jinx", "CHAOS", False, 0.0),))
+    m.update(1, "game", api=dup)
+    assert m.api is None and m.api_refused == "чемпионы повторяются"
+
+
+def test_api_gone_hud_takes_over_but_roster_stays():
+    m = MatchState()
+    m.update(0, "game", champs(), api=api())
+    t = API_STALE + 1                               # API молчит
+    assert not m.api_live(t)
+    ev = m.update(t, "game", champs(Jinx=dict(alive=False, timer=10)))
+    assert ev == [DeathEvent(t, "Jinx", "CHAOS", None, None, 10)]  # снова по панели
+    assert m.game_clock() is None and m.order == NAMES
+
+
+def test_without_api_behaviour_is_unchanged():
+    m = MatchState()
+    m.update(0, "game", champs(Zyra=dict(alive=False, timer=15)))
+    m.update(1, "game", champs())                   # панель под баннером
+    assert m.conflicts == {"hud_flicker": 1}
+    assert m.api is None and m.game_clock() is None and not m.api_live()
+
+
+@pytest.mark.skipif(not OWN.exists(), reason="нет журнала своей игры")
+def test_own_game_journal_through_match_state():
+    """Журнал своей игры (только API, без кадров): состав верен на каждом
+    снимке, смерти и возрождения — ровно переходы isDead, ложных сбросов нет."""
+    m = MatchState()
+    want_ev, got_ev, kills, n = [], [], [], 0
+    prev: dict[str, bool] = {}
+    for st, new in replay(read_journal(OWN), IDS):
+        obs, why = status_observation(st, st.t)
+        assert (obs is None) == (st.game is None), why
+        if obs is None:
+            continue
+        n += 1
+        got_ev += [(e.type, e.name, e.t) for e in m.update(st.t, "game", api=obs)]
+        g = st.game
+        assert [(r.name, r.team) for r in m.frame_view()] == \
+            [(p.champion, p.team) for p in g.players]           # ORDER, затем CHAOS
+        nick = {p.riot_id.split("#")[0]: p.champion for p in g.players}
+        kills += [nick[e.data["VictimName"]] for e in new if e.name == "ChampionKill"]
+        for p in g.players:
+            r = view(m, p.champion)
+            assert (r.state == "dead") == p.is_dead
+            if p.is_dead:
+                assert abs(r.respawn_in - p.respawn_timer) < 1e-6
+            if p.champion in prev and prev[p.champion] != p.is_dead:
+                want_ev.append(("death" if p.is_dead else "respawn", p.champion, st.t))
+            prev[p.champion] = p.is_dead
+        assert m.game_clock().value == g.game_time
+    assert n == 36
+    assert got_ev == want_ev
+    deaths = [name for typ, name, _ in got_ev if typ == "death"]
+    assert deaths == ["Yone", "Lux", "Yone", "Zilean"] == kills    # каждое убийство API
+    assert not any(isinstance(e, RosterEvent) for e in m.events)    # ложных сбросов нет
+    assert not m.conflicts and m.api.me_team == "ORDER"

@@ -55,16 +55,14 @@ from pathlib import Path
 from typing import Any
 
 from lolvision.ddragon import norm_name
+# Порог «новой игры» один на трекер API и контекст матча.
+from lolvision.match_state import NEW_GAME_BACKSTEP, TEAMS, ApiObs, ApiPlayer
 
 HOST = "127.0.0.1"
 PORT = 2999
 BASE_URL = f"https://{HOST}:{PORT}/liveclientdata/"
 RAW_CHAMPION_PREFIX = "game_character_displayname_"
 SOURCE = "api"
-TEAMS = ("ORDER", "CHAOS")
-# Время матча, на которое оно может «откатиться» без новой игры: опросы
-# идут не по порядку только при сбоях часов, новая игра начинается с нуля.
-NEW_GAME_BACKSTEP = 5.0
 
 
 class State(str, Enum):
@@ -469,6 +467,41 @@ class Tracker:
                                 f"{t - self._lost_since:.1f} с посреди игры", t)
         self._playing, self._ended = False, True
         return self._status(State.ENDED, f"API пропал посреди игры ({err})", t, with_game=True)
+
+
+# --- наблюдение для контекста матча ---
+
+def api_observation(snap: GameSnapshot, age: float = 0.0) -> tuple[ApiObs | None, str | None]:
+    """Снимок API → наблюдение контекста матча (match_state.ApiObs) или
+    (None, причина). `age` — сколько секунд прошло с получения снимка до
+    момента, на который нужно наблюдение: время матча идёт вперёд, таймеры
+    возрождения — назад. Чемпион не опознан, не десять игроков, не 5/5 —
+    отказ: половина состава хуже, чем никакого."""
+    for p in snap.players:
+        if p.champion is None:
+            return None, f"чемпион не опознан: {p.champion_reason}"
+    age = max(0.0, age)
+    players = sorted(snap.players, key=lambda p: TEAMS.index(p.team))
+    me = snap.my_player
+    obs = ApiObs(snap.game_time + age,
+                 tuple(ApiPlayer(p.champion, p.team, p.is_dead,
+                                 max(0.0, p.respawn_timer - age) if p.is_dead else 0.0)
+                       for p in players),
+                 me.team if me is not None else None)
+    why = obs.problem()
+    return (None, why) if why is not None else (obs, None)
+
+
+def status_observation(status: LiveStatus, now: float) -> tuple[ApiObs | None, str | None]:
+    """Последний `LiveStatus` → наблюдение на момент `now` (то же время, что
+    `LiveStatus.t`, — unix) или (None, причина). Наблюдение есть в `loading`
+    с составом и `in_game`; после конца игры последний снимок уже не правда
+    о «сейчас». На загрузке время матча стоит — его не двигаем."""
+    if status.state not in (State.LOADING, State.IN_GAME) or status.game is None:
+        return None, f"API: {status.state.value}" + (f" ({status.reason})"
+                                                     if status.reason else "")
+    age = now - (status.game_t or now) if status.state is State.IN_GAME else 0.0
+    return api_observation(status.game, age)
 
 
 # --- поток ---
