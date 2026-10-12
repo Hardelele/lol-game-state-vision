@@ -16,8 +16,8 @@ const CELLS = ["8x5", "12x7", "16x9", "24x13"];
 
 // Полосы таймлайна и цифры в тексте окрашены по-разному: тёмные заливки
 // хорошо читаются полосой, а на тёмном фоне текста нужны светлее.
-const BAR = { ok: "#3fa863", mid: "#c9922f", bad: "#d6483c" };
-const errClass = (e) => (e < GOOD ? "ok" : e < BIG ? "mid" : "bad");
+const BAR = { ok: "#3fa863", mid: "#c9922f", bad: "#d6483c", none: "#555" };
+const errClass = (e) => (e == null ? "none" : e < GOOD ? "ok" : e < BIG ? "mid" : "bad");
 
 const TL_H = 62;     // высота холста таймлайна (внизу — полоса типа сцены)
 // Тип сцены (lolvision/scene_kind.py): подпись и цвет на полосе таймлайна.
@@ -176,14 +176,19 @@ async function loadCells(spec) {
 
 // Камера оценивается только на кадрах игры: в магазине, Tab, клиенте сцену
 // закрывает окно, и промах там не ошибка модели (#786). Без типа сцены — все.
-const camScored = (f) => f.kind === undefined || f.kind === "game";
+// Без истины (миникарта не найдена, вид не наблюдателя, #788) промах не
+// считается вовсе: рамка по чужой миникарте — мусор, а не ошибка модели.
+const hasTruth = (f) => f.truth === undefined && Number.isFinite(f.cx);
+const camScored = (f) => hasTruth(f) && (f.kind === undefined || f.kind === "game");
 
 function summary() {
   const scored = S.frames.filter(camScored);
   const e = scored.map((f) => f.err).sort((a, b) => a - b);
   const med = e[Math.floor(e.length / 2)] || 0;
+  const blind = S.frames.filter((f) => !hasTruth(f)).length;
   $("sMed").title = `медианный промах ≈ ${Math.round(med * S.mapUnits)} ед. · ` +
-    `кадров игры ${scored.length} из ${S.frames.length}`;
+    `кадров игры ${scored.length} из ${S.frames.length}` +
+    (blind ? ` · без истины ${blind}` : "");
   $("sMed").innerHTML = `<b>${med.toFixed(3)}</b> <i>медиана</i>`;
   $("sGood").textContent = scored.filter((f) => f.err < GOOD).length;
   $("sBad").textContent = scored.filter((f) => f.err >= BIG).length;
@@ -269,10 +274,13 @@ function render() {
   const answered = Number.isFinite(f.px);
   // Кадр, который голова кадра сочла «не игрой», ответа не имеет намеренно.
   const notGame = f.is_game === false;
-  $("vErr").textContent = answered ? f.err.toFixed(3) : (notGame ? "не игра" : "нет ответа");
-  $("vErr").className = "big " + errClass(f.err);
-  $("vUnits").textContent = answered ? `${Math.round(f.err * S.mapUnits)} ед.` : "";
-  $("vTrue").textContent = `${f.cx.toFixed(3)}, ${f.cy.toFixed(3)}`;
+  const truth = hasTruth(f);
+  $("vErr").textContent = !truth ? "нет истины" : answered ? f.err.toFixed(3)
+    : (notGame ? "не игра" : "нет ответа");
+  $("vErr").className = "big " + (truth ? errClass(f.err) : "");
+  $("vErr").title = truth ? "" : "миникарта не найдена в кадре — сверять не с чем";
+  $("vUnits").textContent = answered && truth ? `${Math.round(f.err * S.mapUnits)} ед.` : "";
+  $("vTrue").textContent = truth ? `${f.cx.toFixed(3)}, ${f.cy.toFixed(3)}` : "—";
   $("vPred").textContent = `${num(f.px, 3)}, ${num(f.py, 3)}`;
   // У патчевой модели разброс — СКО голосов патчей, тепло — их гистограмма;
   // у CoordNet — разброс и само распределение его головы. Согласные голоса
@@ -291,7 +299,7 @@ function render() {
     $("vScene").textContent = `${num(f.scene, 2)} · ${f.votes} голосов${pg}`;
     $("vScene").className = f.scene < 0.3 ? "mid" : "";
   }
-  $("vQ").textContent = f.q.toFixed(2);
+  $("vQ").textContent = num(f.q, 2);
   $("yt").href = `https://www.youtube.com/watch?v=${S.video}&t=${Math.round(f.t)}s`;
   // В потоке прогон в шапке может быть не выбран, а отчёт о промахе там скрыт.
   if (S.run) $("why").href = `/explain/${S.run.id}/${S.video}/${f.i}.html`;
@@ -426,23 +434,26 @@ function drawMap(f) {
   let s = "";
   if (S.trail) {
     const a = Math.max(0, S.pos - S.trailLen);
-    const d = S.frames.slice(a, S.pos + 1)
+    const d = S.frames.slice(a, S.pos + 1).filter(hasTruth)
       .map((g, k) => `${k ? "L" : "M"}${g.cx.toFixed(4)},${g.cy.toFixed(4)}`).join("");
-    s += `<path class="trail" d="${d}"/>`;
+    if (d) s += `<path class="trail" d="${d}"/>`;
   }
   const answered = Number.isFinite(f.px);
-  if (out) {
+  const truth = hasTruth(f);
+  if (out && !truth) {
+    if (answered) s += `<polygon class="pred" points="${poly(out, f.px, f.py)}"/>`;
+  } else if (out) {
     s += `<polygon class="out" points="${poly(out, f.cx, f.cy)}"/>`;
     if (answered) s += `<polygon class="pred" points="${poly(out, f.px, f.py)}"/>`;
     s += S.cells.map((c) =>
       `<polygon class="cellpoly" data-cell="${c.id}" points="${poly(c.pts, f.cx, f.cy)}"/>`
     ).join("");
   }
-  s += `<circle class="t" cx="${f.cx}" cy="${f.cy}" r="0.012"/>`;
+  if (truth) s += `<circle class="t" cx="${f.cx}" cy="${f.cy}" r="0.012"/>`;
   if (answered) {
     s += `<line class="cross" x1="${f.px - 0.02}" y1="${f.py}" x2="${f.px + 0.02}" y2="${f.py}"/>`;
     s += `<line class="cross" x1="${f.px}" y1="${f.py - 0.02}" x2="${f.px}" y2="${f.py + 0.02}"/>`;
-    s += `<line class="link" x1="${f.cx}" y1="${f.cy}" x2="${f.px}" y2="${f.py}"/>`;
+    if (truth) s += `<line class="link" x1="${f.cx}" y1="${f.cy}" x2="${f.px}" y2="${f.py}"/>`;
   }
   svg.innerHTML = s;
   hookCells(svg);
@@ -476,7 +487,7 @@ function hookCells(scope) {
       const f = S.frames[S.pos];
       const q = S.cells.find((c) => c.id === id);
       let txt = id;
-      if (q && f) {
+      if (q && f && hasTruth(f)) {
         const cx = f.cx + q.pts.reduce((a, p) => a + p[0], 0) / 4;
         const cy = f.cy + q.pts.reduce((a, p) => a + p[1], 0) / 4;
         txt = `${id}  →  ${cx.toFixed(3)}, ${cy.toFixed(3)}`;
@@ -561,7 +572,7 @@ function drawTimeline() {
     const on = passes(f);
     x.globalAlpha = on ? 1 : 0.14;
     x.fillStyle = camScored(f) ? BAR[errClass(f.err)] : "#555";
-    const bh = minH + Math.min(span, f.err / 0.3 * span);
+    const bh = minH + Math.min(span, (f.err || 0) / 0.3 * span);
     x.fillRect(i * w / n, base - bh, bw, bh);
   });
   x.globalAlpha = 1;
@@ -599,8 +610,8 @@ function hover(ev) {
   box.style.left = `${Math.max(72, Math.min(r.width - 72, ev.clientX - r.left))}px`;
   $("hovImg").src = sceneSrc(f);
   $("hovTime").textContent = `${fmtTime(f.t)} · #${f.i}`;
-  $("hovErr").textContent = f.err.toFixed(3);
-  $("hovErr").className = errClass(f.err);
+  $("hovErr").textContent = hasTruth(f) ? num(f.err, 3) : "нет истины";
+  $("hovErr").className = hasTruth(f) ? errClass(f.err) : "";
   box.classList.remove("hidden");
 }
 
@@ -1269,8 +1280,8 @@ async function pollLive() {
   }
   if (d.frames.length) {
     // Кадр без ответа (ни одного голоса) считаем крупным промахом: так он
-    // виден на таймлайне и находится по N/P.
-    d.frames.forEach((f) => { if (f.err == null) f.err = 1; });
+    // виден на таймлайне и находится по N/P. Кадр без истины — не промах.
+    d.frames.forEach((f) => { if (f.err == null && hasTruth(f)) f.err = 1; });
     const wasLast = S.pos >= S.frames.length - 1;
     S.frames = S.frames.concat(d.frames);
     S.live.since = d.count;

@@ -539,9 +539,16 @@ class Session:
         модели — маска, обрезка, масштаб, вид сверху); сюда добавляются сеть,
         сведение голосов и «ответ» — сжатие картинок и запись в сеанс.
         Метка с миникарты в путь модели не входит и не считается.
+
+        Истины нет, если миникарта в кадре не найдена, а вид не наблюдателя:
+        тогда она вырезана по раскладке наблюдателя мимо настоящей, и рамка
+        по ней — мусор. В строке cx, cy, q, err = None и truth = "no_minimap";
+        ответ модели остаётся.
         """
-        x, y, q, _ = find_box_clipped(mask, bw, bh)
-        cx, cy = (x + bw / 2) / MM, (y + bh / 2) / MM
+        truth = self.minimap is None or self.minimap["found"] or self.view == "spectator"
+        if truth:
+            x, y, q, _ = find_box_clipped(mask, bw, bh)
+            cx, cy = (x + bw / 2) / MM, (y + bh / 2) / MM
 
         out, hm, mt = model.predict(prep)
         ms.update(mt)
@@ -552,10 +559,14 @@ class Session:
         i = self._n_emit
         self._n_emit += 1
         row = {"i": i, "t": round(self.start + i / self.fps, 2),
-               "cx": round(cx, 4), "cy": round(cy, 4),
+               "cx": None, "cy": None,
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
-               "err": _r(np.hypot(cx - out["px"], cy - out["py"]), 4),
-               "spread": _r(out["spread"], 3), "q": round(q, 3)}
+               "err": None, "spread": _r(out["spread"], 3), "q": None}
+        if truth:
+            row.update(cx=round(cx, 4), cy=round(cy, 4), q=round(q, 3),
+                       err=_r(np.hypot(cx - out["px"], cy - out["py"]), 4))
+        else:
+            row["truth"] = "no_minimap"
         for k in ("agree", "scene", "game"):
             if k in out:
                 row[k] = _r(out[k], 3)
