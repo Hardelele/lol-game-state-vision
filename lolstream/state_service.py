@@ -120,23 +120,16 @@ class Observed:
 
 
 @dataclass(frozen=True)
-class ChampView:
-    """Один из десяти в контексте матча: запись кадра и то, чего в ней нет."""
-    ctx: ChampCtx
-    alive: Observed | None       # Champ.alive: жив / мёртв с источником
-    hp: Observed | None          # Champ.hp: доля ХП с источником
-    conflicts: int               # Champ.conflicts
-
-
-@dataclass(frozen=True)
 class MatchView:
     """Неизменяемый снимок MatchState на момент `t` (время потока); `at` —
     unix-время этого момента. Собирается `match_view` под замком сеанса:
     провайдер зовётся из потока хаба, а MatchState меняет поток кадра."""
     t: float
     at: float
-    champs: tuple[ChampView, ...]
-    roster_src: str | None       # api — состав из API, hud — по HUD, None — нет
+    # Записи контекста (MatchState.frame_view): жив / мёртв, ХП, таймер — с
+    # источником и возрастом в самой записи.
+    champs: tuple[ChampCtx, ...]
+    roster_src: str | None       # MatchState.roster_src: api / hud / None
     clock: Observed | None       # MatchState.game_clock()
     api_live: bool
     api_refused: str | None
@@ -149,13 +142,9 @@ def _observed(f) -> Observed | None:
 
 def match_view(ms: MatchState, at: float) -> MatchView:
     """MatchState → MatchView. `at` — unix-время момента `ms.t`."""
-    champs = []
-    for c in ms.frame_view():
-        ch = ms.champs[c.name]
-        champs.append(ChampView(c, _observed(ch.alive), _observed(ch.hp), ch.conflicts))
-    roster = None if not ms.order else ("api" if ms.api is not None else "hud")
-    return MatchView(ms.t, at, tuple(champs), roster, _observed(ms.game_clock()),
-                     ms.api_live(), ms.api_refused, dict(ms.conflicts))
+    return MatchView(ms.t, at, tuple(ms.frame_view()), ms.roster_src,
+                     _observed(ms.game_clock()), ms.api_live(), ms.api_refused,
+                     dict(ms.conflicts))
 
 
 @dataclass(frozen=True)
@@ -221,11 +210,12 @@ def relation_to_me(team: str, champion: str, me: PlayerRecord) -> str:
 def record_sides(rec: UnitRec | TrackRec, age: float | None) -> dict:
     """Свой / враг / сам и сторона у юнита или трека — поля записи
     (lolvision/sides.py, #790) как есть: значение или null с причиной записи.
-    Источник отношения — `screen` (цвет полоски в пикселях); сторону
-    sides.assign берёт то из ответа детектора, то из команды своего игрока
-    по API — в записи источник не указан, поэтому `inferred`."""
+    Источник отношения — `screen` (цвет полоски в пикселях); стороны —
+    `side_src` записи: `api` — от команды своего игрока по API, `detector` —
+    ответ детектора по пикселям (`screen`)."""
+    side_src = "api" if rec.side_src == "api" else "screen"
     return {"relation": maybe(rec.relation, "screen", age, rec.relation_reason or WHY_NO_SIDES),
-            "side": maybe(rec.side, "inferred", age, rec.side_reason or WHY_NO_SIDES)}
+            "side": maybe(rec.side, side_src, age, rec.side_reason or WHY_NO_SIDES)}
 
 
 def _record(rec: UnitRec | TrackRec, age: float | None) -> dict:
@@ -340,8 +330,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
         champions = refuse("состава нет: " + (mv.api_refused or api_why or
                                               "контекст матча ещё не знает состава"))
     else:
-        for cv in mv.champs:
-            entries.append(_champion(cv, mv.roster_src, mlag, mage, me, me_why, players, api_age,
+        for c in mv.champs:
+            entries.append(_champion(c, mv.roster_src, mlag, mage, me, me_why, players, api_age,
                                      api_why, vis, why_vis, lag, named, names_ok, names_why))
         champions = fact(entries, mv.roster_src, mlag)
 
@@ -420,13 +410,12 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
             "scene": scene, "units": units, "tracks": tracks, "conflicts": conflicts}
 
 
-def _champion(cv: ChampView, roster_src: str, mlag: float, mage: Callable[[float], float],
+def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float], float],
               me: PlayerRecord | None, me_why: str, players: Mapping[str, PlayerRecord],
               api_age: float | None, api_why: str, vis: VisionFrame | None, why_vis: str,
               lag: float | None, named: Mapping[str, UnitRec], names_ok: bool,
               names_why: str | None) -> dict:
-    """Один из десяти: состояние — из контекста матча, статика — из API."""
-    c = cv.ctx
+    """Один из десяти: состояние — из записи контекста матча, статика — из API."""
     p = players.get(c.name)
     why_p = api_why or "нет в составе API"
     if me is None:
@@ -436,23 +425,21 @@ def _champion(cv: ChampView, roster_src: str, mlag: float, mage: Callable[[float
     else:
         relation = fact(relation_to_me(c.team, c.name, me), "api", api_age)
 
-    a = cv.alive
-    if a is None:
+    if c.alive is None:
         alive = respawn = refuse("жив / мёртв не наблюдался")
     else:
-        alive = fact(a.value, a.src, mage(a.t))
-        if a.value:
-            respawn = refuse(f"жив ({a.src})")
+        alive = fact(c.alive, c.alive_src, mlag + (c.alive_age or 0.0))
+        if c.alive:
+            respawn = refuse(f"жив ({c.alive_src})")
         else:
-            # Таймер ставит тот же источник, что объявил смерть (match_state:
-            # респаун из API или с панели HUD вместе с alive = False).
             respawn = maybe(None if c.respawn_in is None else round(c.respawn_in, 1),
-                            a.src, mlag, "мёртв, таймер возрождения неизвестен")
+                            c.respawn_src or c.alive_src, mlag,
+                            "мёртв, таймер возрождения неизвестен")
 
     position = (refuse("место не наблюдалось") if c.u is None or c.v is None or c.src is None
                 else fact(_uv(c.u, c.v), c.src, mlag + (c.age or 0.0)))
-    hp = (refuse("ХП не наблюдалось") if cv.hp is None
-          else fact(round(float(cv.hp.value), 2), cv.hp.src, mage(cv.hp.t)))
+    hp = (refuse("ХП не наблюдалось") if c.hp is None or c.hp_src is None
+          else fact(round(float(c.hp), 2), c.hp_src, mlag + (c.hp_age or 0.0)))
 
     if vis is None:
         on_screen = refuse(why_vis)
@@ -475,7 +462,7 @@ def _champion(cv: ChampView, roster_src: str, mlag: float, mage: Callable[[float
             "scores": refuse(why_p) if p is None else fact(p.scores.to_dict(), "api", api_age),
             "alive": alive, "respawn_in": respawn, "position": position,
             "map_state": fact(c.state, "inferred", mlag), "on_screen": on_screen, "hp": hp,
-            "conflicts": cv.conflicts}
+            "conflicts": c.conflicts}
 
 
 # ---------------------------------------------------------------- схема

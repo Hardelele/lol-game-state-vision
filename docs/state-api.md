@@ -71,7 +71,7 @@ loopback, несколько раз в секунду:
 | `minimap` | иконка на миникарте (зрение) |
 | `screen` | основной вид кадра: детектор юнитов, имя над плашкой, цвет полоски, модель камеры, тип сцены |
 | `hud` | панели HUD (состав, жив/мёртв, таймер) |
-| `inferred` | выведено: память и правила контекста матча, паспорт, сторона по правилу sides.py |
+| `inferred` | выведено: память и правила контекста матча, паспорт |
 
 **Давность.** Факты контекста матча и кадра: `age` = задержка (сколько
 прошло от момента кадра до снимка, `sources.match.age` / `sources.vision.age`)
@@ -182,13 +182,13 @@ unix-времени — `t − age`.
 | `team` | `ORDER` / `CHAOS` | api / hud | команда в контексте матча |
 | `relation` | `self` / `ally` / `enemy` | api | отношение к своему игроку по API (`relation_to_me`: его чемпион — `self`, его команда — `ally`, иначе `enemy`); своего игрока нет или состав не из API — отказ |
 | `riot_id`, `level`, `items`, `scores` | строка, целое, массив id, объект | api | из `allPlayers` по Id чемпиона; без API — отказ |
-| `alive` | bool | api / hud / minimap / inferred | `Champ.alive` контекста матча с его источником; не наблюдался — отказ |
-| `respawn_in` | с | как у `alive` | `ChampCtx.respawn_in` у мёртвого; живой — отказ «жив (источник)»; мёртв без таймера — отказ |
+| `alive` | bool | api / hud / minimap / inferred | `ChampCtx.alive` с источником `alive_src` и возрастом `alive_age`; не наблюдался — отказ |
+| `respawn_in` | с | api / hud (`ChampCtx.respawn_src`) | `ChampCtx.respawn_in` у мёртвого; живой — отказ «жив (источник)»; мёртв без таймера — отказ |
 | `position` | `{"u", "v"}` | minimap / screen / inferred | последнее известное место (`ChampCtx`); не наблюдалось — отказ |
 | `map_state` | `visible` / `remembered` / `dead` / `unknown` | inferred | `ChampCtx.state`: виден сейчас / помним место / мёртв / нет данных |
 | `on_screen` | `true` | screen | на кадре чемпион с этим именем над плашкой. **`false` не выдаётся**: «не опознан» ≠ «нет на экране». Читатель `names` выключен паспортом (вид игрока и пр.) — отказ с его причиной |
-| `hp` | доля 0..1 | screen / inferred | `Champ.hp` контекста с источником (`inferred` — 1.0 после возрождения) |
-| `conflicts` | целое (не факт) | — | `Champ.conflicts`: расхождений по этому чемпиону за матч |
+| `hp` | доля 0..1 | screen / inferred | `ChampCtx.hp` с `hp_src` и `hp_age` (`inferred` — 1.0 после возрождения) |
+| `conflicts` | целое (не факт) | — | `ChampCtx.conflicts`: расхождений по этому чемпиону за матч |
 
 ### `enemies` — враги с давностью
 
@@ -217,8 +217,9 @@ unix-времени — `t − age`.
 * `name` — Id чемпиона по имени над плашкой (`screen`); читатель `names`
   выключен — отказ с причиной паспорта;
 * `relation` (`self` / `ally` / `enemy`, источник `screen` — цвет полоски) и
-  `side` (`ORDER` / `CHAOS`, источник `inferred` — правило sides.py) — поля
-  записи; `null` → причина записи (`relation_reason`, `side_reason`:
+  `side` (`ORDER` / `CHAOS`; источник — поле записи `side_src`: `api` —
+  от команды своего игрока по API, `detector` → `screen` — ответ детектора
+  на виде наблюдателя) — поля записи; `null` → причина записи (`relation_reason`, `side_reason`:
   «вид наблюдателя: своего игрока нет», «цвет вне ожидаемого: yellow», «нет
   команды своего игрока…», «не определялось» — запись прошла мимо
   `sides.assign`). Таблица случаев — [sides.md](sides.md).

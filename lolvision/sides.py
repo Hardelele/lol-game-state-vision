@@ -75,6 +75,7 @@ class Sides:
     relation_reason: str | None
     side: str | None               # ORDER / CHAOS
     side_reason: str | None
+    side_src: str | None = None    # detector / api; None при side None
 
 
 def other_side(side: str) -> str:
@@ -95,7 +96,7 @@ def decide(ctx: SideContext, kind: str, det_team: str, color: str | None,
         return Sides(None, WHY_VIEW, None, WHY_VIEW)
     if ctx.view == "spectator":
         if det_team in SIDES:
-            return Sides(None, WHY_SPECTATOR, det_team, None)
+            return Sides(None, WHY_SPECTATOR, det_team, None, "detector")
         return Sides(None, WHY_SPECTATOR, None, WHY_DET_TEAM)
     # Вид игрока: отношение — по цвету полоски, сторона — от своего игрока.
     if color is None:
@@ -118,7 +119,7 @@ def decide(ctx: SideContext, kind: str, det_team: str, color: str | None,
         why = WHY_NO_API + (f": {ctx.my_team_reason}" if ctx.my_team_reason else "")
         return Sides(relation, None, None, why)
     side = other_side(ctx.my_team) if relation == "enemy" else ctx.my_team
-    return Sides(relation, None, side, None)
+    return Sides(relation, None, side, None, "api")
 
 
 # ---------- проба цвета полоски по пикселям ----------
@@ -222,5 +223,5 @@ def assign(units: list, ctx: SideContext, rgb: np.ndarray | None = None) -> list
                 color, why = probe_color(rgb, u.kind, u.x, u.y)
         d = decide(ctx, u.kind, u.team, color, why)
         out.append(replace(u, color=color, relation=d.relation, relation_reason=d.relation_reason,
-                           side=d.side, side_reason=d.side_reason))
+                           side=d.side, side_reason=d.side_reason, side_src=d.side_src))
     return out

@@ -149,7 +149,7 @@ def test_emit_glues_units_tracks_context_and_events_by_name():
     assert last["units"][0] == {"kind": "champion", "team": "CHAOS", "x": 0.6, "y": 0.5,
                                 "hp": 0.7, "score": 0.95, "name": "Volibear", "color": None,
                                 "relation": None, "relation_reason": UNSET,
-                                "side": None, "side_reason": UNSET}
+                                "side": None, "side_reason": UNSET, "side_src": None}
     # Чемпионы миникарты — по составу, именованные поля.
     jinx = next(c for c in last["champs"] if c["name"] == "Jinx")
     assert jinx == {"name": "Jinx", "team": "CHAOS", "slot": "R4", "visible": False,
@@ -165,7 +165,8 @@ def test_emit_glues_units_tracks_context_and_events_by_name():
     assert {t["kind"] for t in last["tracks"]} == {"champion", "minion", "ward"}
     assert set(tracks[next(iter(tracks))]) == {"id", "kind", "team", "state", "u", "v",
                                                "x", "y", "hp", "age", "relation",
-                                               "relation_reason", "side", "side_reason"}
+                                               "relation_reason", "side", "side_reason",
+                                               "side_src"}
     # События трекера — на втором кадре (подтверждение треков).
     assert sorted(e["type"] for e in rows[1]["uev"]) == ["unit_new"] * 3
     assert all({"t", "type", "id", "kind", "team"} <= set(e) for e in rows[1]["uev"])
@@ -178,10 +179,12 @@ def test_emit_glues_units_tracks_context_and_events_by_name():
     assert (ctx["Jinx"]["u"], ctx["Jinx"]["v"], ctx["Jinx"]["src"]) == (0.62, 0.31, "minimap")
     assert ctx["Lulu"] == {"name": "Lulu", "team": "CHAOS", "state": "unknown", "u": None,
                            "v": None, "age": None, "src": None, "hp": None,
-                           "respawn_in": None}
+                           "respawn_in": None, "alive": True, "alive_src": "hud",
+                           "alive_age": 0.0, "hp_src": None, "hp_age": None,
+                           "respawn_src": None, "conflicts": 0}
     # Событие смерти — на третьем кадре, с последним местом.
     assert last["ev"] == [{"t": last["t"], "type": "death", "name": "Jinx", "team": "CHAOS",
-                           "u": 0.62, "v": 0.31, "respawn_in": 12}]
+                           "u": 0.62, "v": 0.31, "respawn_in": 12, "src": "hud"}]
     assert "ev" not in rows[0] or all(e["type"] != "death" for e in rows[0]["ev"])
 
 

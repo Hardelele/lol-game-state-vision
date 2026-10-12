@@ -73,6 +73,7 @@ def test_spectator_side_is_detector_team_and_no_relation():
     assert table(out) == [(None, "ORDER"), (None, "CHAOS")]
     assert {r.relation_reason for r in out} == {WHY_SPECTATOR}
     assert all(r.side_reason is None for r in out)
+    assert {r.side_src for r in out} == {"detector"}            # сторона — ответ детектора
 
 
 def test_player_view_playing_order():
@@ -81,6 +82,7 @@ def test_player_view_playing_order():
     assert [r.color for r in out] == ["green", "blue", "red", "blue", "red"]
     assert table(out) == [("self", "ORDER"), ("ally", "ORDER"), ("enemy", "CHAOS"),
                           ("ally", "ORDER"), ("enemy", "CHAOS")]
+    assert {r.side_src for r in out} == {"api"}                 # сторона — от своего игрока
 
 
 def test_player_view_playing_chaos_side_is_not_flipped():
@@ -164,6 +166,7 @@ def test_records_reason_only_when_null():
     d = assign(units, SideContext("player", None, "нет API"), rgb)[0].to_dict()
     assert d["relation"] == "self" and d["relation_reason"] is None
     assert d["side"] is None and d["side_reason"].startswith(WHY_NO_API)
+    assert d["side_src"] is None
     t = TrackRec("x", "minion", "ORDER", "seen", 0.5, 0.5, None, None, 1.0, 0.0,
                  "ally", None, "CHAOS", None).to_dict()
     assert (t["relation"], t["side"], t["relation_reason"], t["side_reason"]) == \

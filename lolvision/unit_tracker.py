@@ -116,6 +116,7 @@ class Track:
     relation_reason: str | None = UNSET
     side: str | None = None
     side_reason: str | None = UNSET
+    side_src: str | None = None    # detector / api — откуда сторона
 
     def predict(self, t: float) -> np.ndarray:
         return self.uv + self.vel * (t - self.t)
@@ -125,7 +126,7 @@ class Track:
         if self.relation is None:
             self.relation, self.relation_reason = det.relation, det.relation_reason
         if self.side is None:
-            self.side, self.side_reason = det.side, det.side_reason
+            self.side, self.side_reason, self.side_src = det.side, det.side_reason, det.side_src
 
 
 def _unassigned(r) -> bool:
@@ -283,5 +284,6 @@ class UnitTracker:
             xy = tr.xy if tr.state == "seen" else None
             out.append(TrackRec(tr.id, tr.kind, tr.team, tr.state, float(p[0]), float(p[1]),
                                 xy[0] if xy else None, xy[1] if xy else None, tr.hp, t - tr.t,
-                                tr.relation, tr.relation_reason, tr.side, tr.side_reason))
+                                tr.relation, tr.relation_reason, tr.side, tr.side_reason,
+                                tr.side_src))
         return out

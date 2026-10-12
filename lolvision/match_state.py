@@ -113,15 +113,6 @@ class ApiObs:
         return None
 
 
-@dataclass(frozen=True)
-class SourcedDeath(DeathEvent):
-    """Смерть с источником; у DeathEvent источник — панель HUD."""
-    src: str = "api"
-
-    def to_dict(self) -> dict:
-        return {**super().to_dict(), "src": self.src}
-
-
 @dataclass
 class Fact:
     """Значение с временем наблюдения и источником."""
@@ -138,6 +129,7 @@ class Champ:
     pos: Fact | None = None          # (u, v) в долях миникарты
     alive: Fact | None = None        # True / False
     respawn_at: float | None = None  # момент возрождения (время потока)
+    respawn_src: str | None = None   # кто дал момент возрождения: api / hud
     hp: Fact | None = None           # доля ХП с плашки
     seen: float | None = None        # последний раз видели (миникарта или экран)
     dead_n: int = 0                  # кадров подряд «мёртв» без таймера
@@ -264,13 +256,13 @@ class MatchState:
             c = self.champs[p.name]
             was_dead = c.alive is not None and c.alive.value is False
             if p.dead:
-                c.respawn_at, c.dead_n = t + p.respawn_in, 0
+                c.respawn_at, c.respawn_src, c.dead_n = t + p.respawn_in, "api", 0
                 if not was_dead:
                     c.api_change = t
-                    new.append(SourcedDeath(t, c.name, c.team,
-                                            c.pos.value[0] if c.pos else None,
-                                            c.pos.value[1] if c.pos else None,
-                                            round(p.respawn_in, 1), "api"))
+                    new.append(DeathEvent(t, c.name, c.team,
+                                          c.pos.value[0] if c.pos else None,
+                                          c.pos.value[1] if c.pos else None,
+                                          round(p.respawn_in, 1), src="api"))
                 c.alive = Fact(False, t, "api")
             elif was_dead:
                 c.api_change = t
@@ -325,11 +317,11 @@ class MatchState:
                     continue
                 c.alive = Fact(False, t, "hud")
                 if timer is not None:
-                    c.respawn_at = t + float(timer)
+                    c.respawn_at, c.respawn_src = t + float(timer), "hud"
                 if not was_dead:
                     new.append(DeathEvent(t, c.name, c.team,
                                           c.pos.value[0] if c.pos else None,
-                                          c.pos.value[1] if c.pos else None, timer))
+                                          c.pos.value[1] if c.pos else None, timer, src="hud"))
             elif alive is True:
                 c.dead_n = 0
                 if c.alive is not None and c.alive.value is False:
@@ -383,7 +375,7 @@ class MatchState:
                 self._respawn(c, t, "inferred", new)
 
     def _respawn(self, c: Champ, t: float, src: str, new: list[Event]) -> None:
-        c.alive, c.respawn_at = Fact(True, t, src), None
+        c.alive, c.respawn_at, c.respawn_src = Fact(True, t, src), None, None
         if src != "minimap":
             # Возрождение — у своего фонтана; место выведено, а не увидено.
             c.pos = Fact(FOUNTAIN[c.team], t, "inferred")
@@ -391,6 +383,14 @@ class MatchState:
         new.append(RespawnEvent(t, c.name, c.team, src))
 
     # ---------- выход ----------
+
+    @property
+    def roster_src(self) -> str | None:
+        """Откуда состав: api — из Live Client API, hud — по портретам HUD
+        (миникарта live_champions), None — состава нет."""
+        if not self.order:
+            return None
+        return "api" if self.api is not None else "hud"
 
     def game_clock(self) -> Fact | None:
         """Время матча на момент кадра по API, с; None — API нет или он пропал."""
@@ -404,15 +404,23 @@ class MatchState:
         out = []
         for name in self.order:
             c = self.champs[name]
-            p = c.pos
+            p, a, hp = c.pos, c.alive, c.hp
             # Между опросами API момент возрождения может пройти раньше, чем
             # API скажет «жив»: до возрождения тогда 0, а не минус.
             out.append(ChampCtx(name, c.team, c.status(t),
                                 p.value[0] if p else None, p.value[1] if p else None,
                                 t - p.t if p else None, p.src if p else None,
-                                float(c.hp.value) if c.hp else None,
+                                float(hp.value) if hp else None,
                                 max(0.0, c.respawn_at - t) if c.respawn_at is not None
-                                else None))
+                                else None,
+                                alive=bool(a.value) if a else None,
+                                alive_src=a.src if a else None,
+                                alive_age=t - a.t if a else None,
+                                hp_src=hp.src if hp else None,
+                                hp_age=t - hp.t if hp else None,
+                                respawn_src=c.respawn_src if c.respawn_at is not None
+                                else None,
+                                conflicts=c.conflicts))
         return out
 
 

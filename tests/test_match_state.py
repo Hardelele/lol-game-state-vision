@@ -6,8 +6,7 @@ import pytest
 
 from lolstream.live_client import read_journal, replay, status_observation
 from lolvision.geometry import Projection
-from lolvision.match_state import (API_STALE, FOUNTAIN, ApiObs, ApiPlayer, MatchState,
-                                   SourcedDeath)
+from lolvision.match_state import API_STALE, FOUNTAIN, ApiObs, ApiPlayer, MatchState
 from lolvision.records import DeathEvent, MinimapChamp, RosterEvent, UnitRec
 
 OWN = Path(__file__).parent / "fixtures" / "live_client" / "own_game.jsonl"
@@ -62,8 +61,10 @@ def test_death_and_inferred_respawn_at_fountain():
     ev = m.update(1, "game", champs(Jinx=dict(alive=False, timer=10)))
     assert ev == [DeathEvent(1, "Jinx", "CHAOS", .6, .7, 10)]
     assert ev[0].to_dict() == {"t": 1, "type": "death", "name": "Jinx", "team": "CHAOS",
-                               "u": .6, "v": .7, "respawn_in": 10}
+                               "u": .6, "v": .7, "respawn_in": 10, "src": "hud"}
     assert view(m, "Jinx").state == "dead" and view(m, "Jinx").respawn_in == 10
+    r = view(m, "Jinx")
+    assert (r.alive, r.alive_src, r.respawn_src) == (False, "hud", "hud") and m.roster_src == "hud"
     m.update(5, "tab")                       # панели не видно
     ev = m.update(11, "tab")
     assert [e.type for e in ev] == ["respawn"] and ev[0].src == "inferred"
@@ -159,10 +160,14 @@ def test_api_gives_roster_deaths_and_clock_without_frames():
     assert m.update(0, "loading", api=api(0.07)) == []      # состав уже на загрузке
     assert m.order == NAMES and m.api_live()
     ev = m.update(10, "game", api=api(70.0, {"Jinx": 12.0}))
-    assert ev == [SourcedDeath(10, "Jinx", "CHAOS", None, None, 12.0, "api")]
+    assert ev == [DeathEvent(10, "Jinx", "CHAOS", None, None, 12.0, src="api")]
     assert ev[0].to_dict()["src"] == "api"
     r = view(m, "Jinx")
     assert r.state == "dead" and r.respawn_in == 12.0
+    # Источники в записи контекста: жив / мёртв и таймер — из API.
+    assert (r.alive, r.alive_src, r.alive_age, r.respawn_src) == (False, "api", 0.0, "api")
+    assert (r.hp, r.hp_src, r.hp_age) == (None, None, None)
+    assert m.roster_src == "api" and MatchState().roster_src is None
     assert m.game_clock().value == 70.0 and m.game_clock().src == "api"
     m.update(11.5, "game")                                   # кадр без нового снимка
     assert m.game_clock().value == 71.5 and view(m, "Jinx").respawn_in == 10.5
