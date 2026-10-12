@@ -203,6 +203,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `video_stream.py` | A local file or a YouTube video as a stream of frames (yt-dlp, ffmpeg, NVDEC) |
 | `frame_source.py` | Frame source interface for the live mode: a YouTube video or file, or the game window on screen (dxcam with an announced mss fallback, pause when unfocused or minimized, fps limit); "no frame" is a state with a reason ([docs/screen-source.md](docs/screen-source.md)) |
 | `live.py` | Live mode: frames from a stream → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk |
+| `live_client.py` | Riot Live Client Data API of your own game (`https://127.0.0.1:2999/liveclientdata/allgamedata`, ~2 Hz, in its own thread): explicit states `no_game` / `loading` / `in_game` / `ended` / `error` with a reason instead of exceptions; typed records (game time, ten players with Data Dragon champion Id, team, riot ID, death and respawn timer, level, items, score; own player stats; events deduplicated by `EventID`), source `api`; replay of a `{"t", "code", "body"}` JSONL journal. See [docs/live-client.md](docs/live-client.md) |
 | `channels.py`, `video_side.py` | Channel catalog, video lists, ingest jobs; player role and side from the video description |
 | `serve_inspect.py`, `webapp/` | Local web viewer (standard library HTTP server, plain HTML/JS) |
 | `activations.py`, `explain_miss.py` | Layer-by-layer activations and the report on a single miss, served by the viewer |
