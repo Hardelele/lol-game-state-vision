@@ -72,7 +72,7 @@ from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
 from lolvision.patch_infer import PatchInfer
 from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
-from lolvision.unit_net import DEFAULT_NET, UnitNetRunner
+from lolvision.unit_net import DEFAULT_NET, REF_H, REF_W, UnitNetRunner
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolvision.minimap_locate import Locator, box_px
@@ -369,14 +369,14 @@ class Session:
         # ответы отбрасываются (там сеть не училась).
         unit_model = None
         if UNIT_NET.is_file() and self.device.startswith("cuda"):
-            keep = unit_keep(w, h)
+            keep, valid, valid_src = _unit_zone(w, h)
             unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep, thr=UNIT_THR,
-                                       valid=1 - ignore_map(keep), size=(h, w))
+                                       valid=valid, size=(h, w))
             # Трекер юнитов (#782): сопоставление на карте через проекцию
             # экрана и центр камеры; «должен быть виден» — та же зона ответов.
             hp_, scene_size = load_projection()
             self.tracker = UnitTracker(Projection(hp_, scene_size, (cx0, cy0, cx1, cy1)),
-                                       frame_size=(w, h), valid=1 - ignore_map(keep))
+                                       frame_size=(w, h), valid=valid_src)
             self.note += " · юниты"
         # Зона детектора юнитов — под раскладку ролика (#786): пока раскладка
         # не решена — наблюдатель, у вида игрока своя маска от миникарты.
@@ -490,9 +490,9 @@ class Session:
                 want = (view, locator.box if view == "player" else None)
                 if want != zone:
                     zone = want
-                    keep = unit_keep(w, h, view, locator.box)
-                    unit_model.set_zone(keep, 1 - ignore_map(keep))
-                    self.tracker.valid = 1 - ignore_map(keep)
+                    keep, valid, valid_src = _unit_zone(w, h, view, locator.box)
+                    unit_model.set_zone(keep, valid)
+                    self.tracker.valid = valid_src
                     self.view = view
                     self.note += " · вид игрока" if view == "player" else ""
             ms["full_img"] = _full_small(fr, fr_dev)
@@ -620,6 +620,17 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+def _unit_zone(w: int, h: int, view: str = "spectator",
+               box=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Маски детектора юнитов: keep и valid в сетке 1080p (в ней сеть училась
+    и в ней заданы полосы ignore_map) и valid в размере кадра — для трекера."""
+    keep = unit_keep(REF_W, REF_H, view, box)
+    valid = 1 - ignore_map(keep)
+    if (w, h) == (REF_W, REF_H):
+        return keep, valid, valid
+    return keep, valid, cv2.resize(valid, (w, h), interpolation=cv2.INTER_NEAREST)
 
 
 def _mini(region: np.ndarray, mmbox, rx0: int, ry0: int) -> Image.Image:

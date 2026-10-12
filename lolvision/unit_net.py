@@ -37,6 +37,9 @@ from lolvision.paths import RUNS
 CLASSES = ("champion", "minion", "ward")
 TEAMS = ("ORDER", "CHAOS")
 IN_W, IN_H = 960, 544
+# Сетка, в которой сеть училась: вход — она же, уменьшенная вдвое. Кадр
+# другого размера приводится к ней до уменьшения, маски keep/valid — в ней.
+REF_W, REF_H = 1920, 1080
 STRIDE = 4
 OUT_W, OUT_H = IN_W // STRIDE, IN_H // STRIDE
 DEFAULT_NET = RUNS / "units" / "net" / "model.pt"
@@ -166,12 +169,17 @@ def load_net(path: Path = DEFAULT_NET, device: str = "cuda") -> UnitNet:
 
 
 def prepare(rgb_u8: torch.Tensor, keep: torch.Tensor | None = None) -> torch.Tensor:
-    """Кадр 1080p (H, W, 3) uint8 на устройстве → вход (1, 3, 544, 960) 0..1.
+    """Кадр (H, W, 3) uint8 на устройстве → вход (1, 3, 544, 960) 0..1.
 
-    Уменьшение вдвое — среднее 2×2 (то же, что cv2.INTER_AREA при ровно
-    половине, которым готовятся кадры обучения); `keep` — маска сцены
-    (H, W) 0/1, закрытое HUD становится чёрным до уменьшения."""
+    Кадр не 1080p сначала приводится к 1920×1080 (на видеокарте): иначе
+    юниты на входе мельче, чем при обучении. Уменьшение вдвое — среднее 2×2
+    (то же, что cv2.INTER_AREA при ровно половине, которым готовятся кадры
+    обучения); `keep` — маска сцены (1080, 1920) 0/1, закрытое HUD
+    становится чёрным до уменьшения."""
     x = rgb_u8.permute(2, 0, 1)[None].float() / 255
+    if x.shape[-2:] != (REF_H, REF_W):
+        x = F.interpolate(x, size=(REF_H, REF_W), mode="bilinear", align_corners=False,
+                          antialias=True)
     if keep is not None:
         x = x * keep
     x = F.avg_pool2d(x, 2)
@@ -180,17 +188,23 @@ def prepare(rgb_u8: torch.Tensor, keep: torch.Tensor | None = None) -> torch.Ten
 
 class UnitNetRunner:
     """Детектор для live: подготовка кадра, сеть и decode в одном CUDA graph
-    на батч 1 (fp16). Кадр 1080p в видеопамяти → тензор decode."""
+    на батч 1 (fp16). Кадр размера `size` (H, W) в видеопамяти → тензор
+    decode; кадр не 1080p приводится к 1080p внутри prepare.
 
-    def __init__(self, path: Path = DEFAULT_NET, device: str = "cuda",
+    Маски `keep` и `valid` — всегда в сетке 1080p (REF_H, REF_W), как при
+    обучении: полосы ignore_map у HUD заданы в пикселях 1080p."""
+
+    def __init__(self, path: Path | nn.Module = DEFAULT_NET, device: str = "cuda",
                  keep: np.ndarray | None = None, valid: np.ndarray | None = None,
                  thr: float = 0.3, fp16: bool = True,
-                 graph: bool = True, size: tuple[int, int] = (1080, 1920)):
-        self.net = load_net(path, device)
+                 graph: bool = True, size: tuple[int, int] = (REF_H, REF_W)):
+        self.net = path.to(device).eval() if isinstance(path, nn.Module) else load_net(path, device)
         self.device, self.thr = device, thr
         self.dtype = torch.float16 if fp16 and device.startswith("cuda") else torch.float32
-        self.keep = (torch.from_numpy(keep.astype(np.float32)).to(device)[None, None]
-                     if keep is not None else None)
+        # Во сколько раз исходный кадр больше входа сети: 2 для 1080p, 4/3
+        # для 720p (вход — 1080p, уменьшенный вдвое, при любом кадре).
+        self.scale = 2 * size[1] / REF_W
+        self.keep = self._ref(keep, "keep")[None, None] if keep is not None else None
         # `valid` (H, W) 0/1 в пикселях кадра: вне его — HUD и полосы у его
         # краёв, где сеть не училась (unit_targets.ignore_map); ответы там
         # отбрасываются. Клетка выхода годна, если годны все её пиксели.
@@ -208,8 +222,14 @@ class UnitNetRunner:
             with torch.cuda.graph(self.graph), torch.no_grad():
                 self.out = self._run()
 
+    def _ref(self, mask: np.ndarray, name: str) -> torch.Tensor:
+        if mask.shape != (REF_H, REF_W):
+            raise ValueError(f"{name} {mask.shape}: маска детектора — в сетке 1080p "
+                             f"{(REF_H, REF_W)}, а не в размере кадра")
+        return torch.from_numpy(mask.astype(np.float32)).to(self.device)
+
     def _cells(self, valid: np.ndarray) -> torch.Tensor:
-        v = torch.from_numpy(valid.astype(np.float32)).to(self.device)[None, None]
+        v = self._ref(valid, "valid")[None, None]
         v = -F.max_pool2d(-F.avg_pool2d(v, 2), STRIDE)
         return F.pad(v, (0, OUT_W - v.shape[-1], 0, OUT_H - v.shape[-2]))
 
@@ -219,7 +239,7 @@ class UnitNetRunner:
         Копия на месте: тензоры захвачены CUDA graph, новые он бы не увидел."""
         if self.keep is None or self.valid is None:
             raise ValueError("зона задаётся на месте только поверх заданной при создании")
-        self.keep.copy_(torch.from_numpy(keep.astype(np.float32)).to(self.device)[None, None])
+        self.keep.copy_(self._ref(keep, "keep")[None, None])
         self.valid.copy_(self._cells(valid))
 
     def _run(self) -> torch.Tensor:
@@ -240,8 +260,9 @@ class UnitNetRunner:
 
     @torch.no_grad()
     def units(self, rgb: np.ndarray | torch.Tensor) -> list[Unit]:
-        """Кадр (H, W, 3) uint8 — массив или тензор, уже лежащий в видеопамяти."""
+        """Кадр (H, W, 3) uint8 — массив или тензор, уже лежащий в видеопамяти.
+        Координаты юнитов — в пикселях этого кадра."""
         if not isinstance(rgb, torch.Tensor):
             rgb = torch.from_numpy(rgb).to(self.device)
         rows = self.raw(rgb)[0].cpu().numpy()
-        return to_units(rows, rgb.shape[1] / IN_W)
+        return to_units(rows, self.scale)
