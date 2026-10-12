@@ -1,8 +1,15 @@
-"""Строка кадра live: истина камеры только там, где миникарта настоящая (#788)."""
+"""Строка кадра live: истина камеры только там, где миникарта настоящая (#788);
+склейка Session._emit — юниты, треки, контекст и события именованными полями
+(records.py, schema 1, #797)."""
+
+import json
 
 import numpy as np
 
 from lolstream import live
+from lolvision.geometry import Projection
+from lolvision.records import SCHEMA, MinimapChamp, UnitRec
+from lolvision.unit_tracker import UnitTracker
 
 
 class _Model:
@@ -61,3 +68,114 @@ def test_roster_error_is_in_session_status():
     st = s.status()
     assert st["champs_error"]["text"] == "KeyError: 'Hwei'"
     assert "KeyError: 'Hwei'" in st["note"]
+
+
+# ---------- склейка кадра на синтетике (#797) ----------
+
+NAMES = ["Irelia", "Evelynn", "TwistedFate", "Jhin", "Zyra",
+         "Volibear", "Hecarim", "Locke", "Jinx", "Lulu"]
+# Кадр 1000×1000 — сцена 100×100, пиксель сцены — 0.001 доли карты.
+PROJ = Projection(np.array([[0.001, 0, -0.05], [0, 0.001, -0.05], [0, 0, 1.0]]),
+                  (100, 100), (0, 0, 1000, 1000), (1000, 1000))
+
+
+def _minimap(**over) -> list[MinimapChamp]:
+    out = []
+    for k, n in enumerate(NAMES):
+        d = {"visible": False, "u": None, "v": None, "alive": True, "timer": None,
+             **over.get(n, {})}
+        out.append(MinimapChamp(n, "ORDER" if k < 5 else "CHAOS",
+                                f"{'LR'[k // 5]}{k % 5 + 1}", **d))
+    return out
+
+
+def _game_ms(units, champs) -> dict:
+    kind_p = np.zeros(len(live.KIND_CLASSES), np.float32)
+    kind_p[live.KIND_CLASSES.index("game")] = 0.9
+    return {"kind_p": kind_p, "unit_recs": units, "champs": champs}
+
+
+def _glued_rows() -> list[dict]:
+    """Три игровых кадра: Volibear на экране (с именем) и миньон рядом,
+    Jinx на миникарте, на третьем кадре Jinx умирает (таймер 12 с)."""
+    s = _session(found=True, view="spectator")
+    s.proj = PROJ
+    s.tracker = UnitTracker(PROJ)
+    mask = np.zeros((live.MM, live.MM), np.float32)
+    mask[100:140, 60:130] = 1
+    for k in range(3):
+        units = [UnitRec("champion", "CHAOS", 0.6, 0.5, 0.7, 0.95, "Volibear"),
+                 UnitRec("minion", "ORDER", 0.3 + 0.001 * k, 0.4, 1.0, 0.8),
+                 UnitRec("ward", "ORDER", 0.2, 0.7, 1.0, 0.6)]
+        jinx = (dict(visible=True, u=0.62, v=0.31) if k < 2 else
+                dict(alive=False, timer=12))
+        s._emit(mask, None, None, None, 70, 40, _Model(), _game_ms(units, _minimap(Jinx=jinx)))
+    return s._out.rows
+
+
+def _no_positional_lists(x, path="row"):
+    """В строке кадра нет списков-записей: список — только записей-словарей
+    (или имён состава в событии roster)."""
+    if isinstance(x, dict):
+        for k, v in x.items():
+            _no_positional_lists(v, f"{path}.{k}")
+    elif isinstance(x, list):
+        if path.endswith(".roster"):
+            assert all(isinstance(v, str) for v in x), path
+            return
+        for j, v in enumerate(x):
+            assert isinstance(v, dict), f"{path}[{j}] — {v!r}"
+            _no_positional_lists(v, f"{path}[{j}]")
+
+
+def test_emit_glues_units_tracks_context_and_events_by_name():
+    rows = _glued_rows()
+    for row in rows:
+        assert row["schema"] == SCHEMA == 1
+        assert row["kind"] == "game"
+        json.dumps(row)                                # уходит в JSON как есть
+        _no_positional_lists(row)
+    last = rows[-1]
+    # Юниты: доли кадра, имя у чемпиона, None у прочих.
+    assert [(u["kind"], u["name"]) for u in last["units"]] == [
+        ("champion", "Volibear"), ("minion", None), ("ward", None)]
+    assert last["units"][0] == {"kind": "champion", "team": "CHAOS", "x": 0.6, "y": 0.5,
+                                "hp": 0.7, "score": 0.95, "name": "Volibear"}
+    # Чемпионы миникарты — по составу, именованные поля.
+    jinx = next(c for c in last["champs"] if c["name"] == "Jinx")
+    assert jinx == {"name": "Jinx", "team": "CHAOS", "slot": "R4", "visible": False,
+                    "u": None, "v": None, "alive": False, "timer": 12}
+    # Треки: подтверждены со второй встречи; у видимого место в кадре то же,
+    # что у юнита (по нему смотрелка сводит id с юнитом).
+    tracks = {t["id"]: t for t in last["tracks"]}
+    assert "champ-CHAOS-Volibear" in tracks
+    vb = tracks["champ-CHAOS-Volibear"]
+    assert vb["state"] == "seen" and (vb["x"], vb["y"]) == (0.6, 0.5)
+    # Камера (0.4, 0.6) + смещение по проекции: (600, 500) px → (+0.01, 0).
+    assert (vb["u"], vb["v"]) == (0.41, 0.6)
+    assert {t["kind"] for t in last["tracks"]} == {"champion", "minion", "ward"}
+    assert set(tracks[next(iter(tracks))]) == {"id", "kind", "team", "state", "u", "v",
+                                               "x", "y", "hp", "age"}
+    # События трекера — на втором кадре (подтверждение треков).
+    assert sorted(e["type"] for e in rows[1]["uev"]) == ["unit_new"] * 3
+    assert all({"t", "type", "id", "kind", "team"} <= set(e) for e in rows[1]["uev"])
+    # Контекст: Volibear виден на экране, место — через ту же проекцию; Jinx
+    # мёртв, таймер из панели.
+    ctx = {c["name"]: c for c in last["ctx"]}
+    assert ctx["Volibear"]["state"] == "visible" and ctx["Volibear"]["src"] == "screen"
+    assert (ctx["Volibear"]["u"], ctx["Volibear"]["v"]) == (0.41, 0.6)
+    assert ctx["Jinx"]["state"] == "dead" and ctx["Jinx"]["respawn_in"] == 12
+    assert (ctx["Jinx"]["u"], ctx["Jinx"]["v"], ctx["Jinx"]["src"]) == (0.62, 0.31, "minimap")
+    assert ctx["Lulu"] == {"name": "Lulu", "team": "CHAOS", "state": "unknown", "u": None,
+                           "v": None, "age": None, "src": None, "hp": None,
+                           "respawn_in": None}
+    # Событие смерти — на третьем кадре, с последним местом.
+    assert last["ev"] == [{"t": last["t"], "type": "death", "name": "Jinx", "team": "CHAOS",
+                           "u": 0.62, "v": 0.31, "respawn_in": 12}]
+    assert "ev" not in rows[0] or all(e["type"] != "death" for e in rows[0]["ev"])
+
+
+def test_emit_without_units_or_roster_has_schema_and_no_records():
+    row = _emit(_session(found=True, view="spectator"))
+    assert row["schema"] == 1
+    assert not {"units", "champs", "ctx", "tracks", "ev", "uev"} & set(row)
