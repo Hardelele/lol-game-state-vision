@@ -1208,6 +1208,7 @@ function wireChannels() {
   $("vRefresh").onclick = () => CH.handle && openChannel(CH.handle, CH.url, true);
   $("pTake").onclick = take;
   $("pLive").onclick = () => CH.sel && startLive(CH.sel, Number($("pFps").value));
+  $("pScreen").onclick = () => startLive(null, Number($("pFps").value), "screen");
   $("pOpen").onclick = () => CH.sel && openInViewer(CH.sel);
 }
 
@@ -1219,35 +1220,42 @@ function wireChannels() {
 // получасовой матч проходит целиком примерно за две минуты, а первые кадры
 // видны через несколько секунд.
 
-async function startLive(id, fps) {
+// source: "youtube" (id — ролик) или "screen" (свой экран; id сеанса
+// выдаёт сервер). У экрана рядом с кадрами — состояние источника (пауза,
+// окна нет) и Live Client API своей игры.
+async function startLive(id, fps, source = "youtube") {
   // Модель потока выбирается отдельно от прогона в шапке: там только
   // оценённые прогоны, а поток умеет любой чекпоинт, в том числе патчевый.
   const run = $("pModel").value || S.run.id;
   const r = await fetch("/api/live/start", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, run, fps: fps || 1 }),
+    body: JSON.stringify({ id, run, fps: fps || 1, source }),
   });
   const d = await r.json();
   if (!r.ok) {
     $("jobs").innerHTML = `<div class="msg bad">${esc(d.error)}</div>`;
     return;
   }
+  id = d.id;
   const m = (S.liveModels || []).find((x) => x.id === run) || {};
   S.live = { id, since: 0, state: d.state, title: d.title || id, speed: null,
-    run, kind: d.kind || m.kind,
+    run, kind: d.kind || m.kind, source,
     trained_on: (d.kind ? d.trained_on : m.trained_on) || [] };
+  liveSource(d);
   S.follow = true;
   S.video = id;
   S.frames = [];
   S.pos = 0;
   // Выпадающий список ролика показывает поток, пока он открыт.
-  $("video").innerHTML = `<option value="${esc(id)}">ПОТОК · ${esc(d.title || id)}</option>`;
+  const label = source === "screen" ? "свой экран" : (d.title || id);
+  $("video").innerHTML = `<option value="${esc(id)}">ПОТОК · ${esc(label)}</option>`;
   $("holdout").className = "dot live";
   for (const k of ["screen", "names", "champs"]) {
     $(k).classList.remove("hidden");
     $(k).classList.toggle("on", S[k]);
   }
-  $("holdout").title = "поток: ролик читается с YouTube прямо сейчас";
+  $("holdout").title = source === "screen" ? "поток: кадры снимаются с экрана прямо сейчас"
+    : "поток: ролик читается с YouTube прямо сейчас";
   setMode("end");
   netAvail();
   liveMeta();
@@ -1281,6 +1289,7 @@ async function pollLive() {
   S.live.title = d.title || S.live.title;
   S.live.duration = d.duration;
   S.live.timing = d.timing;
+  liveSource(d);
   // Тип и обучающие ролики сервер знает, только когда модель загружена.
   if (d.kind) {
     S.live.kind = d.kind;
@@ -1306,9 +1315,49 @@ async function pollLive() {
     else { render(); strip(); }
   }
   liveMeta();
-  const going = ["готовлюсь", "спрашиваю YouTube", "идёт"].includes(d.state);
   clearTimeout(S.liveTimer);
-  if (going) S.liveTimer = setTimeout(pollLive, 1200);
+  if (d.active) S.liveTimer = setTimeout(pollLive, 1200);
+}
+
+// Состояние источника и Live Client API из status() сеанса.
+function liveSource(d) {
+  const L = S.live;
+  L.sourceState = d.source_state || null;
+  L.gaps = d.source_gaps || {};
+  L.api = d.api || null;
+  L.apiReason = d.api_reason || null;
+  if (d.source) L.backend = d.source.backend_note || d.source.backend || null;
+}
+
+// Кусок строки потока про источник: есть ли кадр, а если нет — почему
+// и сколько раз; чем снимается.
+function sourceBits(L) {
+  const ss = L.sourceState;
+  if (!ss || !ss.state) return [];
+  const gaps = Object.entries(L.gaps || {}).map(([k, n]) => `${k} ${n}`).join(", ");
+  const tip = (L.backend ? `захват: ${L.backend}` : "") + (gaps ? ` · пропуски: ${gaps}` : "");
+  const what = ss.state === "ok" ? "кадр есть" : (ss.reason || ss.state);
+  const cls = ss.state === "ok" ? "" : ' class="warn"';
+  return [`<span${cls} title="${esc(tip)}">источник: ${esc(what)}</span>`];
+}
+
+// Кусок строки потока про Live Client API: состояние и причина, у игры —
+// время матча, свой чемпион и число событий; у ролика — «нет» с причиной.
+function apiBits(L) {
+  if (!L.api) return L.apiReason ? [`<span class="faint">API: ${esc(L.apiReason)}</span>`] : [];
+  const a = L.api;
+  const b = a.brief;
+  let s = `API: ${esc(a.state)}`;
+  if (a.reason) s += ` — ${esc(a.reason)}`;
+  if (b) {
+    const mm = Math.floor(b.game_time / 60);
+    const ss = String(Math.floor(b.game_time % 60)).padStart(2, "0");
+    s += ` · ${mm}:${ss}`;
+    if (b.me) s += ` · ${esc(b.me.champion ?? "?")} ${esc(b.me.team)}`;
+  }
+  if (a.events) s += ` · событий ${a.events}`;
+  const bad = ["no_game", "error"].includes(a.state);
+  return [`<span${bad ? ' class="warn"' : ""} title="полный снимок: /api/live/${esc(L.id)}/api">${s}</span>`];
 }
 
 // Строка под шапкой в режиме потока: что смотрим, какой моделью, как быстро
@@ -1319,7 +1368,8 @@ function liveMeta() {
   if (!L) return;
   const train = (L.trained_on || []).includes(L.id);
   const bits = [`<span class="live">ПОТОК · ${esc(L.state)}</span>`];
-  bits.push(`<b>${esc(L.title)}</b>`);
+  bits.push(`<b>${esc(L.source === "screen" ? "свой экран" : L.title)}</b>`);
+  bits.push(...sourceBits(L), ...apiBits(L));
   bits.push(`модель <code>${esc(L.run)}</code>` +
     (L.model ? ` <i>${esc(L.model)}</i>` : ""));
   if (S.frames.length) {
@@ -1332,7 +1382,7 @@ function liveMeta() {
   if (T) {
     bits.push(`<span title="медиана за последние ${T.n} кадров: подготовка ` +
       `${T.prep} мс, сеть ${T.net}, голоса ${T.agg}, ответ ${T.out}; ` +
-      `ожидание кадра от распаковки ${T.decode} мс">кадр ${T.model_path} мс` +
+      `ожидание кадра от источника ${T.decode} мс">кадр ${T.model_path} мс` +
       (T.fps_model ? ` · ${T.fps_model} кадр/с` : "") + "</span>");
   }
   if (train) bits.push('<span class="warn">этот ролик был в обучении</span>');

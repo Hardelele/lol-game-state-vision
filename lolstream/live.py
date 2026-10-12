@@ -6,6 +6,16 @@
 истинное положение камеры, модель тут же отвечает, и кадры по одному
 появляются в смотрелке.
 
+Откуда кадр, сеанс не знает (#794): он читает `FrameSource`
+(frame_source.py) — ролик YouTube (`VideoSource`) или окно игры на своём
+экране (`ScreenSource`). Кадра нет (пауза, окно свёрнуто, окна нет) — сеанс
+не падает и строк не пишет, а показывает состояние источника и причину в
+status() (`source_state`). Сборка моделей под размер кадра —
+`build_pipeline`, путь кадра — `Session._step`; размер кадра сменился (окно
+растянули) — путь собирается заново, и это видно в note. С сеансом экрана
+работает Live Client своей игры (live_client.py, #795): его статус — в
+status() (`api`), события копятся в `Session.api_events`.
+
 Что где узко (замерено на этой машине):
 
     распаковка AV1 1080p60 на видеокарте   24x реального времени
@@ -61,8 +71,9 @@ from PIL import Image
 from lolvision.paths import DEFAULT_LAYOUT, RUNS, run_dir
 from lolvision.checkpoints import checkpoint_kind, load_checkpoint, read_checkpoint
 from lolvision.dataset_io import MINI_STORE, STORE_W
-from lolstream.video_stream import probe_url, frames as frame_stream
 from lolstream.channels import check_fps, youtube_id
+from lolstream.frame_source import BACKENDS, FrameSource, ScreenSource, Status, VideoSource
+from lolstream.live_client import EventRecord, LiveClient, LiveStatus, ddragon_champion_ids
 from lolvision.coord_model import expected_point, peak_point, spread
 from lolvision.geometry import MAP_UNITS, Projection
 from lolvision.unit_tracker import UnitTracker
@@ -211,12 +222,154 @@ def models(default: str = DEFAULT_RUN) -> list[dict]:
     return out
 
 
+# ---------- путь кадра ----------
+
+class PipelineError(RuntimeError):
+    """Путь кадра не собрать (нет модели): текст — причина для сеанса."""
+
+
+class Pipeline:
+    """Путь кадра одного размера: модели, геометрия раскладки под этот размер
+    и состояние прогрева. Собирает `build_pipeline`, кадры через него гонит
+    `Session._step`. Сменился размер кадра — собирается новый путь.
+
+    `note` — что собрано и чего нет (без модели юнитов, без чемпионов…);
+    `minimap` — прямоугольник миникарты, пока не найдена — по раскладке.
+    """
+
+    def __init__(self, size: tuple[int, int], device: str, fps: float, model: Runner):
+        self.size, self.device, self.fps, self.model = size, device, fps, model
+        self.note = ""
+        self.crop: tuple[int, int, int, int] = (0, 0, *size)
+        self.store: tuple[int, int] = (STORE_W, STORE_W)
+        self.cboxes: list[tuple[int, int, int, int]] = []
+        self.gpu_prep: Callable | None = None
+        self.locator: Locator | None = None
+        self.region0: tuple[int, int] = (0, 0)       # левый верх угла поиска миникарты
+        self.mmbox: tuple[int, int, int, int] = (0, 0, 0, 0)
+        self.minimap: dict = {}
+        self.unit_model: UnitNetRunner | None = None
+        self.proj: Projection | None = None
+        self.tracker: UnitTracker | None = None
+        self.champs: LiveChampions | None = None
+        self.kind_model = None
+        self.kind_every = 1
+        self.fr_pin: torch.Tensor | None = None
+        self.fr_dev: torch.Tensor | None = None
+        # Состояние пути кадра.
+        self.kind_p = None
+        self.n_frame = 0
+        # Зона детектора юнитов — под раскладку (#786): пока раскладка не
+        # решена — наблюдатель, у вида игрока своя маска от миникарты.
+        self.zone: tuple = ("spectator", None)
+        # Размер рамки вьюпорта постоянен, но по первому кадру его не
+        # оценить (в начале заставка): копим кадры, оцениваем, потом отдаём.
+        self.warm: list[tuple] = []
+        self.bw: int | None = None
+        self.bh: int | None = None
+        self.n_good = 0
+
+    def cpu_scene(self, fr: np.ndarray) -> np.ndarray:
+        """Сцена на процессоре: обрезка видом, маска на малом, cv2 INTER_AREA
+        вместо PIL LANCZOS (~3 мс против ~17; ответ патчевой модели тот же
+        в пределах 0.3 ед.)."""
+        cx0, cy0, cx1, cy1 = self.crop
+        a = fr[cy0:cy1, cx0:cx1].copy()
+        for x0, y0, x1, y1 in self.cboxes:
+            a[y0:y1, x0:x1] = 0
+        return cv2.resize(a, self.store, interpolation=cv2.INTER_AREA)
+
+    def close(self) -> None:
+        """Погасить поток чтения состава."""
+        if self.champs is not None:
+            self.champs.close()
+
+
+def build_pipeline(size: tuple[int, int], run: str, device: str, fps: float) -> Pipeline:
+    """Собрать путь кадра под кадр `size` (W, H): модель камеры прогона `run`,
+    детектор юнитов, чемпионы, тип сцены — что есть на диске и на `device`.
+    Чего нет — записано в `note`, а не подменено. Нет модели камеры —
+    PipelineError с причиной."""
+    w, h = size
+    layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
+    ck = run_checkpoint(run)
+    if not ck.is_file():
+        raise PipelineError(f"нет модели runs/{run}/model.pt")
+    model: Runner = load_runner(ck, device)
+    p = Pipeline((w, h), device, fps, model)
+
+    cx0, cy0, cx1, cy1 = p.crop = crop_box((w, h), layout, "dense")
+    p.store = (STORE_W, round(STORE_W * (cy1 - cy0) / (cx1 - cx0)))
+    boxes = mask_boxes((w, h), layout)
+    # Миникарта: пока не найдена в кадре, режется по раскладке. Масштаб
+    # миникарты у стримеров свой (от 1.0 до 1.5 от стандартной), и по
+    # раскладке истина у них съезжает к левому верхнему углу (#785).
+    p.mmbox = box_px(layout["labelling"]["minimap"], (w, h))
+    p.minimap = {"box": list(layout["labelling"]["minimap"]), "scale": None, "found": False}
+    p.locator = Locator((w, h))
+    p.region0 = tuple(p.locator.region[:2])
+
+    p.note = f"{model.describe(p.store)} · {device}"
+    # Подготовка кадра: у патчевой модели на видеокарте целиком (~1 мс),
+    # иначе на процессоре (Pipeline.cpu_scene).
+    p.gpu_prep = model.frame_prep((w, h), p.crop, boxes, p.store)
+    p.cboxes = [(max(x0, cx0) - cx0, max(y0, cy0) - cy0,
+                 min(x1, cx1) - cx0, min(y1, cy1) - cy0)
+                for x0, y0, x1, y1 in boxes
+                if x1 > cx0 and x0 < cx1 and y1 > cy0 and y0 < cy1]
+
+    # Юниты на основном виде (unit_net.py): чемпионы, миньоны, варды —
+    # где, чьи, доля ХП. Маска HUD — та же, что при обучении; у краёв HUD
+    # ответы отбрасываются (там сеть не училась).
+    # Боевой детектор и его порог выбираются в одном месте — unit_net.live_net.
+    unit_net, unit_thr = live_net()
+    if not device.startswith("cuda"):
+        p.note += " · без юнитов (нет видеокарты)"
+    elif unit_net is None:
+        p.note += f" · без юнитов (нет {_rel(LIVE_NET)})"
+    else:
+        keep, valid, valid_src = _unit_zone(w, h)
+        p.unit_model = UnitNetRunner(unit_net, device, keep=keep, thr=unit_thr,
+                                     valid=valid, size=(h, w))
+        # Трекер юнитов (#782): сопоставление на карте через проекцию
+        # экрана и центр камеры; «должен быть виден» — та же зона ответов.
+        p.proj = Projection.load(p.crop, (w, h))
+        p.tracker = UnitTracker(p.proj, valid=valid_src)
+        p.note += (" · юниты" if unit_net == LIVE_NET else
+                   f" · юниты (прежняя сеть: нет {_rel(LIVE_NET)})")
+
+    # Чемпионы (live_champions.py): состав по HUD, миникарта, жив ли,
+    # имена над чемпионами детектора. Только на кадрах «игра».
+    if (MINI_RUN / "model.pt").is_file():
+        p.champs = LiveChampions(device)
+        p.note += " · чемпионы" + (f" ({'; '.join(p.champs.notes)})" if p.champs.notes else "")
+    else:
+        p.note += f" · без чемпионов (нет {_rel(MINI_RUN / 'model.pt')})"
+
+    if KIND_NET.is_file():
+        p.kind_model = SceneNetRunner(KIND_NET, device)
+        p.note += " · тип сцены"
+    elif KIND_HEAD.is_file():
+        p.kind_model = SceneKind(KIND_HEAD, device)
+        p.kind_every = max(1, round(fps / KIND_HZ))
+        p.note += " · тип сцены (DINO)"
+    else:
+        p.note += f" · без типа сцены (нет {_rel(KIND_NET)})"
+
+    # Кадр грузится в видеопамять один раз, через закреплённый буфер, и
+    # дальше его режут на месте подготовка камеры, детектор юнитов и
+    # уменьшенная копия для показа.
+    if device.startswith("cuda"):
+        p.fr_pin = torch.empty((h, w, 3), dtype=torch.uint8).pin_memory()
+        p.fr_dev = torch.empty((h, w, 3), dtype=torch.uint8, device=device)
+    return p
+
+
 # ---------- сеанс ----------
 
 class State(enum.Enum):
     """Состояние сеанса. Логика сравнивает члены, а наружу (в JSON поля
-    state) уходит подпись `label`: её показывает и с ней сравнивает
-    webapp/app.js."""
+    state) уходит подпись `label`, а признак «ещё работает» — поле active."""
 
     PREPARING = "preparing"
     PROBING = "probing"
@@ -237,28 +390,47 @@ class State(enum.Enum):
 
 STATE_LABELS = {
     State.PREPARING: "готовлюсь",
-    State.PROBING: "спрашиваю YouTube",
+    State.PROBING: "открываю источник",
     State.RUNNING: "идёт",
     State.STOPPED: "остановлено",
-    State.ENDED: "ролик кончился",
+    State.ENDED: "кончился",
     State.FAILED: "сбой",
 }
 
+# Подписи источников для note и причины «API нет».
+SOURCE_LABELS = {"youtube": "YouTube", "file": "файл", "screen": "свой экран"}
+
 
 class Session:
-    """Один ролик, читаемый потоком. Живёт в памяти, пока его не закрыли."""
+    """Один поток кадров (ролик или свой экран). Живёт в памяти, пока его не
+    закрыли. Откуда кадр, сеанс не знает: читает `FrameSource`.
 
-    def __init__(self, vid: str, run: str, fps: float = 1.0,
-                 start: float = 0.0, device: str = "cuda"):
-        self.vid, self.run, self.fps, self.start = vid, run, fps, start
+    `api` — Live Client своей игры (live_client.py) или None: его заводит тот,
+    кто открывает сеанс экрана; сеанс запускает его вместе с собой и
+    останавливает вместе с собой. Его последний статус — `api_status()`,
+    события — `api_events` (копятся за сеанс; логика матча из них — 2B).
+    `build` — сборка пути кадра, как у `build_pipeline` (в тестах подставная).
+    """
+
+    def __init__(self, sid: str, run: str, source: FrameSource, device: str = "cuda",
+                 api: LiveClient | None = None,
+                 build: Callable[..., Pipeline] | None = None):
+        self.sid, self.run, self.source = sid, run, source
+        self.fps = float(source.fps)
+        self.start = float(getattr(source, "start", 0.0))
         self.device = device if torch.cuda.is_available() else "cpu"
+        self.api = api
+        self.api_reason = (None if api is not None else
+                           f"нет — источник {SOURCE_LABELS.get(source.kind, source.kind)}")
+        self.api_events: list[EventRecord] = []
+        self._build = build if build is not None else build_pipeline
         self.rows: list[dict] = []
         self.scene: dict[int, bytes] = {}
         self.mini: dict[int, bytes] = {}
         self.full: dict[int, bytes] = {}       # кадр целиком 640×360 — под юнитов
         self.heat: dict[int, np.ndarray] = {}
         self.roster: list[str] | None = None   # состав матча по HUD (L1…L5, R1…R5)
-        self.minimap: dict | None = None       # прямоугольник миникарты ролика (#785)
+        self.minimap: dict | None = None       # прямоугольник миникарты (#785)
         self.view = "spectator"                # раскладка: наблюдатель или игрок (#786)
         self.kind = ""
         self.model_label = ""
@@ -268,8 +440,13 @@ class Session:
         self.duration = 0.0
         self.title = ""
         self.started = time.time()
+        # Что источник отдал последним: кадр или «кадра нет» с причиной, и
+        # сколько раз кадра не было по каждой причине.
+        self.source_state: dict = {"state": None, "reason": "источник ещё не открыт",
+                                   "t": None, "since": None, "size": None}
+        self.source_gaps: dict[str, int] = {}
         self._stop = threading.Event()
-        self._champs: LiveChampions | None = None
+        self._pipe: Pipeline | None = None
         self._lock = threading.Lock()
         # Сжатие картинок и запись кадра в сеанс — в своём потоке: путь кадра
         # его не ждёт. Один исполнитель — кадры ложатся строго по порядку.
@@ -283,15 +460,65 @@ class Session:
 
     # ---------- чтение состояния ----------
 
+    def api_status(self) -> LiveStatus | None:
+        """Последний статус Live Client или None, если его в сеансе нет."""
+        return None if self.api is None else self.api.status()
+
+    def _drain_api(self) -> None:
+        """Новые события Live Client — в `api_events` сеанса."""
+        if self.api is None:
+            return
+        new = self.api.events()
+        if new:
+            with self._lock:
+                self.api_events.extend(new)
+
+    def _api_view(self) -> dict | None:
+        """Статус API для status(): всё из LiveStatus.to_dict(), кроме полного
+        снимка игры (десять игроков с предметами и статами — десятки КБ на
+        каждый опрос смотрелки); вместо него — краткая сводка `brief`.
+        Полностью — `api_full()`."""
+        st = self.api_status()
+        if st is None:
+            return None
+        d = st.to_dict()
+        d.pop("game")
+        g = st.game
+        me = g.my_player if g is not None else None
+        d["brief"] = None if g is None else {
+            "game_time": g.game_time, "game_mode": g.game_mode, "players": len(g.players),
+            "me": None if me is None else {"champion": me.champion, "team": me.team,
+                                           "is_dead": me.is_dead},
+            "me_reason": g.me_reason}
+        d["events"] = len(self.api_events)
+        return d
+
+    def api_full(self) -> dict:
+        """Статус API целиком (со снимком игры) и все события сеанса."""
+        self._drain_api()
+        st = self.api_status()
+        with self._lock:
+            events = [e.to_dict() for e in self.api_events]
+        return {"id": self.sid, "api": None if st is None else st.to_dict(),
+                "api_reason": self.api_reason, "events": events}
+
     def status(self, since: int = 0) -> dict:
+        self._drain_api()
         with self._lock:
             rows = self.rows[since:]
             n = len(self.rows)
             tail = self.rows[-TIMING_WINDOW:]
+            last_t = self.rows[-1]["t"] if self.rows else None
         el = time.time() - self.started
-        seen = (self.start + n / self.fps) if n else self.start
+        # Скорость к реальному времени — у ролика (с промотанным началом: его
+        # тоже распаковали); экран идёт в реальном времени — скорости нет.
+        speed = None
+        if self.source.kind != "screen" and el > 1:
+            seen = last_t + 1 / self.fps if last_t is not None else self.start
+            speed = round(seen / el, 1)
         # Ошибка потока состава (#788): поток жив, но состав мог не читаться.
-        champs_error = self._champs.error if self._champs is not None else None
+        champs = self._pipe.champs if self._pipe is not None else None
+        champs_error = champs.error if champs is not None else None
         note = self.note
         # Раскладка может смениться по ходу ролика: в note — текущая, а не
         # дописанная однажды (прежде «вид игрока» оставался навсегда).
@@ -300,16 +527,19 @@ class Session:
         if champs_error:
             ago = round(time.time() - champs_error["time"])
             note += f" · состав: ошибка {ago} с назад — {champs_error['text']}"
-        return {"id": self.vid, "run": self.run, "state": self.state.label,
+        return {"id": self.sid, "run": self.run, "state": self.state.label,
+                "active": self.state.active,
                 "kind": self.kind, "model": self.model_label,
                 "trained_on": self.trained_on, "timing": timing(tail),
                 "note": note, "champs_error": champs_error,
                 "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
+                "source": self.source.describe(), "source_state": dict(self.source_state),
+                "source_gaps": dict(self.source_gaps),
+                "api": self._api_view(), "api_reason": self.api_reason,
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
                 "minimap": self.minimap, "view": self.view, "elapsed": round(el, 1),
-                "speed": round(seen / el, 1) if el > 1 else None,
-                "map_units": MAP_UNITS}
+                "speed": speed, "map_units": MAP_UNITS}
 
     def stop(self) -> None:
         self._stop.set()
@@ -324,238 +554,227 @@ class Session:
         self.state, self.note = State.FAILED, why
 
     def _run(self) -> None:
+        if self.api is not None:
+            self.api.start()                     # опрос API — свой поток
         try:
             self._work()
+        except PipelineError as exc:
+            self._fail(str(exc))
         except Exception as exc:                              # noqa: BLE001
             self._fail(f"{type(exc).__name__}: {exc}")
         finally:
             self._out.shutdown(wait=True)
-            if self._champs is not None:
-                self._champs.close()             # поток чтения состава
+            self.source.close()                  # ffmpeg, yt-dlp, захват экрана
+            if self._pipe is not None:
+                self._pipe.close()               # поток чтения состава
+            if self.api is not None:
+                self.api.stop()
+                self._drain_api()
+
+    def _seen(self, fr) -> None:
+        """Запомнить ответ источника: состояние меняется — меняется since."""
+        key = fr.status.key
+        if key != self.source_state["state"]:
+            self.source_state = {"state": key, "reason": fr.reason, "t": round(fr.t, 2),
+                                 "since": time.time(), "size": fr.size}
+        else:
+            self.source_state.update(reason=fr.reason, t=round(fr.t, 2), size=fr.size)
+        if not fr.ok and fr.status is not Status.ENDED:
+            self.source_gaps[key] = self.source_gaps.get(key, 0) + 1
+
+    def _new_pipe(self, size: tuple[int, int]) -> Pipeline:
+        """Собрать путь кадра под размер и привязать к нему сеанс."""
+        pl = self._build(size, self.run, self.device, self.fps)
+        self._pipe = pl
+        self.kind, self.model_label = pl.model.kind, pl.model.label
+        self.trained_on = list(pl.model.trained_on)
+        self.minimap = dict(pl.minimap)
+        self.proj, self.tracker = pl.proj, pl.tracker
+        if self.match is not None:
+            # Память матча переживает смену размера, проекция — новая.
+            self.match.proj = pl.proj
+        return pl
+
+    def _source_note(self, size: tuple[int, int] | None) -> str:
+        src = self.source
+        dims = f"{size[0]}x{size[1]}" if size else "размер кадра пока неизвестен"
+        if src.kind == "screen":
+            return f"свой экран {dims} · {src.backend_note or src.backend}"
+        return f"{dims}, {self.duration / 60:.0f} мин"
 
     def _work(self) -> None:
-        layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
-        url = f"https://www.youtube.com/watch?v={self.vid}"
+        src = self.source
         self.state = State.PROBING
-        w, h, dur, _, info = probe_url(url)
-        self.duration, self.title = dur, info.get("title") or self.vid
-
-        cx0, cy0, cx1, cy1 = crop_box((w, h), layout, "dense")
-        store_h = round(STORE_W * (cy1 - cy0) / (cx1 - cx0))
-        boxes = mask_boxes((w, h), layout)
-        # Миникарта: пока не найдена в кадре, режется по раскладке. Масштаб
-        # миникарты у стримеров свой (от 1.0 до 1.5 от стандартной), и по
-        # раскладке истина у них съезжает к левому верхнему углу (#785).
-        mmbox = box_px(layout["labelling"]["minimap"], (w, h))
-        self.minimap = {"box": list(layout["labelling"]["minimap"]), "scale": None,
-                        "found": False}
-        locator = Locator((w, h))
-        rx0, ry0 = locator.region[:2]
-
-        ck = run_checkpoint(self.run)
-        if not ck.is_file():
-            return self._fail(f"нет модели runs/{self.run}/model.pt")
-        model: Runner = load_runner(ck, self.device)
-        self.kind, self.model_label = model.kind, model.label
-        self.trained_on = list(model.trained_on)
-        self.note = (f"{w}x{h}, {dur / 60:.0f} мин · "
-                     f"{model.describe((STORE_W, store_h))} · {self.device}")
-        # Подготовка кадра: у патчевой модели на видеокарте целиком (~1 мс),
-        # иначе на процессоре — обрезка видом, маска на малом, cv2 INTER_AREA
-        # вместо PIL LANCZOS (~3 мс против ~17; ответ патчевой модели тот же
-        # в пределах 0.3 ед.).
-        gpu_prep = model.frame_prep((w, h), (cx0, cy0, cx1, cy1), boxes,
-                                    (STORE_W, store_h))
-        cboxes = [(max(x0, cx0) - cx0, max(y0, cy0) - cy0,
-                   min(x1, cx1) - cx0, min(y1, cy1) - cy0)
-                  for x0, y0, x1, y1 in boxes
-                  if x1 > cx0 and x0 < cx1 and y1 > cy0 and y0 < cy1]
-
-        def cpu_scene(fr: np.ndarray) -> np.ndarray:
-            a = fr[cy0:cy1, cx0:cx1].copy()
-            for x0, y0, x1, y1 in cboxes:
-                a[y0:y1, x0:x1] = 0
-            return cv2.resize(a, (STORE_W, store_h), interpolation=cv2.INTER_AREA)
-
-        # Юниты на основном виде (unit_net.py): чемпионы, миньоны, варды —
-        # где, чьи, доля ХП. Маска HUD — та же, что при обучении; у краёв HUD
-        # ответы отбрасываются (там сеть не училась).
-        unit_model = None
-        # Боевой детектор и его порог выбираются в одном месте — unit_net.live_net.
-        unit_net, unit_thr = live_net()
-        if not self.device.startswith("cuda"):
-            self.note += " · без юнитов (нет видеокарты)"
-        elif unit_net is None:
-            self.note += f" · без юнитов (нет {_rel(LIVE_NET)})"
+        src.open()                               # у экрана — в этом же потоке (mss)
+        d = src.describe()
+        self.title = d.get("title") or self.sid
+        self.duration = float(d.get("duration") or 0.0)
+        pl = None
+        if src.size is not None:
+            # Размер известен заранее (у ролика всегда): модели грузятся до
+            # первого кадра, как и раньше.
+            pl = self._new_pipe(src.size)
+            self.note = f"{self._source_note(src.size)} · {pl.note}"
         else:
-            keep, valid, valid_src = _unit_zone(w, h)
-            unit_model = UnitNetRunner(unit_net, self.device, keep=keep, thr=unit_thr,
-                                       valid=valid, size=(h, w))
-            # Трекер юнитов (#782): сопоставление на карте через проекцию
-            # экрана и центр камеры; «должен быть виден» — та же зона ответов.
-            self.proj = Projection.load((cx0, cy0, cx1, cy1), (w, h))
-            self.tracker = UnitTracker(self.proj, valid=valid_src)
-            self.note += (" · юниты" if unit_net == LIVE_NET else
-                          f" · юниты (прежняя сеть: нет {_rel(LIVE_NET)})")
-        # Зона детектора юнитов — под раскладку ролика (#786): пока раскладка
-        # не решена — наблюдатель, у вида игрока своя маска от миникарты.
-        zone = ("spectator", None)
-
-        # Чемпионы (live_champions.py): состав по HUD, миникарта, жив ли,
-        # имена над чемпионами детектора. Только на кадрах «игра».
-        champs = None
-        if (MINI_RUN / "model.pt").is_file():
-            champs = self._champs = LiveChampions(self.device)
-            self.note += " · чемпионы" + (f" ({'; '.join(champs.notes)})" if champs.notes else "")
-        else:
-            self.note += f" · без чемпионов (нет {_rel(MINI_RUN / 'model.pt')})"
-
-        kind_model, kind_every = None, 1
-        if KIND_NET.is_file():
-            kind_model = SceneNetRunner(KIND_NET, self.device)
-            self.note += " · тип сцены"
-        elif KIND_HEAD.is_file():
-            kind_model = SceneKind(KIND_HEAD, self.device)
-            kind_every = max(1, round(self.fps / KIND_HZ))
-            self.note += " · тип сцены (DINO)"
-        else:
-            self.note += f" · без типа сцены (нет {_rel(KIND_NET)})"
-        kind_p = None
-        n_frame = 0
-
-        # Кадр грузится в видеопамять один раз, через закреплённый буфер, и
-        # дальше его режут на месте подготовка камеры, детектор юнитов и
-        # уменьшенная копия для показа. Раньше каждая модель грузила свои
-        # 6 МБ сама.
-        fr_pin = fr_dev = None
-        if self.device.startswith("cuda"):
-            fr_pin = torch.empty((h, w, 3), dtype=torch.uint8).pin_memory()
-            fr_dev = torch.empty((h, w, 3), dtype=torch.uint8, device=self.device)
-
+            self.note = self._source_note(None)
         self.state = State.RUNNING
 
-        # Размер рамки вьюпорта постоянен внутри ролика, но по первому кадру
-        # его не оценить: в начале заставка. Копим первые кадры, оцениваем по
-        # ним и только потом отдаём — иначе первые метки уехали бы.
-        warm: list[tuple] = []
-        bw = bh = None
-        n_good = 0
-
-        stream = frame_stream(url, w, h, self.fps, True, skip=self.start)
-        while True:
-            # Время распаковки — ожидание следующего кадра из ffmpeg: сюда
-            # входят и сеть до YouTube, и NVDEC, и прореживание до fps.
-            t0 = time.perf_counter()
-            fr = next(stream, None)
-            t1 = time.perf_counter()
-            if fr is None or self._stop.is_set() or len(self.rows) >= MAX_FRAMES:
+        while not self._stop.is_set():
+            if len(self.rows) >= MAX_FRAMES:
+                self.note += f" · потолок памяти {MAX_FRAMES} кадров: дальше не читаю"
                 break
-            t2 = time.perf_counter()
-            if fr_dev is not None:
-                fr_pin.numpy()[:] = fr
-                fr_dev.copy_(fr_pin, non_blocking=True)
-            if gpu_prep is not None:
-                prep, scene = gpu_prep(fr_dev)
-            else:
-                scene = cpu_scene(fr)
-                prep = model.prepare(Image.fromarray(scene))
-            ms = {"decode": (t1 - t0) * 1000,
-                  "prep": (time.perf_counter() - t2) * 1000}
-            if kind_model is not None and n_frame % kind_every == 0:
-                t3 = time.perf_counter()
-                kind_p = kind_model.probs(fr)
-                ms["kind"] = (time.perf_counter() - t3) * 1000
-            ms["kind_p"] = kind_p
-            # Без модели типа сцены считаем, что всё — игра.
-            kind = "game" if kind_p is None else KIND_CLASSES[int(np.argmax(kind_p))]
-            game = kind == "game"
-            # Магазин и Tab — игра под оверлеем (#786): сцену закрывает окно,
-            # но миникарта видна, и чемпионы на ней читаются.
-            overlay = kind in OVERLAY_KINDS
-            region = fr[ry0:, rx0:]
-            if locator.box is None and game and locator.tried < LOCATE_MAX:
-                if locator.offer_region(region):
-                    mmbox = box_px(locator.box, (w, h))
-                    self.minimap = {"box": list(locator.box), "scale": locator.fit.scale,
-                                    "found": True}
-                    self.note += f" · миникарта ×{locator.fit.scale:g}"
-                    if bw is not None:
-                        # Найдена после прогрева: размер рамки оценён в чужой
-                        # сетке. Вьюпорт постоянен в единицах карты, поэтому
-                        # в сетке своей миникарты он меньше в масштаб раз.
-                        bw = round(bw / locator.fit.scale)
-                        bh = round(bh / locator.fit.scale)
-            mini = _mini(region, mmbox, rx0, ry0)
-            mask = white_mask(np.asarray(mini, dtype=np.float32))
-            units = None
-            if unit_model is not None:
-                t4 = time.perf_counter()
-                units = unit_model.units(fr_dev)
-                ms["units"] = (time.perf_counter() - t4) * 1000
-            names = None
-            if champs is not None and (game or overlay):
-                t5 = time.perf_counter()
-                if game:
-                    champs.offer(fr, n_frame / self.fps)
-                ms["champs"] = champs.minimap(fr, np.asarray(mini))
-                self.roster = champs.roster
-                t6 = time.perf_counter()
-                ms["mini"] = (t6 - t5) * 1000
-                if units and game:
-                    names = champs.who(fr, units)
-                    ms["who"] = (time.perf_counter() - t6) * 1000
-            if units is not None:
-                # Юниты детектора — записи records.UnitRec (доли кадра, имя).
-                ms["unit_recs"] = [UnitRec.from_unit(u, (w, h), names[k] if names else None)
-                                   for k, u in enumerate(units)]
-            if unit_model is not None and champs is not None:
-                view = champs.view or "spectator"
-                want = (view, locator.box if view == "player" else None)
-                if want != zone:
-                    zone = want
-                    keep, valid, valid_src = _unit_zone(w, h, view, locator.box)
-                    unit_model.set_zone(keep, valid)
-                    self.tracker.valid = valid_src
-                    self.view = view
-            ms["full_img"] = _full_small(fr, fr_dev)
-            n_frame += 1
-
-            if bw is None:
-                # Угол кадра — чтобы перерезать миникарту, если её найдут
-                # позже в прогреве (буфер кадра переиспользуется).
-                warm.append((mask, scene, prep, mini, ms, region.copy()))
-                # Считаются только кадры, где рамка уже видна: по заставке
-                # размер выходил меньше настоящего (58w57eJ5Qks: 56x32 вместо
-                # 68x38), и все метки ролика смещались на ~380 ед.
-                if find_box(mask, *BOX0)[2] >= WARM_Q:
-                    n_good += 1
-                # Ждём и миникарту: без неё размер рамки оценится в чужой сетке.
-                if (n_good < WARMUP or locator.box is None) and len(warm) < WARMUP_MAX:
-                    continue
-                warm = _recut(warm, mmbox, rx0, ry0)
-                good = [m[0] for m in warm if find_box(m[0], *BOX0)[2] >= WARM_Q]
-                bw, bh = estimate_box(good or [m[0] for m in warm])
-                self.note += f" · рамка {bw}x{bh}"
-                for m, s, p, mi, t in warm:
-                    self._emit(m, s, p, mi, bw, bh, model, t)
-                warm.clear()
-                continue
-            self._emit(mask, scene, prep, mini, bw, bh, model, ms)
-        stream.close()                    # ffmpeg и yt-dlp не должны висеть
-        if bw is None and warm and not self._stop.is_set():
-            # Ролик кончился раньше, чем набралась оценка рамки.
-            warm = _recut(warm, mmbox, rx0, ry0)
-            bw, bh = estimate_box([m[0] for m in warm])
-            for m, s, p, mi, t in warm:
-                self._emit(m, s, p, mi, bw, bh, model, t)
+            self._drain_api()
+            # Время «decode» — ожидание кадра от источника: у ролика сеть до
+            # YouTube, NVDEC и прореживание до fps; у экрана — такт и снимок.
+            t0 = time.perf_counter()
+            fr = src.read()
+            t1 = time.perf_counter()
+            if self._stop.is_set():
+                break
+            self._seen(fr)
+            if fr.status is Status.ENDED:
+                if fr.reason and fr.reason != "ролик кончился":
+                    self.note += f" · {fr.reason}"
+                break
+            if not fr.ok:
+                continue                         # пауза, окна нет — строк нет
+            if pl is None or fr.size != pl.size:
+                if pl is not None:
+                    # Окно растянули: кадры прогрева — по старому размеру,
+                    # дальше — новый путь под новый размер.
+                    self._flush(pl)
+                    old = pl.size
+                    pl.close()
+                    pl = self._new_pipe(fr.size)
+                    self.note += (f" · размер кадра {old[0]}x{old[1]} → "
+                                  f"{fr.size[0]}x{fr.size[1]}: путь кадра пересобран")
+                else:
+                    pl = self._new_pipe(fr.size)
+                    self.note = f"{self._source_note(fr.size)} · {pl.note}"
+            self._step(pl, fr.image, fr.t, (t1 - t0) * 1000)
+        if pl is not None and not self._stop.is_set():
+            self._flush(pl)                      # поток кончился раньше прогрева
 
         self._out.shutdown(wait=True)    # все кадры записаны — тогда конец
         if self.state is State.RUNNING:
             self.state = State.STOPPED if self._stop.is_set() else State.ENDED
 
+    def _step(self, pl: Pipeline, fr: np.ndarray, t: float, decode_ms: float) -> None:
+        """Путь одного кадра: подготовка, тип сцены, миникарта, юниты,
+        чемпионы — и в _emit (после прогрева рамки)."""
+        model = pl.model
+        rx0, ry0 = pl.region0
+        t2 = time.perf_counter()
+        if pl.fr_dev is not None:
+            pl.fr_pin.numpy()[:] = fr
+            pl.fr_dev.copy_(pl.fr_pin, non_blocking=True)
+        if pl.gpu_prep is not None:
+            prep, scene = pl.gpu_prep(pl.fr_dev)
+        else:
+            scene = pl.cpu_scene(fr)
+            prep = model.prepare(Image.fromarray(scene))
+        ms = {"decode": decode_ms, "prep": (time.perf_counter() - t2) * 1000}
+        if pl.kind_model is not None and pl.n_frame % pl.kind_every == 0:
+            t3 = time.perf_counter()
+            pl.kind_p = pl.kind_model.probs(fr)
+            ms["kind"] = (time.perf_counter() - t3) * 1000
+        ms["kind_p"] = pl.kind_p
+        # Без модели типа сцены считаем, что всё — игра.
+        kind = "game" if pl.kind_p is None else KIND_CLASSES[int(np.argmax(pl.kind_p))]
+        game = kind == "game"
+        # Магазин и Tab — игра под оверлеем (#786): сцену закрывает окно,
+        # но миникарта видна, и чемпионы на ней читаются.
+        overlay = kind in OVERLAY_KINDS
+        region = fr[ry0:, rx0:]
+        locator = pl.locator
+        if locator.box is None and game and locator.tried < LOCATE_MAX:
+            if locator.offer_region(region):
+                pl.mmbox = box_px(locator.box, pl.size)
+                pl.minimap = {"box": list(locator.box), "scale": locator.fit.scale,
+                              "found": True}
+                self.minimap = dict(pl.minimap)
+                self.note += f" · миникарта ×{locator.fit.scale:g}"
+                if pl.bw is not None:
+                    # Найдена после прогрева: размер рамки оценён в чужой
+                    # сетке. Вьюпорт постоянен в единицах карты, поэтому
+                    # в сетке своей миникарты он меньше в масштаб раз.
+                    pl.bw = round(pl.bw / locator.fit.scale)
+                    pl.bh = round(pl.bh / locator.fit.scale)
+        mini = _mini(region, pl.mmbox, rx0, ry0)
+        mask = white_mask(np.asarray(mini, dtype=np.float32))
+        units = None
+        if pl.unit_model is not None:
+            t4 = time.perf_counter()
+            units = pl.unit_model.units(pl.fr_dev)
+            ms["units"] = (time.perf_counter() - t4) * 1000
+        names = None
+        champs = pl.champs
+        if champs is not None and (game or overlay):
+            t5 = time.perf_counter()
+            if game:
+                champs.offer(fr, t)
+            ms["champs"] = champs.minimap(fr, np.asarray(mini))
+            self.roster = champs.roster
+            t6 = time.perf_counter()
+            ms["mini"] = (t6 - t5) * 1000
+            if units and game:
+                names = champs.who(fr, units)
+                ms["who"] = (time.perf_counter() - t6) * 1000
+        if units is not None:
+            # Юниты детектора — записи records.UnitRec (доли кадра, имя).
+            ms["unit_recs"] = [UnitRec.from_unit(u, pl.size, names[k] if names else None)
+                               for k, u in enumerate(units)]
+        if pl.unit_model is not None and champs is not None:
+            view = champs.view or "spectator"
+            want = (view, locator.box if view == "player" else None)
+            if want != pl.zone:
+                pl.zone = want
+                keep, valid, valid_src = _unit_zone(*pl.size, view, locator.box)
+                pl.unit_model.set_zone(keep, valid)
+                pl.tracker.valid = valid_src
+                self.view = view
+        ms["full_img"] = _full_small(fr, pl.fr_dev)
+        pl.n_frame += 1
+
+        if pl.bw is None:
+            # Угол кадра — чтобы перерезать миникарту, если её найдут
+            # позже в прогреве (буфер кадра переиспользуется).
+            pl.warm.append((mask, scene, prep, mini, ms, region.copy(), t))
+            # Считаются только кадры, где рамка уже видна: по заставке
+            # размер выходил меньше настоящего (58w57eJ5Qks: 56x32 вместо
+            # 68x38), и все метки ролика смещались на ~380 ед.
+            if find_box(mask, *BOX0)[2] >= WARM_Q:
+                pl.n_good += 1
+            # Ждём и миникарту: без неё размер рамки оценится в чужой сетке.
+            if (pl.n_good < WARMUP or locator.box is None) and len(pl.warm) < WARMUP_MAX:
+                return
+            warm = _recut(pl.warm, pl.mmbox, rx0, ry0)
+            good = [m[0] for m in warm if find_box(m[0], *BOX0)[2] >= WARM_Q]
+            pl.bw, pl.bh = estimate_box(good or [m[0] for m in warm])
+            self.note += f" · рамка {pl.bw}x{pl.bh}"
+            for m, s, p, mi, msx, tt in warm:
+                self._emit(m, s, p, mi, pl.bw, pl.bh, model, msx, tt)
+            pl.warm.clear()
+            return
+        self._emit(mask, scene, prep, mini, pl.bw, pl.bh, model, ms, t)
+
+    def _flush(self, pl: Pipeline) -> None:
+        """Поток кончился (или сменился размер) раньше, чем набралась оценка
+        рамки: оценить по тому, что есть, и отдать кадры прогрева."""
+        if pl.bw is not None or not pl.warm:
+            return
+        warm = _recut(pl.warm, pl.mmbox, *pl.region0)
+        pl.bw, pl.bh = estimate_box([m[0] for m in warm])
+        for m, s, p, mi, msx, tt in warm:
+            self._emit(m, s, p, mi, pl.bw, pl.bh, pl.model, msx, tt)
+        pl.warm.clear()
+
     def _emit(self, mask, scene: np.ndarray, prep, mini: Image.Image,
-              bw: int, bh: int, model: Runner, ms: dict) -> None:
+              bw: int, bh: int, model: Runner, ms: dict, t: float) -> None:
         """Один кадр: истина с миникарты, ответ модели, картинки в память.
+
+        `t` — время кадра по шкале источника (Frame.t): у ролика — позиция в
+        ролике, у экрана — секунды от открытия источника.
 
         `ms` — уже набежавшее время кадра (распаковка; подготовка входа
         модели — маска, обрезка, масштаб, вид сверху); сюда добавляются сеть,
@@ -580,7 +799,7 @@ class Session:
         # потока сжатия.
         i = self._n_emit
         self._n_emit += 1
-        row = {"schema": SCHEMA, "i": i, "t": round(self.start + i / self.fps, 2),
+        row = {"schema": SCHEMA, "i": i, "t": round(t, 2),
                "cx": None, "cy": None,
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
                "err": None, "spread": _r(out["spread"], 3), "q": None}
@@ -689,14 +908,16 @@ def _mini(region: np.ndarray, mmbox, rx0: int, ry0: int) -> Image.Image:
 
 
 def _recut(warm: list[tuple], mmbox, rx0: int, ry0: int) -> list[tuple]:
-    """Кадры прогрева с миникартой по окончательному прямоугольнику.
+    """Кадры прогрева с миникартой по окончательному прямоугольнику:
+    (маска, сцена, вход, миникарта, время по стадиям, угол кадра, t) →
+    (маска, сцена, вход, миникарта, время по стадиям, t).
 
     Ответы иконок чемпионов на кадрах до находки остаются по раскладке:
     это первые секунды игры, и перерезать их — значит держать кадры целиком."""
     out = []
-    for _, s, p, _, t, region in warm:
+    for _, s, p, _, ms, region, t in warm:
         mini = _mini(region, mmbox, rx0, ry0)
-        out.append((white_mask(np.asarray(mini, dtype=np.float32)), s, p, mini, t))
+        out.append((white_mask(np.asarray(mini, dtype=np.float32)), s, p, mini, ms, t))
     return out
 
 
@@ -742,55 +963,79 @@ def _jpeg(img: Image.Image, quality: int) -> bytes:
 
 _sessions: dict[str, Session] = {}
 _reg = threading.Lock()
+# Id сеанса своего экрана: экран один, и сеанс по нему один.
+SCREEN_ID = "screen"
 
 
-def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
-          start_sec: float = 0.0) -> dict:
-    """Открыть сеанс. Одновременно работает один: распаковка занимает карту."""
-    vid, fps = youtube_id(vid), check_fps(fps)
-    run = run or DEFAULT_RUN
-    run_checkpoint(run)                  # путь вне runs/ отвергается сразу
+def _open(sid: str, run: str, make: Callable[[], Session]) -> dict:
+    """Открыть сеанс `sid`. Одновременно работает один: распаковка и модели
+    занимают видеокарту; прочие активные сеансы останавливаются."""
     with _reg:
         stopped = []
         for other in list(_sessions.values()):
-            if other.vid != vid and other.state.active:
+            if other.sid != sid and other.state.active:
                 other.stop()
                 stopped.append(other)
         # Кадры закрытого сеанса ещё можно листать, но держать их все вечно
         # нельзя: две тысячи кадров — это около 120 МБ. Оставляем последние
-        # два ролика, остальные забываем.
+        # два сеанса, остальные забываем.
         while len(_sessions) > 2:
             old_id = min(_sessions, key=lambda k: _sessions[k].started)
-            if old_id == vid:
+            if old_id == sid:
                 break
             _sessions.pop(old_id).stop()
-        old = _sessions.get(vid)
+        old = _sessions.get(sid)
         if old and old.state.active:
             if old.run == run:
                 return old.status()
-            old.stop()                   # тот же ролик, но другой моделью
+            old.stop()                   # тот же источник, но другой моделью
             stopped.append(old)
         # Новый сеанс захватывает CUDA graph; если старый в это время ещё
         # гоняет свои, захват падает (два сеанса подряд оба кончались
         # «сбоем»). Ждём, пока остановленные отпустят видеокарту.
         for other in stopped:
             other.join(STOP_WAIT)
-        s = Session(vid, run, fps, start_sec)
-        _sessions[vid] = s
+        s = make()
+        _sessions[sid] = s
     return s.status()
 
 
-def get(vid: str) -> Session | None:
-    return _sessions.get(vid)
+def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
+          start_sec: float = 0.0) -> dict:
+    """Сеанс по ролику YouTube (Live Client API у ролика нет)."""
+    vid, fps = youtube_id(vid), check_fps(fps)
+    run = run or DEFAULT_RUN
+    run_checkpoint(run)                  # путь вне runs/ отвергается сразу
+    url = f"https://www.youtube.com/watch?v={vid}"
+    return _open(vid, run, lambda: Session(vid, run, VideoSource(url, fps, float(start_sec))))
 
 
-def stop(vid: str) -> None:
-    s = _sessions.get(vid)
+def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto") -> dict:
+    """Сеанс по своему экрану (окно игры) вместе с Live Client своей игры.
+
+    Захват открывается в потоке сеанса (mss привязан к потоку), не здесь."""
+    fps = check_fps(fps)
+    if backend not in ("auto", *BACKENDS):
+        raise ValueError(f"неизвестный бэкенд захвата {backend!r}: auto, {', '.join(BACKENDS)}")
+    run = run or DEFAULT_RUN
+    run_checkpoint(run)
+    return _open(SCREEN_ID, run, lambda: Session(
+        SCREEN_ID, run, ScreenSource(fps, backend=backend),
+        api=LiveClient(champion_ids=ddragon_champion_ids())))
+
+
+def get(sid: str) -> Session | None:
+    return _sessions.get(sid)
+
+
+def stop(sid: str) -> None:
+    s = _sessions.get(sid)
     if s:
         s.stop()
 
 
 def listing() -> list[dict]:
-    return [{"id": s.vid, "state": s.state.label, "count": len(s.rows),
-             "run": s.run, "kind": s.kind, "title": s.title}
+    return [{"id": s.sid, "state": s.state.label, "active": s.state.active,
+             "count": len(s.rows), "run": s.run, "kind": s.kind, "title": s.title,
+             "source": s.source.kind}
             for s in _sessions.values()]

@@ -38,7 +38,7 @@ def _session(found: bool, view: str) -> live.Session:
 def _emit(s: live.Session) -> dict:
     mask = np.zeros((live.MM, live.MM), np.float32)
     mask[100:140, 60:130] = 1                    # белая рамка камеры
-    s._emit(mask, None, None, None, 70, 40, _Model(), {})
+    s._emit(mask, None, None, None, 70, 40, _Model(), {}, 0.0)
     return s._out.rows[-1]
 
 
@@ -61,10 +61,14 @@ def test_roster_error_is_in_session_status():
     import time
     from types import SimpleNamespace
     s = _session(found=True, view="spectator")
-    s.vid, s.run, s.kind, s.model_label, s.trained_on = "x", "r", "", "", []
+    s.sid, s.run, s.kind, s.model_label, s.trained_on = "x", "r", "", "", []
     s.state, s.note, s.title, s.duration = live.State.RUNNING, "1920x1080", "", 0
     s.rows, s.roster, s.started, s._lock = [], None, time.time(), threading.Lock()
-    s._champs = SimpleNamespace(error={"text": "KeyError: 'Hwei'", "time": time.time()})
+    s.source = SimpleNamespace(kind="youtube", describe=dict)
+    s.source_state, s.source_gaps = {"state": "ok"}, {}
+    s.api, s.api_reason, s.api_events = None, "нет — источник YouTube", []
+    s._pipe = SimpleNamespace(
+        champs=SimpleNamespace(error={"text": "KeyError: 'Hwei'", "time": time.time()}))
     st = s.status()
     assert st["champs_error"]["text"] == "KeyError: 'Hwei'"
     assert "KeyError: 'Hwei'" in st["note"]
@@ -109,7 +113,8 @@ def _glued_rows() -> list[dict]:
                  UnitRec("ward", "ORDER", 0.2, 0.7, 1.0, 0.6)]
         jinx = (dict(visible=True, u=0.62, v=0.31) if k < 2 else
                 dict(alive=False, timer=12))
-        s._emit(mask, None, None, None, 70, 40, _Model(), _game_ms(units, _minimap(Jinx=jinx)))
+        s._emit(mask, None, None, None, 70, 40, _Model(), _game_ms(units, _minimap(Jinx=jinx)),
+                k / s.fps)
     return s._out.rows
 
 
