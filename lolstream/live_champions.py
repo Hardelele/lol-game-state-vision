@@ -42,6 +42,7 @@ Brand был «Ivern» в 100% кадров (ANXVB571YkE).
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from pathlib import Path
 
@@ -89,6 +90,11 @@ NAME_MARGIN = 0.03        # и отрыв от второго кандидата
 TRACK_PX = 260            # px 1080p: имя переносится с прошлого кадра не дальше
 TRACK_SCORE = 0.35        # «вес» перенесённого имени против прочитанного
 MAX_ICONS = 20            # детекций миникарты на кадр не больше (minimap_icons.decode)
+
+
+def _few(names: list[str], n: int = 5) -> str:
+    more = f" и ещё {len(names) - n}" if len(names) > n else ""
+    return ", ".join(names[:n]) + more
 
 
 def as_1080(frame: np.ndarray) -> np.ndarray:
@@ -171,6 +177,21 @@ class LiveChampions:
         self.icons = ddragon.load_icons()
         self.bank = IconBank(self.icons)
         self.names = NameReader.load(names) if names.is_file() else None
+        # Чего сеанс не умеет и почему — в note сеанса (#788): без банка имён
+        # who() молчит, и об этом надо сказать, а не писать «чемпионы».
+        self.notes: list[str] = []
+        if self.names is None:
+            self.notes.append("без имён: нет банка имён")
+        # Списки чемпионов модели миникарты и Data Dragon должны совпадать:
+        # чемпион состава, которого нет у модели, роняет Match (KeyError).
+        no_dd = sorted(set(self.model.champions) - set(self.icons))
+        no_model = sorted(set(self.icons) - set(self.model.champions))
+        if no_dd:
+            self.notes.append(f"нет в Data Dragon: {_few(no_dd)}")
+        if no_model:
+            self.notes.append(f"модель миникарты не знает: {_few(no_model)}")
+        # Последняя ошибка потока состава: {"text", "time"} или None.
+        self.error: dict | None = None
         # Образцы имён окнами (WIN_H, WIN_W) для cv2.matchTemplate.
         self.name_tm = (None if self.names is None else
                         np.ascontiguousarray(self.names.bank.T.reshape(-1, WIN_H, WIN_W)))
@@ -226,6 +247,13 @@ class LiveChampions:
             try:
                 if frame is not None:
                     self.read_roster(frame)
+            except Exception as exc:                          # noqa: BLE001
+                # Поток не умирает: состав неизвестен до следующего окна,
+                # ошибка видна в статусе сеанса (champs_error).
+                self.match = None
+                self.hud.clear()
+                self.error = {"text": f"{type(exc).__name__}: {exc}",
+                              "time": round(time.time(), 1)}
             finally:
                 self._busy = False
 

@@ -101,9 +101,11 @@ FULL_STORE_W = 640
 KIND_HZ = 2.0
 # Детектор юнитов без опоры на полоски ХП (#773, docs/unit-detection.md):
 # с полосками миньоны не хуже прежнего, без них — 0.79 против 0.015. Его
-# рабочий порог 0.4 (у прежней сети 0.3). Нет файла — прежняя сеть.
+# рабочий порог 0.4 (у прежней сети 0.3). Нет файла — прежняя сеть. Выбор —
+# при каждом запуске сеанса (unit_net_choice), а не при загрузке модуля:
+# сервер живёт дольше, чем файлы моделей на месте.
 UNIT_NET_NOBARS = RUNS / "units" / "net-nobars2" / "model.pt"
-UNIT_NET, UNIT_THR = ((UNIT_NET_NOBARS, 0.4) if UNIT_NET_NOBARS.is_file() else (DEFAULT_NET, 0.3))
+UNIT_NETS = ((UNIT_NET_NOBARS, 0.4), (DEFAULT_NET, 0.3))
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 
 
@@ -292,10 +294,17 @@ class Session:
             tail = self.rows[-TIMING_WINDOW:]
         el = time.time() - self.started
         seen = (self.start + n / self.fps) if n else self.start
+        # Ошибка потока состава (#788): поток жив, но состав мог не читаться.
+        champs_error = self._champs.error if self._champs is not None else None
+        note = self.note
+        if champs_error:
+            ago = round(time.time() - champs_error["time"])
+            note += f" · состав: ошибка {ago} с назад — {champs_error['text']}"
         return {"id": self.vid, "run": self.run, "state": self.state.label,
                 "kind": self.kind, "model": self.model_label,
                 "trained_on": self.trained_on, "timing": timing(tail),
-                "note": self.note, "fps": self.fps, "start": self.start,
+                "note": note, "champs_error": champs_error,
+                "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
                 "minimap": self.minimap, "view": self.view, "elapsed": round(el, 1),
@@ -368,16 +377,22 @@ class Session:
         # где, чьи, доля ХП. Маска HUD — та же, что при обучении; у краёв HUD
         # ответы отбрасываются (там сеть не училась).
         unit_model = None
-        if UNIT_NET.is_file() and self.device.startswith("cuda"):
+        unit_net, unit_thr = unit_net_choice()
+        if not self.device.startswith("cuda"):
+            self.note += " · без юнитов (нет видеокарты)"
+        elif unit_net is None:
+            self.note += f" · без юнитов (нет {_rel(UNIT_NETS[0][0])})"
+        else:
             keep, valid, valid_src = _unit_zone(w, h)
-            unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep, thr=UNIT_THR,
+            unit_model = UnitNetRunner(unit_net, self.device, keep=keep, thr=unit_thr,
                                        valid=valid, size=(h, w))
             # Трекер юнитов (#782): сопоставление на карте через проекцию
             # экрана и центр камеры; «должен быть виден» — та же зона ответов.
             hp_, scene_size = load_projection()
             self.tracker = UnitTracker(Projection(hp_, scene_size, (cx0, cy0, cx1, cy1)),
                                        frame_size=(w, h), valid=valid_src)
-            self.note += " · юниты"
+            self.note += (" · юниты" if unit_net == UNIT_NETS[0][0] else
+                          f" · юниты (прежняя сеть: нет {_rel(UNIT_NETS[0][0])})")
         # Зона детектора юнитов — под раскладку ролика (#786): пока раскладка
         # не решена — наблюдатель, у вида игрока своя маска от миникарты.
         zone = ("spectator", None)
@@ -387,7 +402,9 @@ class Session:
         champs = None
         if (MINI_RUN / "model.pt").is_file():
             champs = self._champs = LiveChampions(self.device)
-            self.note += " · чемпионы"
+            self.note += " · чемпионы" + (f" ({'; '.join(champs.notes)})" if champs.notes else "")
+        else:
+            self.note += f" · без чемпионов (нет {_rel(MINI_RUN / 'model.pt')})"
 
         kind_model, kind_every = None, 1
         if KIND_NET.is_file():
@@ -397,6 +414,8 @@ class Session:
             kind_model = SceneKind(KIND_HEAD, self.device)
             kind_every = max(1, round(self.fps / KIND_HZ))
             self.note += " · тип сцены (DINO)"
+        else:
+            self.note += f" · без типа сцены (нет {_rel(KIND_NET)})"
         kind_p = None
         n_frame = 0
 
@@ -631,6 +650,21 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+def unit_net_choice() -> tuple[Path | None, float | None]:
+    """Сеть детектора юнитов и её порог — первая из UNIT_NETS, что есть на диске."""
+    for path, thr in UNIT_NETS:
+        if path.is_file():
+            return path, thr
+    return None, None
+
+
+def _rel(path: Path) -> str:
+    try:
+        return path.relative_to(RUNS.parent).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _unit_zone(w: int, h: int, view: str = "spectator",

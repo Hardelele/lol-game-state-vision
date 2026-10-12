@@ -47,3 +47,17 @@ def test_spectator_layout_and_found_minimap_keep_truth():
         row = _emit(_session(found, view))
         assert "truth" not in row
         assert row["err"] is not None and row["cx"] is not None and row["q"] is not None
+
+
+def test_roster_error_is_in_session_status():
+    import threading
+    import time
+    from types import SimpleNamespace
+    s = _session(found=True, view="spectator")
+    s.vid, s.run, s.kind, s.model_label, s.trained_on = "x", "r", "", "", []
+    s.state, s.note, s.title, s.duration = live.State.RUNNING, "1920x1080", "", 0
+    s.rows, s.roster, s.started, s._lock = [], None, time.time(), threading.Lock()
+    s._champs = SimpleNamespace(error={"text": "KeyError: 'Hwei'", "time": time.time()})
+    st = s.status()
+    assert st["champs_error"]["text"] == "KeyError: 'Hwei'"
+    assert "KeyError: 'Hwei'" in st["note"]
