@@ -34,7 +34,8 @@ def _sides(r) -> dict:
     причина — только при None."""
     return {"relation": r.relation,
             "relation_reason": None if r.relation is not None else r.relation_reason,
-            "side": r.side, "side_reason": None if r.side is not None else r.side_reason}
+            "side": r.side, "side_reason": None if r.side is not None else r.side_reason,
+            "side_src": r.side_src if r.side is not None else None}
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,9 @@ class UnitRec:
     relation_reason: str | None = UNSET   # почему relation None
     side: str | None = None               # ORDER / CHAOS
     side_reason: str | None = UNSET       # почему side None
+    # Откуда сторона: detector — `team` детектора (вид наблюдателя), api —
+    # от команды своего игрока по Live Client API (вид игрока); None при side None.
+    side_src: str | None = None
 
     @classmethod
     def from_unit(cls, u, frame_size: tuple[int, int], name: str | None = None) -> UnitRec:
@@ -91,6 +95,7 @@ class TrackRec:
     relation_reason: str | None = UNSET
     side: str | None = None
     side_reason: str | None = UNSET
+    side_src: str | None = None    # как у UnitRec
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "team": self.team, "state": self.state,
@@ -128,11 +133,24 @@ class ChampCtx:
     src: str | None            # источник места: minimap / screen / inferred
     hp: float | None           # последняя известная доля ХП; None — не видели
     respawn_in: float | None   # с до возрождения; None — жив или таймер неизвестен
+    # Жив ли (True / False), источник (api / hud / minimap / inferred) и
+    # возраст наблюдения, с; None — не наблюдалось.
+    alive: bool | None = None
+    alive_src: str | None = None
+    alive_age: float | None = None
+    hp_src: str | None = None          # источник ХП: screen / inferred
+    hp_age: float | None = None        # с от наблюдения ХП
+    respawn_src: str | None = None     # кто дал таймер возрождения: api / hud
+    conflicts: int = 0                 # расхождений источников по этому чемпиону (#781)
 
     def to_dict(self) -> dict:
         return {"name": self.name, "team": self.team, "state": self.state,
                 "u": _r(self.u, 4), "v": _r(self.v, 4), "age": _r(self.age, 1),
-                "src": self.src, "hp": _r(self.hp, 2), "respawn_in": _r(self.respawn_in, 1)}
+                "src": self.src, "hp": _r(self.hp, 2), "respawn_in": _r(self.respawn_in, 1),
+                "alive": self.alive, "alive_src": self.alive_src,
+                "alive_age": _r(self.alive_age, 1), "hp_src": self.hp_src,
+                "hp_age": _r(self.hp_age, 1), "respawn_src": self.respawn_src,
+                "conflicts": self.conflicts}
 
 
 # ---------- события ----------
@@ -149,17 +167,19 @@ class Event:
 
 @dataclass(frozen=True)
 class DeathEvent(Event):
-    """Смерть чемпиона по панели HUD (match_state)."""
+    """Смерть чемпиона (match_state): по панели HUD или по Live Client API."""
     name: str
     team: str
     u: float | None            # где видели последний раз; None — не видели
     v: float | None
-    respawn_in: float | None   # таймер с панели; None — не прочитан
+    respawn_in: float | None   # таймер (панели или API); None — не прочитан
+    src: str = "hud"           # hud / api
     type: ClassVar[str] = "death"
 
     def to_dict(self) -> dict:
         return {**super().to_dict(), "name": self.name, "team": self.team,
-                "u": _r(self.u, 4), "v": _r(self.v, 4), "respawn_in": self.respawn_in}
+                "u": _r(self.u, 4), "v": _r(self.v, 4), "respawn_in": self.respawn_in,
+                "src": self.src}
 
 
 @dataclass(frozen=True)

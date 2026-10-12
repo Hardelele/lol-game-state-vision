@@ -106,24 +106,28 @@ CHAOS (17). То есть детектор различает синий и кр
 сторона на виде игрока — новое поле `side`. Причина в выходе — только при
 `null`.
 
-## Подключение в live
+## В live
 
-`lolstream/live.py` (правит агент интеграции):
+`lolstream/live.py` (`Session._step`, волна 3): записи юнитов детектора
+проходят `assign(recs, SideContext(view, my_team, my_team_reason), fr)`:
 
-```python
-from lolvision.sides import SideContext, assign
-ctx = SideContext(view=champs.view,                  # None, пока вид не решён
-                  my_team=snap.my_player().team if snap and snap.my_player() else None,
-                  my_team_reason=...)                # причина из LiveClient (me_reason / состояние)
-ms["unit_recs"] = assign([UnitRec.from_unit(...) ...], ctx, fr)   # fr — RGB кадр, любой размер
-```
+* `view` — вид паспорта трансляции (docs/passport.md); `unknown` → `None`,
+  отказ «вид неизвестен», а не наблюдатель. Детектор при неизвестном виде и
+  не запускается;
+* `my_team` — команда своего игрока из последнего `LiveStatus`
+  (`game.my_player.team`), только если паспорт разрешает `api_facts` (API в
+  игре); иначе `None` и причина паспорта («Live Client API: loading — …»),
+  своего игрока нет — `me_reason`;
+* `fr` — тот же кадр, по которому работал детектор.
 
-* `view` — `champs.view` как есть, без `or "spectator"`: неизвестный вид —
-  отказ, а не наблюдатель.
-* Кадр `fr` — тот же, по которому работал детектор (координаты записей —
-  доли кадра).
-* Смотрелка (`app.js`) красит юниты и треки по `team`; на виде игрока
-  красить надо по `relation` (и показывать причину при `null`).
+Источник стороны — поле `side_src` у юнита и трека: `detector` (вид
+наблюдателя, `team` детектора) или `api` (от своей команды). Сервис
+состояния переводит `detector` в источник `screen`.
+
+Смотрелка (`app.js`) на виде игрока (`row["view"] == "player"`) красит
+юниты и треки по `relation` (сам — зелёный, свой — синий, враг — красный,
+`null` — серый) и показывает в подсказке отношение, сторону с источником и
+причину при `null`; у наблюдателя — по `team`, как раньше.
 
 ## Как проверить на записях своей игры
 

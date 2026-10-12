@@ -171,7 +171,7 @@ def test_full_snapshot_matches_schema_and_reads_match_state():
     # свои / враги / сторона — поля записи (sides.py) как есть
     assert u[0]["relation"] == {"value": None, "source": None, "age": None,
                                 "reason": WHY_SPECTATOR}
-    assert u[0]["side"] == {"value": "CHAOS", "source": "inferred", "age": 0.2, "reason": None}
+    assert u[0]["side"] == {"value": "CHAOS", "source": "screen", "age": 0.2, "reason": None}
     assert "relation_reason" not in u[0] and "side_reason" not in u[0]
     tr = snap["tracks"]["value"][0]
     assert tr["relation"]["reason"] == UNSET and tr["side"]["reason"] == UNSET

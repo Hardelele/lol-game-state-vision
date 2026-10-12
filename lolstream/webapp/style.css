@@ -377,6 +377,10 @@ kbd {
 #unitSvg { pointer-events: none; }
 #unitSvg .unit { pointer-events: auto; }
 #unitSvg .uo { --u: #4f9dff; } #unitSvg .uc { --u: #ff5a4f; }
+/* Вид игрока (#790): сам, свой, враг, не определено */
+#unitSvg .us, #champSvg .us { --u: #5be36b; } #unitSvg .ua, #champSvg .ua { --u: #4f9dff; }
+#unitSvg .ue, #champSvg .ue { --u: #ff5a4f; } #unitSvg .un, #champSvg .un { --u: #9aa0aa; }
+#vUnitsN .ua { color: #7fb6ff; } #vUnitsN .ue { color: #ff8a80; } #vUnitsN .un { color: #8a909a; }
 #unitSvg circle { fill: none; stroke: var(--u); stroke-width: 2.2; }
 #unitSvg circle.dot { fill: var(--u); stroke: rgba(0,0,0,.6); stroke-width: 1; }
 #unitSvg .ward { fill: #f1d14b; stroke: var(--u); stroke-width: 1.6; }

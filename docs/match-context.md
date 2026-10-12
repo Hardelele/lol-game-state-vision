@@ -61,7 +61,7 @@ match.api_refused         # почему последний снимок не п
   API, заменяется составом API (тот же набор — память остаётся, другой —
   сброс, событие `roster` и конфликт);
 * жив / мёртв и момент возрождения — из API; смерть — событие `death` с
-  `"src": "api"` (запись `SourcedDeath`), возрождение — `respawn` с
+  `"src": "api"` (`DeathEvent.src`; у смерти по панели — `"hud"`), возрождение — `respawn` с
   `src: "api"`, место — фонтан (выведено). Вывод по таймеру при живом API не
   делается;
 * панель HUD только сверяется: «жив / мёртв» против API — `alive`, таймер
@@ -78,6 +78,15 @@ match.api_refused         # почему последний снимок не п
 по таймеру, а состав остаётся из API до новой игры в API.
 
 Без API всё как раньше (тесты этапа 1 не менялись).
+
+В сеансе live (волна 3) наблюдение API идёт на каждом кадре — снятое в
+момент получения кадра (`status_observation(status, unix-время кадра)`), в
+строку кадра — `game_time`, `conflicts`, `api_refused`. Сеанс обновляет
+контекст под своим замком: сервис состояния снимает `match_view` из своего
+потока. Проверка на сеансе — `tests/test_live_session.py`
+(`test_api_feeds_context_roster_deaths_conflicts_and_sides`: журнал
+`own_game.jsonl` через подставной транспорт, по опросу на кадр — состав из
+API, 4 смерти с `src: "api"`, `minimap_dead` от подставной миникарты).
 
 В потоке (`lolstream/live_champions.py`): `LiveChampions.set_api(obs)` —
 состав из API вместо портретов HUD; портреты и боковые панели тогда не
@@ -125,10 +134,13 @@ match.api_refused         # почему последний снимок не п
 Записи строки — `lolvision/records.py`, именованные поля, версия формата —
 `row["schema"]` (сейчас 1). `row["ctx"]` — по составу записи `ChampCtx`:
 `name, team, state, u, v, age` (возраст места, с), `src` (источник места),
-`hp, respawn_in` (до возрождения, с; между опросами API — не меньше 0);
-`null` — значения нет. `row["ev"]` — события этого кадра: `{"t", "type", …}`,
-`type` — `death` (`name, team, u, v, respawn_in`, у смерти из API ещё
-`src: "api"`), `respawn` (`name, team, src`: `api` / `hud` / `minimap` /
+`hp, respawn_in` (до возрождения, с; между опросами API — не меньше 0),
+`alive, alive_src, alive_age` (жив ли, откуда — api / hud / minimap /
+inferred — и возраст наблюдения), `hp_src, hp_age`, `respawn_src` (кто дал
+таймер: api / hud), `conflicts` (расхождений по чемпиону); `null` — значения
+нет. Поля добавлены без смены `schema` (1). `MatchState.roster_src` — откуда
+состав: api / hud / `null`. `row["ev"]` — события этого кадра: `{"t", "type", …}`,
+`type` — `death` (`name, team, u, v, respawn_in, src` — `hud` или `api`), `respawn` (`name, team, src`: `api` / `hud` / `minimap` /
 `inferred`), `roster` (`roster`).
 
 ## Дальше (этапы #780)

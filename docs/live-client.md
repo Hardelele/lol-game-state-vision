@@ -63,9 +63,24 @@ Data Dragon); на журнале своей игры все десять све
 `events` — сколько событий накоплено. Полный снимок и все события —
 `GET /api/live/<id>/api` (`Session.api_full()`). События копятся в
 `Session.api_events` за весь сеанс (`EventRecord`); `Session.api_status()` —
-последний `LiveStatus`. Логики матча из API в сеансе пока нет (2B):
-`MatchState` их не получает. Отсутствие API (`no_game`, `error`) сеанс не
+последний `LiveStatus`. Отсутствие API (`no_game`, `error`) сеанс не
 роняет — это только состояние в `api`.
+
+На каждом кадре (волна 3, #798) сеанс берёт `status_observation(client.status(),
+время получения кадра)`: наблюдение идёт в `LiveChampions.set_api` (до
+миникарты: иконки назначаются среди десяти из API) и в
+`MatchState.update(..., api=obs)`. Одиночный сбой опроса состав не
+сбрасывает: `set_api(None)` — только когда свежего наблюдения нет дольше
+`API_STALE` (5 с). В строке кадра: `game_time` — `{"value", "src": "api",
+"reason"}` из `MatchState.game_clock()` (нет — `null` и причина: нет API,
+API не в игре, снимок не принят, API молчит), `conflicts` — счётчики
+расхождений по видам за матч, `api_refused` — почему снимок игры не
+принят. Смена `LiveStatus.state` — сигнал паспорту (`set_api`); отказ
+состава из API в `LiveChampions` — в `note` и `status()["api_error"]`.
+
+Сеанс своего экрана поднимает сервис состояния (state_service.py) на
+`127.0.0.1:8733`; адрес — `status()["state_url"]`, порт занят — сеанс идёт
+без сервиса, причина — `state_reason`.
 
 ## Наблюдение для контекста матча (#798)
 

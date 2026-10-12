@@ -78,9 +78,19 @@ dataset notes are in Russian; the README is in English.
   ("own screen" in the viewer). A missing frame (game window unfocused,
   minimized or closed) is shown as the source state with a reason, not as a
   crash, and writes no frame row; a resized window rebuilds the frame path
-  and says so. With the own-screen source the session also runs the Live
-  Client Data API reader of your own game and reports its state (a YouTube
-  session says explicitly that it has no API).
+  and says so (the champion roster carries over to the new path). With the
+  own-screen source the session also runs the Live Client Data API reader
+  of your own game (a YouTube session says explicitly that it has no API):
+  every frame takes the latest API snapshot into the match context (roster,
+  deaths, respawn timers and match clock with source `api`, disagreements
+  with the HUD and minimap counted as `conflicts`) and into the minimap
+  roster. A stream passport built at the start decides which readers may
+  answer (own screen is the player view at once; an undecided YouTube
+  layout is `unknown`, and the unit detector does not run until the view
+  is known); a refused reader is `null` in the frame row with its reason in
+  `off`. On the player view units carry ally / enemy / self from the bar
+  colour and the side from your team in the API. The own-screen session
+  also serves the game state for the coach on `127.0.0.1:8733`.
 - **Labels without people.** The target is read from the camera box on the
   minimap of the same frame (`lolvision/minimap_camera.py`). The minimap is
   masked out of the model input, so it is the source of the target, not a
@@ -216,9 +226,9 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | --- | --- |
 | `video_stream.py` | A local file or a YouTube video as a stream of frames (yt-dlp, ffmpeg, NVDEC) |
 | `frame_source.py` | Frame source interface for the live mode: a YouTube video or file, or the game window on screen (dxcam with an announced mss fallback, pause when unfocused or minimized, fps limit); "no frame" is a state with a reason ([docs/screen-source.md](docs/screen-source.md)) |
-| `live.py` | Live mode: frames from a `FrameSource` (YouTube or own screen) → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk. `build_pipeline` assembles the models for a frame size, `Session` runs the frame path, reports the source state (`source_state`, `source_gaps`) and, for the own screen, the Live Client state (`api`; full snapshot and events at `/api/live/<id>/api`) |
+| `live.py` | Live mode: frames from a `FrameSource` (YouTube or own screen) → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk. `build_pipeline` assembles the models for a frame size, `Session` runs the frame path, reports the source state (`source_state`, `source_gaps`), the stream passport (`passport`, `passport_events`) and, for the own screen, the Live Client state (`api`; full snapshot and events at `/api/live/<id>/api`) and the state service address (`state_url`). The frame row (schema 1) adds `view`, `off` (refused readers and reasons), `game_time`, `conflicts`, `api_refused`; units go through `sides.assign` |
 | `live_client.py` | Riot Live Client Data API of your own game (`https://127.0.0.1:2999/liveclientdata/allgamedata`, ~2 Hz, in its own thread): explicit states `no_game` / `loading` / `in_game` / `ended` / `error` with a reason instead of exceptions; typed records (game time, ten players with Data Dragon champion Id, team, riot ID, death and respawn timer, level, items, score; own player stats; events deduplicated by `EventID`), source `api`; replay of a `{"t", "code", "body"}` JSONL journal. See [docs/live-client.md](docs/live-client.md) |
-| `state_service.py` | Game state service for the coach on loopback (`127.0.0.1:8733`, standard library HTTP server): `GET /state` snapshot (schema 1), `GET /events` Server-Sent Events stream, `GET /health`. Every value is a fact with its source (`api` / `minimap` / `screen` / `hud` / `inferred`) and age, or `null` with a reason. It merges nothing itself: champion state, match clock and source conflicts come from `MatchState`, static API fields from the Live Client status, reader gates from the stream passport, unit relation and side from the records. Data comes from a provider callable; contract in [docs/state-api.md](docs/state-api.md), sample client `tools/state_client_example.py` |
+| `state_service.py` | Game state service for the coach on loopback (`127.0.0.1:8733`, standard library HTTP server): `GET /state` snapshot (schema 1), `GET /events` Server-Sent Events stream, `GET /health`. Every value is a fact with its source (`api` / `minimap` / `screen` / `hud` / `inferred`) and age, or `null` with a reason. It merges nothing itself: champion state, match clock and source conflicts come from `MatchState`, static API fields from the Live Client status, reader gates from the stream passport, unit relation and side from the records. Data comes from a provider callable (the own-screen live session starts the service with `Session.state_inputs`); contract in [docs/state-api.md](docs/state-api.md), sample client `tools/state_client_example.py` |
 | `channels.py`, `video_side.py` | Channel catalog, video lists, ingest jobs; player role and side from the video description |
 | `serve_inspect.py`, `webapp/` | Local web viewer (standard library HTTP server, plain HTML/JS); `POST /api/live/start` with `{"source": "screen"}` opens the own-screen session (id `screen`) |
 | `activations.py`, `explain_miss.py` | Layer-by-layer activations and the report on a single miss, served by the viewer |

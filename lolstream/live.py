@@ -53,6 +53,7 @@ CoordNet (lolvision/coord_model.py). Новый чекпоинт патчево�
 
 from __future__ import annotations
 
+import copy
 import enum
 import io
 import json
@@ -73,7 +74,12 @@ from lolvision.checkpoints import checkpoint_kind, load_checkpoint, read_checkpo
 from lolvision.dataset_io import MINI_STORE, STORE_W
 from lolstream.channels import check_fps, youtube_id
 from lolstream.frame_source import BACKENDS, FrameSource, ScreenSource, Status, VideoSource
-from lolstream.live_client import EventRecord, LiveClient, LiveStatus, ddragon_champion_ids
+from lolstream.live_client import (EventRecord, LiveClient, LiveStatus, ddragon_champion_ids,
+                                   status_observation)
+from lolstream.live_client import State as ApiState
+from lolstream.state_service import PORT as STATE_PORT
+from lolstream.state_service import (FrameStatus, StateInputs, StateServer, VisionFrame,
+                                     match_view)
 from lolvision.coord_model import expected_point, peak_point, spread
 from lolvision.geometry import MAP_UNITS, Projection
 from lolvision.unit_tracker import UnitTracker
@@ -86,17 +92,18 @@ from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
 from lolvision.unit_net import LIVE_NET, REF_H, REF_W, UnitNetRunner, live_net
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
-from lolvision.minimap_locate import Locator, box_px
-from lolstream.live_champions import LiveChampions
-from lolvision.match_state import MatchState
+# Поиск миникарты (#785): ~40 мс на кадр «игра», только пока не найдена; не
+# нашлась за LOCATE_MAX попыток — остаётся раскладка.
+from lolvision.minimap_locate import AGREE_PX, LOCATE_MAX, Locator, corner_px, box_px
+from lolstream.live_champions import VIEW_MIN, LiveChampions
+from lolvision.match_state import API_STALE, ApiObs, MatchState
+from lolvision.passport import UNKNOWN, Change, Passport
 from lolvision.records import SCHEMA, UnitRec, dicts
+from lolvision.sides import SideContext, assign as assign_sides
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
-# Поиск миникарты (minimap_locate.py, #785): ~40 мс на кадр «игра», только
-# пока не найдена. Не нашлась за столько попыток — остаётся раскладка.
-LOCATE_MAX = 300
 # Типы сцены «игра под оверлеем»: миникарта видна, сцена закрыта окном.
 OVERLAY_KINDS = ("shop", "tab")
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
@@ -113,6 +120,11 @@ FULL_STORE_W = 640
 KIND_HZ = 2.0
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 STOP_WAIT = 20.0         # с: сколько ждать остановки прежнего сеанса перед новым
+# Паспорт трансляции (#799): сколько последних изменений показывать в note и
+# сколько держать в status() (`passport_events`) и в памяти сеанса.
+PASSPORT_NOTE = 3
+PASSPORT_STATUS = 50
+PASSPORT_KEEP = 1000
 
 
 # ---------- модели ----------
@@ -245,7 +257,9 @@ class Pipeline:
         self.cboxes: list[tuple[int, int, int, int]] = []
         self.gpu_prep: Callable | None = None
         self.locator: Locator | None = None
+        self.locate_done = False                     # поиск сдался — паспорту сказано
         self.region0: tuple[int, int] = (0, 0)       # левый верх угла поиска миникарты
+        self.layout_mm: list[float] = []             # миникарта по раскладке, доли кадра
         self.mmbox: tuple[int, int, int, int] = (0, 0, 0, 0)
         self.minimap: dict = {}
         self.unit_model: UnitNetRunner | None = None
@@ -285,11 +299,16 @@ class Pipeline:
             self.champs.close()
 
 
-def build_pipeline(size: tuple[int, int], run: str, device: str, fps: float) -> Pipeline:
+def build_pipeline(size: tuple[int, int], run: str, device: str, fps: float,
+                   champs: LiveChampions | None = None) -> Pipeline:
     """Собрать путь кадра под кадр `size` (W, H): модель камеры прогона `run`,
     детектор юнитов, чемпионы, тип сцены — что есть на диске и на `device`.
     Чего нет — записано в `note`, а не подменено. Нет модели камеры —
-    PipelineError с причиной."""
+    PipelineError с причиной.
+
+    `champs` — чемпионы прежнего пути при пересборке (окно растянули): они от
+    размера кадра не зависят (всё читают в сетке 1080p), поэтому прочитанный
+    состав и раскладка переживают пересборку, а не читаются заново."""
     w, h = size
     layout = json.loads(DEFAULT_LAYOUT.read_text(encoding="utf-8"))
     ck = run_checkpoint(run)
@@ -304,8 +323,9 @@ def build_pipeline(size: tuple[int, int], run: str, device: str, fps: float) -> 
     # Миникарта: пока не найдена в кадре, режется по раскладке. Масштаб
     # миникарты у стримеров свой (от 1.0 до 1.5 от стандартной), и по
     # раскладке истина у них съезжает к левому верхнему углу (#785).
-    p.mmbox = box_px(layout["labelling"]["minimap"], (w, h))
-    p.minimap = {"box": list(layout["labelling"]["minimap"]), "scale": None, "found": False}
+    p.layout_mm = list(layout["labelling"]["minimap"])
+    p.mmbox = box_px(p.layout_mm, (w, h))
+    p.minimap = {"box": list(p.layout_mm), "scale": None, "found": False}
     p.locator = Locator((w, h))
     p.region0 = tuple(p.locator.region[:2])
 
@@ -340,7 +360,10 @@ def build_pipeline(size: tuple[int, int], run: str, device: str, fps: float) -> 
 
     # Чемпионы (live_champions.py): состав по HUD, миникарта, жив ли,
     # имена над чемпионами детектора. Только на кадрах «игра».
-    if (MINI_RUN / "model.pt").is_file():
+    if champs is not None:
+        p.champs = champs
+        p.note += " · чемпионы (прежние: состав сохранён)"
+    elif (MINI_RUN / "model.pt").is_file():
         p.champs = LiveChampions(device)
         p.note += " · чемпионы" + (f" ({'; '.join(p.champs.notes)})" if p.champs.notes else "")
     else:
@@ -408,13 +431,23 @@ class Session:
     `api` — Live Client своей игры (live_client.py) или None: его заводит тот,
     кто открывает сеанс экрана; сеанс запускает его вместе с собой и
     останавливает вместе с собой. Его последний статус — `api_status()`,
-    события — `api_events` (копятся за сеанс; логика матча из них — 2B).
+    события — `api_events`. Снимок API на каждом кадре идёт в контекст матча
+    (`MatchState`, источник api) и в состав чемпионов (`LiveChampions.set_api`).
     `build` — сборка пути кадра, как у `build_pipeline` (в тестах подставная).
+
+    Паспорт трансляции (`passport`, #799) строится после `source.open()` и
+    меняется по сигналам пути кадра (размер кадра, миникарта, вид, API, тип
+    сцены, состав, ресурсы); читатели, которым паспорт отказал, в строке
+    кадра — null, причина — в `row["off"]`.
+
+    `state_port` — поднять сервис состояния (state_service.StateServer) на
+    этом порту loopback вместе с сеансом (0 — свободный порт); None — без него.
     """
 
     def __init__(self, sid: str, run: str, source: FrameSource, device: str = "cuda",
                  api: LiveClient | None = None,
-                 build: Callable[..., Pipeline] | None = None):
+                 build: Callable[..., Pipeline] | None = None,
+                 state_port: int | None = None):
         self.sid, self.run, self.source = sid, run, source
         self.fps = float(source.fps)
         self.start = float(getattr(source, "start", 0.0))
@@ -429,9 +462,9 @@ class Session:
         self.mini: dict[int, bytes] = {}
         self.full: dict[int, bytes] = {}       # кадр целиком 640×360 — под юнитов
         self.heat: dict[int, np.ndarray] = {}
-        self.roster: list[str] | None = None   # состав матча по HUD (L1…L5, R1…R5)
+        self.roster: list[str] | None = None   # состав (L1…L5, R1…R5), принятый паспортом
         self.minimap: dict | None = None       # прямоугольник миникарты (#785)
-        self.view = "spectator"                # раскладка: наблюдатель или игрок (#786)
+        self.view = UNKNOWN                    # вид по паспорту: spectator / player / unknown
         self.kind = ""
         self.model_label = ""
         self.trained_on: list[str] = []
@@ -445,6 +478,7 @@ class Session:
         self.source_state: dict = {"state": None, "reason": "источник ещё не открыт",
                                    "t": None, "since": None, "size": None}
         self.source_gaps: dict[str, int] = {}
+        self.last_ok: float | None = None      # unix-время последнего кадра
         self._stop = threading.Event()
         self._pipe: Pipeline | None = None
         self._lock = threading.Lock()
@@ -452,8 +486,25 @@ class Session:
         # его не ждёт. Один исполнитель — кадры ложатся строго по порядку.
         self._n_emit = 0
         self.match: MatchState | None = None   # контекст матча (#780)
+        self._match_at: float | None = None    # unix-время момента match.t
         self.tracker: UnitTracker | None = None  # id юнитов между кадрами (#782)
         self.proj: Projection | None = None    # кадр → карта (есть, когда есть юниты)
+        # Паспорт трансляции и его изменения (Change.to_dict, по порядку).
+        self.passport: Passport | None = None
+        self.passport_events: list[dict] = []
+        self._pnote: list[str] = []            # последние изменения паспорта для note
+        # Live Client в пути кадра: последнее состояние, сказанное паспорту,
+        # последнее принятое наблюдение и когда (время потока).
+        self._api_state: ApiState | None = None
+        self._api_obs: ApiObs | None = None
+        self._api_obs_t: float | None = None
+        # Последний кадр зрения для сервиса состояния (state_service.VisionFrame).
+        self.vision: VisionFrame | None = None
+        self.state_port = state_port
+        self.state_server: StateServer | None = None
+        self.state_url: str | None = None
+        self.state_reason: str | None = ("сервис состояния у этого сеанса не поднимается"
+                                         if state_port is None else "ещё не поднят")
         self._out = ThreadPoolExecutor(1, thread_name_prefix="live-out")
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
@@ -502,6 +553,27 @@ class Session:
         return {"id": self.sid, "api": None if st is None else st.to_dict(),
                 "api_reason": self.api_reason, "events": events}
 
+    def state_inputs(self) -> StateInputs:
+        """Входы сервиса состояния (state_service.StateInputs) — провайдер
+        StateServer, зовётся из его потока. Контекст матча, паспорт и кадр
+        зрения снимаются под замком сеанса: их меняет поток кадра; паспорт —
+        копией (сервис зовёт verdict/to_dict у себя)."""
+        with self._lock:
+            match = (None if self.match is None or self._match_at is None
+                     else match_view(self.match, self._match_at))
+            passport = copy.deepcopy(self.passport)
+            events = tuple(self.match.events) if self.match is not None else ()
+            vision = self.vision
+        ss, d = self.source_state, self.source.describe()
+        size = ss.get("size") or d.get("size")
+        frames = FrameStatus(kind=self.source.kind, state=ss["state"] or "no_frame",
+                             reason=ss["reason"], backend=d.get("backend"),
+                             backend_note=d.get("backend_note"), fps=self.fps,
+                             size=None if size is None else (int(size[0]), int(size[1])),
+                             last_ok=self.last_ok)
+        return StateInputs(session=self.state.label, frames=frames, vision=vision, match=match,
+                           api=self.api_status(), passport=passport, vision_events=events)
+
     def status(self, since: int = 0) -> dict:
         self._drain_api()
         with self._lock:
@@ -509,6 +581,10 @@ class Session:
             n = len(self.rows)
             tail = self.rows[-TIMING_WINDOW:]
             last_t = self.rows[-1]["t"] if self.rows else None
+            passport = None if self.passport is None else self.passport.to_dict()
+            pev = self.passport_events[-PASSPORT_STATUS:]
+            n_pev = len(self.passport_events)
+            pnote = list(self._pnote[-PASSPORT_NOTE:])
         el = time.time() - self.started
         # Скорость к реальному времени — у ролика (с промотанным началом: его
         # тоже распаковали); экран идёт в реальном времени — скорости нет.
@@ -520,23 +596,31 @@ class Session:
         champs = self._pipe.champs if self._pipe is not None else None
         champs_error = champs.error if champs is not None else None
         note = self.note
-        # Раскладка может смениться по ходу ролика: в note — текущая, а не
-        # дописанная однажды (прежде «вид игрока» оставался навсегда).
+        # Вид может смениться по ходу: в note — текущий, а не дописанный однажды.
         if self.view == "player":
             note += " · вид игрока"
+        elif self.view == UNKNOWN and passport is not None and self._pipe is not None:
+            note += f" · вид неизвестен ({passport['items']['view']['how']})"
         if champs_error:
             ago = round(time.time() - champs_error["time"])
             note += f" · состав: ошибка {ago} с назад — {champs_error['text']}"
+        api_error = getattr(champs, "api_error", None) if champs is not None else None
+        if api_error:
+            note += f" · состав из API не принят: {api_error}"
+        if pnote:
+            note += " · паспорт: " + "; ".join(pnote)
         return {"id": self.sid, "run": self.run, "state": self.state.label,
                 "active": self.state.active,
                 "kind": self.kind, "model": self.model_label,
                 "trained_on": self.trained_on, "timing": timing(tail),
-                "note": note, "champs_error": champs_error,
+                "note": note, "champs_error": champs_error, "api_error": api_error,
                 "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
                 "source": self.source.describe(), "source_state": dict(self.source_state),
                 "source_gaps": dict(self.source_gaps),
                 "api": self._api_view(), "api_reason": self.api_reason,
+                "passport": passport, "passport_events": pev, "passport_events_n": n_pev,
+                "state_url": self.state_url, "state_reason": self.state_reason,
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
                 "minimap": self.minimap, "view": self.view, "elapsed": round(el, 1),
                 "speed": speed, "map_units": MAP_UNITS}
@@ -556,6 +640,7 @@ class Session:
     def _run(self) -> None:
         if self.api is not None:
             self.api.start()                     # опрос API — свой поток
+        self._serve()
         try:
             self._work()
         except PipelineError as exc:
@@ -570,6 +655,21 @@ class Session:
             if self.api is not None:
                 self.api.stop()
                 self._drain_api()
+            if self.state_server is not None:
+                self.state_server.close()
+                self.state_reason = "сеанс закрыт"
+
+    def _serve(self) -> None:
+        """Поднять сервис состояния. Порт занят — сеанс идёт без него, причина
+        в status() (`state_reason`), а не молчание."""
+        if self.state_port is None:
+            return
+        try:
+            self.state_server = StateServer(self.state_inputs, port=self.state_port).start()
+        except OSError as exc:
+            self.state_reason = f"не поднят: {type(exc).__name__}: {exc}"
+            return
+        self.state_url, self.state_reason = self.state_server.url, None
 
     def _seen(self, fr) -> None:
         """Запомнить ответ источника: состояние меняется — меняется since."""
@@ -579,12 +679,66 @@ class Session:
                                  "since": time.time(), "size": fr.size}
         else:
             self.source_state.update(reason=fr.reason, t=round(fr.t, 2), size=fr.size)
-        if not fr.ok and fr.status is not Status.ENDED:
+        if fr.ok:
+            self.last_ok = time.time()
+        elif fr.status is not Status.ENDED:
             self.source_gaps[key] = self.source_gaps.get(key, 0) + 1
 
-    def _new_pipe(self, size: tuple[int, int]) -> Pipeline:
-        """Собрать путь кадра под размер и привязать к нему сеанс."""
-        pl = self._build(size, self.run, self.device, self.fps)
+    # ---------- паспорт ----------
+
+    def _sig(self, signal: Callable[[Passport], list[Change]]) -> list[Change]:
+        """Сигнал паспорту под замком сеанса (status() и сервис читают его из
+        своих потоков); изменения — в `passport_events` и note (смена типа
+        сцены — только в события: она частая и видна в строке кадра)."""
+        with self._lock:
+            changes = signal(self.passport)
+            for ch in changes:
+                self.passport_events.append(ch.to_dict())
+                if ch.key != "item:scene":
+                    self._pnote.append(ch.text)
+            del self.passport_events[:-PASSPORT_KEEP]
+            del self._pnote[:-PASSPORT_NOTE]
+        return changes
+
+    def _open_passport(self, d: dict) -> None:
+        """Паспорт после `source.open()`: источник и размер — из describe().
+        У своего экрана вид — сразу игрока (это своя игра), у ролика — не
+        решён, пока его не решат чтения HUD."""
+        p = Passport.build(d, t=None)
+        with self._lock:
+            self.passport = p
+        if self.api is None:
+            self._sig(lambda p: p.set_api(None, False, None, reason=self.api_reason))
+        if self.source.kind == "screen":
+            self._sig(lambda p: p.set_view("player", None, how="свой экран: своя игра",
+                                           source="source"))
+            self.view = "player"
+
+    def _frame_size(self, size: tuple[int, int], t: float) -> None:
+        """Размер кадра → паспорт. У экрана кадр — клиентская область окна
+        игры: прямоугольник игры известен сразу, перемерять нечего."""
+        if self.passport.items["resolution"].value == tuple(size):
+            return
+        self._sig(lambda p: p.set_frame_size(size, t))
+        if self.source.kind == "screen":
+            self._sig(lambda p: p.set_game_rect((0, 0, *size), t, source="source",
+                                                how="кадр — клиентская область окна игры"))
+
+    def _assets(self, pl: Pipeline, t: float | None) -> None:
+        """Что есть у пути кадра — в паспорт (читатели без ресурса отказывают)."""
+        have = {"unit_net": pl.unit_model is not None,
+                "names_bank": pl.champs is not None and pl.champs.names is not None,
+                "minimap_model": pl.champs is not None}
+        for name, ok in have.items():
+            if self.passport.items["assets"].value.get(name) != ok:
+                self._sig(lambda p, name=name, ok=ok: p.set_asset(name, ok, t))
+
+    def _new_pipe(self, size: tuple[int, int], champs: LiveChampions | None = None,
+                  t: float | None = None) -> Pipeline:
+        """Собрать путь кадра под размер и привязать к нему сеанс. `champs` —
+        чемпионы прежнего пути (пересборка при смене размера)."""
+        pl = (self._build(size, self.run, self.device, self.fps, champs=champs)
+              if champs is not None else self._build(size, self.run, self.device, self.fps))
         self._pipe = pl
         self.kind, self.model_label = pl.model.kind, pl.model.label
         self.trained_on = list(pl.model.trained_on)
@@ -593,6 +747,7 @@ class Session:
         if self.match is not None:
             # Память матча переживает смену размера, проекция — новая.
             self.match.proj = pl.proj
+        self._assets(pl, t)
         return pl
 
     def _source_note(self, size: tuple[int, int] | None) -> str:
@@ -609,6 +764,7 @@ class Session:
         d = src.describe()
         self.title = d.get("title") or self.sid
         self.duration = float(d.get("duration") or 0.0)
+        self._open_passport(d)
         pl = None
         if src.size is not None:
             # Размер известен заранее (у ролика всегда): модели грузятся до
@@ -629,6 +785,7 @@ class Session:
             t0 = time.perf_counter()
             fr = src.read()
             t1 = time.perf_counter()
+            wall = time.time()                   # когда кадр получен: к нему — снимок API
             if self._stop.is_set():
                 break
             self._seen(fr)
@@ -638,20 +795,23 @@ class Session:
                 break
             if not fr.ok:
                 continue                         # пауза, окна нет — строк нет
+            self._frame_size(fr.size, fr.t)
             if pl is None or fr.size != pl.size:
                 if pl is not None:
                     # Окно растянули: кадры прогрева — по старому размеру,
-                    # дальше — новый путь под новый размер.
+                    # дальше — новый путь под новый размер. Чемпионы от
+                    # размера не зависят: состав переходит в новый путь.
                     self._flush(pl)
-                    old = pl.size
+                    old, champs = pl.size, pl.champs
+                    pl.champs = None             # не гасить поток состава в close()
                     pl.close()
-                    pl = self._new_pipe(fr.size)
+                    pl = self._new_pipe(fr.size, champs=champs, t=fr.t)
                     self.note += (f" · размер кадра {old[0]}x{old[1]} → "
                                   f"{fr.size[0]}x{fr.size[1]}: путь кадра пересобран")
                 else:
-                    pl = self._new_pipe(fr.size)
+                    pl = self._new_pipe(fr.size, t=fr.t)
                     self.note = f"{self._source_note(fr.size)} · {pl.note}"
-            self._step(pl, fr.image, fr.t, (t1 - t0) * 1000)
+            self._step(pl, fr.image, fr.t, (t1 - t0) * 1000, wall)
         if pl is not None and not self._stop.is_set():
             self._flush(pl)                      # поток кончился раньше прогрева
 
@@ -659,9 +819,138 @@ class Session:
         if self.state is State.RUNNING:
             self.state = State.STOPPED if self._stop.is_set() else State.ENDED
 
-    def _step(self, pl: Pipeline, fr: np.ndarray, t: float, decode_ms: float) -> None:
-        """Путь одного кадра: подготовка, тип сцены, миникарта, юниты,
-        чемпионы — и в _emit (после прогрева рамки)."""
+    # ---------- сигналы пути кадра ----------
+
+    def _api_step(self, t: float, wall: float) -> tuple[ApiObs | None, str | None]:
+        """Снимок Live Client на момент кадра → (наблюдение контекста матча
+        или None, почему снимок игры не принят). Смена состояния API — сигнал
+        паспорту."""
+        if self.api is None:
+            return None, None
+        st = self.api.status()
+        if st.state is not self._api_state:
+            self._api_state = st.state
+            self._sig(lambda p: p.set_api(st.state.value, st.state is ApiState.IN_GAME, t,
+                                          st.reason))
+        obs, why = status_observation(st, wall)
+        if obs is not None:
+            self._api_obs, self._api_obs_t = obs, t
+            return obs, None
+        if self._api_obs_t is not None and t - self._api_obs_t > API_STALE:
+            self._api_obs = None
+        # Отказ по содержимому (чемпион не опознан, не 5/5) — в строку кадра;
+        # отказ по состоянию (no_game, error) виден в паспорте.
+        content = st.game is not None and st.state in (ApiState.LOADING, ApiState.IN_GAME)
+        return None, why if content else None
+
+    def _my_team(self) -> tuple[str | None, str | None]:
+        """Команда своего игрока по API для sides.assign или (None, причина)."""
+        ok, why = self.passport.verdict("api_facts")
+        if not ok:
+            return None, why
+        st = self.api.status()
+        g = st.game
+        if g is None:
+            return None, f"нет снимка игры ({st.state.value})"
+        me = g.my_player
+        return (me.team, None) if me is not None else (None, g.me_reason)
+
+    def _view_step(self, champs: LiveChampions | None, t: float) -> str:
+        """Вид трансляции → паспорт (только смена). Свой экран — вид игрока,
+        если API не сказал, что своего игрока нет (наблюдатель в клиенте). У
+        ролика — по чтениям HUD (LiveChampions.view); не решён — unknown с
+        причиной, а не наблюдатель по умолчанию."""
+        if self.source.kind == "screen":
+            if self._api_obs is not None and self._api_obs.me_team is None:
+                view, how, src = "spectator", "Live Client API: своего игрока нет", "api"
+            else:
+                view, how, src = "player", "свой экран: своя игра", "source"
+        elif champs is None:
+            view, how, src = None, "нет модели иконок миникарты: HUD не читается", "hud"
+        else:
+            view, n = champs.view, len(champs.reads)
+            spec = sum(champs.reads)
+            if view is None:
+                how = f"раскладка не решена: чтений HUD {n}, нужно {VIEW_MIN}"
+            else:
+                how = f"HUD: таблица портретов наблюдателя в {spec} из {n} чтений"
+            src = "hud"
+        if (view or UNKNOWN) != self.passport.items["view"].value:
+            self._sig(lambda p: p.set_view(view, t, how=how, source=src))
+        self.view = self.passport.items["view"].value
+        return self.view
+
+    def _roster_step(self, champs: LiveChampions | None, t: float) -> None:
+        """Откуда состав → паспорт: api, hud (если паспорт разрешает состав
+        по HUD: вид наблюдателя) или никак. Состав по портретам на виде игрока
+        не принимается (#786)."""
+        if champs is None:
+            src, how = None, "нет модели иконок миникарты"
+        elif champs.roster is None:
+            src = None
+            how = (f"состав из API не принят: {champs.api_error}" if champs.api_error
+                   else "не прочитан")
+        elif champs.match is not None and champs.match.api:
+            src, how = "api", "Live Client API"
+        else:
+            ok, why = self.passport.verdict("hud_roster")
+            src, how = ("hud", "портреты HUD") if ok else (None, f"состав по HUD не принят: {why}")
+        if src != self.passport.items["roster"].value:
+            self._sig(lambda p: p.set_roster(src, t, how))
+        self.roster = champs.roster if src is not None else None
+
+    def _minimap_step(self, pl: Pipeline, region: np.ndarray, game: bool, t: float) -> None:
+        """Поиск миникарты и его итог → паспорт: найдена, поиск сдался или
+        перепроверка (только по сигналу паспорта и на игровом кадре)."""
+        locator = pl.locator
+        if locator.box is None:
+            if game and locator.tried < LOCATE_MAX:
+                if locator.offer_region(region):
+                    self._found(pl, t)
+            elif locator.tried >= LOCATE_MAX and not pl.locate_done:
+                pl.locate_done = True
+                self._sig(lambda p: p.minimap_missing(
+                    t, f"не найдена за {LOCATE_MAX} попыток — прямоугольник раскладки"))
+            return
+        if not (game and "minimap" in self.passport.pending):
+            return
+        # Перепроверка в том же месте: ответ в другом прямоугольнике — не она.
+        fit = locator.locate(region)
+        same = fit is not None and corner_px(fit.box, locator.box, pl.size) <= AGREE_PX
+        self._sig(lambda p: p.check_minimap(fit.score if same else 0.0, t))
+        if not self.passport.items["minimap"].value["found"]:
+            self._lost(pl)
+
+    def _found(self, pl: Pipeline, t: float) -> None:
+        locator = pl.locator
+        pl.mmbox = box_px(locator.box, pl.size)
+        pl.minimap = {"box": list(locator.box), "scale": locator.fit.scale, "found": True}
+        self.minimap = dict(pl.minimap)
+        self.note += f" · миникарта ×{locator.fit.scale:g}"
+        if pl.bw is not None:
+            # Найдена после прогрева: размер рамки оценён в чужой сетке.
+            # Вьюпорт постоянен в единицах карты, поэтому в сетке своей
+            # миникарты он меньше в масштаб раз.
+            pl.bw = round(pl.bw / locator.fit.scale)
+            pl.bh = round(pl.bh / locator.fit.scale)
+        self._sig(lambda p: p.set_minimap(locator.box, locator.fit.scale, locator.fit.score, t))
+
+    def _lost(self, pl: Pipeline) -> None:
+        """Паспорт снял находку миникарты: снова раскладка и новый поиск."""
+        scale = pl.locator.fit.scale if pl.locator.fit is not None else 1.0
+        pl.locator, pl.locate_done = Locator(pl.size), False
+        pl.mmbox = box_px(pl.layout_mm, pl.size)
+        pl.minimap = {"box": list(pl.layout_mm), "scale": None, "found": False}
+        self.minimap = dict(pl.minimap)
+        if pl.bw is not None:
+            pl.bw, pl.bh = round(pl.bw * scale), round(pl.bh * scale)   # обратно в сетку раскладки
+
+    def _step(self, pl: Pipeline, fr: np.ndarray, t: float, decode_ms: float,
+              wall: float | None = None) -> None:
+        """Путь одного кадра: подготовка, тип сцены, миникарта, API, вид,
+        юниты, чемпионы — и в _emit (после прогрева рамки). `wall` —
+        unix-время получения кадра: на него берётся снимок Live Client."""
+        wall = time.time() if wall is None else wall
         model = pl.model
         rx0, ry0 = pl.region0
         t2 = time.perf_counter()
@@ -682,58 +971,65 @@ class Session:
         # Без модели типа сцены считаем, что всё — игра.
         kind = "game" if pl.kind_p is None else KIND_CLASSES[int(np.argmax(pl.kind_p))]
         game = kind == "game"
+        self._sig(lambda p: p.set_scene(kind, t, game))
         # Магазин и Tab — игра под оверлеем (#786): сцену закрывает окно,
         # но миникарта видна, и чемпионы на ней читаются.
         overlay = kind in OVERLAY_KINDS
         region = fr[ry0:, rx0:]
-        locator = pl.locator
-        if locator.box is None and game and locator.tried < LOCATE_MAX:
-            if locator.offer_region(region):
-                pl.mmbox = box_px(locator.box, pl.size)
-                pl.minimap = {"box": list(locator.box), "scale": locator.fit.scale,
-                              "found": True}
-                self.minimap = dict(pl.minimap)
-                self.note += f" · миникарта ×{locator.fit.scale:g}"
-                if pl.bw is not None:
-                    # Найдена после прогрева: размер рамки оценён в чужой
-                    # сетке. Вьюпорт постоянен в единицах карты, поэтому
-                    # в сетке своей миникарты он меньше в масштаб раз.
-                    pl.bw = round(pl.bw / locator.fit.scale)
-                    pl.bh = round(pl.bh / locator.fit.scale)
+        self._minimap_step(pl, region, game, t)
+        locator = pl.locator                     # после шага: потерянную ищет новый
         mini = _mini(region, pl.mmbox, rx0, ry0)
         mask = white_mask(np.asarray(mini, dtype=np.float32))
-        units = None
-        if pl.unit_model is not None:
-            t4 = time.perf_counter()
-            units = pl.unit_model.units(pl.fr_dev)
-            ms["units"] = (time.perf_counter() - t4) * 1000
-        names = None
+
+        # Live Client: состав из API — до миникарты (иконки назначаются
+        # только среди этих десяти). API пропал дольше API_STALE — состав
+        # снова по HUD; одиночный сбой опроса состав не сбрасывает.
+        obs, refused = self._api_step(t, wall)
         champs = pl.champs
-        if champs is not None and (game or overlay):
-            t5 = time.perf_counter()
+        if champs is not None:
+            if obs is not None:
+                champs.set_api(obs)
+            elif self._api_obs is None:
+                champs.set_api(None)
             if game:
                 champs.offer(fr, t)
-            ms["champs"] = champs.minimap(fr, np.asarray(mini))
-            self.roster = champs.roster
-            t6 = time.perf_counter()
-            ms["mini"] = (t6 - t5) * 1000
-            if units and game:
-                names = champs.who(fr, units)
-                ms["who"] = (time.perf_counter() - t6) * 1000
-        if units is not None:
-            # Юниты детектора — записи records.UnitRec (доли кадра, имя).
-            ms["unit_recs"] = [UnitRec.from_unit(u, pl.size, names[k] if names else None)
-                               for k, u in enumerate(units)]
-        if pl.unit_model is not None and champs is not None:
-            view = champs.view or "spectator"
+        view = self._view_step(champs, t)
+        self._roster_step(champs, t)
+        off = self.passport.disabled()           # кому паспорт отказал на этом кадре
+
+        # Детектор юнитов — только на известном виде (маска своя у каждого
+        # вида, #786); вид неизвестен — не запускается: null с причиной.
+        units = None
+        if pl.unit_model is not None and "units" not in off:
             want = (view, locator.box if view == "player" else None)
             if want != pl.zone:
                 pl.zone = want
                 keep, valid, valid_src = _unit_zone(*pl.size, view, locator.box)
                 pl.unit_model.set_zone(keep, valid)
                 pl.tracker.valid = valid_src
-                self.view = view
-        ms["full_img"] = _full_small(fr, pl.fr_dev)
+            t4 = time.perf_counter()
+            units = pl.unit_model.units(pl.fr_dev)
+            ms["units"] = (time.perf_counter() - t4) * 1000
+        names = None
+        if champs is not None and (game or overlay) and "minimap_icons" not in off:
+            t5 = time.perf_counter()
+            ms["champs"] = champs.minimap(fr, np.asarray(mini))
+            t6 = time.perf_counter()
+            ms["mini"] = (t6 - t5) * 1000
+            if units and game and "names" not in off:
+                names = champs.who(fr, units)
+                ms["who"] = (time.perf_counter() - t6) * 1000
+        if units is not None:
+            # Юниты детектора — записи records.UnitRec (доли кадра, имя), со
+            # своими / врагами / собой и стороной (sides.py, #790).
+            recs = [UnitRec.from_unit(u, pl.size, names[k] if names else None)
+                    for k, u in enumerate(units)]
+            my_team, my_why = self._my_team()
+            ctx = SideContext(view=None if view == UNKNOWN else view, my_team=my_team,
+                              my_team_reason=my_why)
+            ms["unit_recs"] = assign_sides(recs, ctx, fr)
+        ms.update(full_img=_full_small(fr, pl.fr_dev), off=off, view=view, api_obs=obs,
+                  api_refused=refused, wall=wall)
         pl.n_frame += 1
 
         if pl.bw is None:
@@ -746,7 +1042,7 @@ class Session:
             if find_box(mask, *BOX0)[2] >= WARM_Q:
                 pl.n_good += 1
             # Ждём и миникарту: без неё размер рамки оценится в чужой сетке.
-            if (pl.n_good < WARMUP or locator.box is None) and len(pl.warm) < WARMUP_MAX:
+            if (pl.n_good < WARMUP or pl.locator.box is None) and len(pl.warm) < WARMUP_MAX:
                 return
             warm = _recut(pl.warm, pl.mmbox, rx0, ry0)
             good = [m[0] for m in warm if find_box(m[0], *BOX0)[2] >= WARM_Q]
@@ -769,6 +1065,17 @@ class Session:
             self._emit(m, s, p, mi, pl.bw, pl.bh, pl.model, msx, tt)
         pl.warm.clear()
 
+    def _clock_reason(self, refused: str | None) -> str:
+        """Почему у кадра нет времени матча по API."""
+        if self.api is None:
+            return f"Live Client API: {self.api_reason}"
+        ok, why = self.passport.verdict("api_facts")
+        if not ok:
+            return why
+        if refused:
+            return f"снимок API не принят: {refused}"
+        return f"нет свежего снимка API (дольше {API_STALE:g} с)"
+
     def _emit(self, mask, scene: np.ndarray, prep, mini: Image.Image,
               bw: int, bh: int, model: Runner, ms: dict, t: float) -> None:
         """Один кадр: истина с миникарты, ответ модели, картинки в память.
@@ -777,19 +1084,29 @@ class Session:
         ролике, у экрана — секунды от открытия источника.
 
         `ms` — уже набежавшее время кадра (распаковка; подготовка входа
-        модели — маска, обрезка, масштаб, вид сверху); сюда добавляются сеть,
-        сведение голосов и «ответ» — сжатие картинок и запись в сеанс.
-        Метка с миникарты в путь модели не входит и не считается.
+        модели — маска, обрезка, масштаб, вид сверху) и то, что путь кадра
+        передал строке (записи, отказы паспорта, снимок API); сюда
+        добавляются сеть, сведение голосов и «ответ» — сжатие картинок и
+        запись в сеанс. Метка с миникарты в путь модели не входит.
 
-        Истины нет, если миникарта в кадре не найдена, а вид не наблюдателя:
-        тогда она вырезана по раскладке наблюдателя мимо настоящей, и рамка
-        по ней — мусор. В строке cx, cy, q, err = None и truth = "no_minimap";
-        ответ модели остаётся.
+        Истина камеры — только если паспорт её разрешает (`camera_truth`:
+        миникарта найдена в кадре или вид наблюдателя). Иначе миникарта
+        вырезана по раскладке мимо настоящей, и рамка по ней — мусор: в строке
+        cx, cy, q, err = None, truth = "no_minimap" и причина паспорта;
+        ответ модели остаётся. Решение берётся на момент выдачи строки: кадры
+        прогрева перерезаны по найденной миникарте.
+
+        Читатели, которым паспорт отказал на кадре, — `row["off"]`
+        {читатель: причина}; их выход в строке — null.
         """
-        truth = self.minimap is None or self.minimap["found"] or self.view == "spectator"
+        off = dict(ms.pop("off", None) or {})
+        truth, why = self.passport.verdict("camera_truth")
         if truth:
+            off.pop("camera_truth", None)
             x, y, q, _ = find_box_clipped(mask, bw, bh)
             cx, cy = (x + bw / 2) / MM, (y + bh / 2) / MM
+        else:
+            off["camera_truth"] = why
 
         out, hm, mt = model.predict(prep)
         ms.update(mt)
@@ -802,12 +1119,13 @@ class Session:
         row = {"schema": SCHEMA, "i": i, "t": round(t, 2),
                "cx": None, "cy": None,
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
-               "err": None, "spread": _r(out["spread"], 3), "q": None}
+               "err": None, "spread": _r(out["spread"], 3), "q": None,
+               "view": ms.pop("view", self.view)}
         if truth:
             row.update(cx=round(cx, 4), cy=round(cy, 4), q=round(q, 3),
                        err=_r(np.hypot(cx - out["px"], cy - out["py"]), 4))
         else:
-            row["truth"] = "no_minimap"
+            row["truth"], row["truth_reason"] = "no_minimap", why
         for k in ("agree", "scene", "game"):
             if k in out:
                 row[k] = _r(out[k], 3)
@@ -815,14 +1133,21 @@ class Session:
             if k in out:
                 row[k] = out[k]
         # Записи кадра (records.py) идут в контекст и трекер как есть, в
-        # строку — словарями: строка уходит в JSON.
+        # строку — словарями: строка уходит в JSON. Отказ паспорта — null.
         units = ms.pop("unit_recs", None)
         full_img = ms.pop("full_img", None)
         if units is not None:
             row["units"] = dicts(units)
+        elif "units" in off:
+            row["units"] = None
+        ran = "champs" in ms
         mini_champs = ms.pop("champs", None)
         if mini_champs is not None:
             row["champs"] = dicts(mini_champs)
+        elif ran or "minimap_icons" in off:
+            row["champs"] = None
+            if "minimap_icons" not in off:
+                off["minimap_icons"] = "состав не решён"
         kp = ms.pop("kind_p", None)
         if kp is not None:
             # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
@@ -832,26 +1157,48 @@ class Session:
                 c = KIND_CLASSES.index("other")
             row["kind"] = KIND_CLASSES[c]
             row["kind_p"] = round(float(kp[int(np.argmax(kp))]), 3)
+        obs, refused = ms.pop("api_obs", None), ms.pop("api_refused", None)
+        wall = ms.pop("wall", None)
         # Контекст матча: память о чемпионах между кадрами, смерти и
-        # возрождения. В строку — снимок на этот кадр и новые события.
-        if self.match is None:
-            # Места чемпионов с экрана — той же проекцией, что у трекера.
-            self.match = MatchState(proj=self.proj)
-        ev = self.match.update(row["t"], row.get("kind", "game"), mini_champs, units,
-                               (row["px"], row["py"]))
-        if self.match.order:
-            row["ctx"] = dicts(self.match.frame_view())
+        # возрождения, снимок API (источник api). Под замком: сервис
+        # состояния читает контекст из своего потока.
+        with self._lock:
+            if self.match is None:
+                # Места чемпионов с экрана — той же проекцией, что у трекера.
+                self.match = MatchState(proj=self.proj)
+            ev = self.match.update(row["t"], row.get("kind", "game"), mini_champs, units,
+                                   (row["px"], row["py"]), api=obs)
+            self._match_at = wall if wall is not None else time.time()
+            ctx = self.match.frame_view() if self.match.order else None
+            clock = self.match.game_clock()
+            conflicts = dict(self.match.conflicts)
+            refused = refused or self.match.api_refused
+        if ctx is not None:
+            row["ctx"] = dicts(ctx)
         if ev:
             row["ev"] = dicts(ev)
+        row["game_time"] = ({"value": round(clock.value, 1), "src": clock.src, "reason": None}
+                            if clock is not None else
+                            {"value": None, "src": None, "reason": self._clock_reason(refused)})
+        row["conflicts"] = conflicts
+        row["api_refused"] = refused
+        row["off"] = off
         # Треки юнитов: id, состояние (seen / unseen / lost), место на карте.
         # События юнитов — отдельно от событий чемпионов: смертей крипов
         # десятки в минуту.
+        tracks = None
         if self.tracker is not None and row.get("kind", "game") == "game" and units is not None:
             cam = (row["px"], row["py"])
             uev = self.tracker.update(row["t"], None if cam[0] is None else cam, units)
-            row["tracks"] = dicts(self.tracker.frame_view(row["t"]))
+            tracks = self.tracker.frame_view(row["t"])
+            row["tracks"] = dicts(tracks)
             if uev:
                 row["uev"] = dicts(uev)
+        cam = None if row["px"] is None or row["py"] is None else (row["px"], row["py"])
+        vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, row["spread"],
+                             units, tracks)
+        with self._lock:
+            self.vision = vision
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         self._out.submit(self._store, row, scene, full_img, mini, hm)
@@ -1011,7 +1358,9 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
 
 
 def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto") -> dict:
-    """Сеанс по своему экрану (окно игры) вместе с Live Client своей игры.
+    """Сеанс по своему экрану (окно игры) вместе с Live Client своей игры и
+    сервисом состояния для coach на 127.0.0.1:STATE_PORT (state_service.py;
+    адрес — `state_url` в status()).
 
     Захват открывается в потоке сеанса (mss привязан к потоку), не здесь."""
     fps = check_fps(fps)
@@ -1021,7 +1370,7 @@ def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto"
     run_checkpoint(run)
     return _open(SCREEN_ID, run, lambda: Session(
         SCREEN_ID, run, ScreenSource(fps, backend=backend),
-        api=LiveClient(champion_ids=ddragon_champion_ids())))
+        api=LiveClient(champion_ids=ddragon_champion_ids()), state_port=STATE_PORT))
 
 
 def get(sid: str) -> Session | None:
