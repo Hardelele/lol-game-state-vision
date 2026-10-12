@@ -62,34 +62,12 @@ def test_who_assigns_distinct_names_and_tracks():
     assert r.who(empty, moved) == ["Hecarim"]
 
 
-def test_view_from_portrait_reads():
-    r = reader()
-    r.reads.extend([False] * (lc.VIEW_MIN - 1))
-    assert r.view is None                       # чтений мало — не решаем
-    r.reads.append(False)
-    assert r.view == "player"
-    r.reads.extend([True] * lc.VIEW_READS)
-    assert r.view == "spectator"
-
-
-def test_view_ignores_a_few_frames_without_hud():
-    # У наблюдателя HUD бывает скрыт на части кадров (затемнение, заставка):
-    # принятая раскладка от этого не дёргается, сменяется только устойчиво.
-    r = reader()
-    r.reads.extend([True] * lc.VIEW_READS)
-    assert r.view == "spectator"
-    r.reads.extend([False] * (lc.VIEW_FLIP - 1))
-    assert r.view == "spectator"
-    r.reads.append(False)
-    assert r.view == "player"
-
-
 def test_who_silent_in_player_view():
     # У вида игрока над плашкой ник: имя чемпиона не выдумывается ни чтением,
     # ни переносом с прошлого кадра (#786: Brand был «Ivern» в 100% кадров).
     r = reader()
     r.prev = []
     r.match = SimpleNamespace(roster=["Irelia", "Evelynn", "A", "B", "C"] + CANDS, api=False)
-    r.reads.extend([False] * lc.VIEW_READS)
+    r.reads.extend([lc.PLAYER] * lc.VIEW_READS)
     units = [SimpleNamespace(kind="champion", team="CHAOS", x=900, y=500)]
     assert r.who(frame_with("Hecarim", 900, 500), units) == [None]

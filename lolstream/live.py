@@ -95,7 +95,7 @@ from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 # Поиск миникарты (#785): ~40 мс на кадр «игра», только пока не найдена; не
 # нашлась за LOCATE_MAX попыток — остаётся раскладка.
 from lolvision.minimap_locate import AGREE_PX, LOCATE_MAX, Locator, corner_px, box_px
-from lolstream.live_champions import VIEW_MIN, LiveChampions
+from lolstream.live_champions import LiveChampions
 from lolvision.match_state import API_STALE, ApiObs, MatchState
 from lolvision.passport import UNKNOWN, Change, Passport
 from lolvision.records import SCHEMA, UnitRec, dicts
@@ -868,13 +868,9 @@ class Session:
         elif champs is None:
             view, how, src = None, "нет модели иконок миникарты: HUD не читается", "hud"
         else:
-            view, n = champs.view, len(champs.reads)
-            spec = sum(champs.reads)
-            if view is None:
-                how = f"раскладка не решена: чтений HUD {n}, нужно {VIEW_MIN}"
-            else:
-                how = f"HUD: таблица портретов наблюдателя в {spec} из {n} чтений"
-            src = "hud"
+            # Только по положительным признакам (#799): «портретов не видно» —
+            # не вид игрока, а unknown или прежний вид.
+            view, how, src = champs.view, champs.view_how(), "hud"
         if (view or UNKNOWN) != self.passport.items["view"].value:
             self._sig(lambda p: p.set_view(view, t, how=how, source=src))
         self.view = self.passport.items["view"].value

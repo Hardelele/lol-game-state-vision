@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from lolstream import live_champions as lc
+from lolvision.roster import FrameSlots
 
 
 @pytest.fixture
@@ -37,7 +38,7 @@ def test_roster_thread_survives_error(champs, monkeypatch):
         calls.append(1)
         if len(calls) == 1:
             raise KeyError("Hwei")
-        return SimpleNamespace(hud=False)
+        return FrameSlots(np.zeros((10, 2, 3), np.float32))     # портретов нет
 
     monkeypatch.setattr(lc, "read_frame", read_frame)
     frame = np.zeros((1080, 1920, 3), np.uint8)
@@ -48,7 +49,7 @@ def test_roster_thread_survives_error(champs, monkeypatch):
     champs.offer(frame, lc.ROSTER_EVERY)                 # следующее окно
     _wait(champs)
     assert len(calls) == 2 and champs._th.is_alive()
-    assert list(champs.reads) == [False]
+    assert list(champs.reads) == [None]          # признаков нет — не «игрок»
 
 
 def test_no_name_bank_is_said_and_who_is_silent(champs):

@@ -13,6 +13,7 @@ import json
 import threading
 import time
 import urllib.request
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ import numpy as np
 import pytest
 
 from lolstream import live
+from lolstream import live_champions as lc
 from lolstream.frame_source import Frame, Status, gap
 from lolstream.live_client import LiveClient, Response, journal_transport, read_journal
 from lolstream.state_service import check_snapshot
@@ -364,7 +366,7 @@ class _Champs:
     def __init__(self, device="cpu", hud_view=None, hud_roster=None):
         _Champs.made.append(self)
         self.names, self.notes, self.error, self.api_error = None, [], None, None
-        self.hud_view, self.reads = hud_view, [hud_view == "spectator"] * 4
+        self.hud_view, self.reads = hud_view, [hud_view] * 4
         self.match = (None if hud_roster is None else
                       SimpleNamespace(api=False, roster=list(hud_roster), me_team=None,
                                       sides=("ORDER", "CHAOS")))
@@ -380,6 +382,11 @@ class _Champs:
         if self.match is not None and self.match.api:
             return "player" if self.match.me_team else "spectator"
         return self.hud_view
+
+    def view_how(self):
+        if self.view is None:
+            return "раскладка не решена: задано тестом"
+        return f"HUD: задано тестом ({self.view})"
 
     def set_api(self, obs):
         if obs is None:
@@ -552,6 +559,39 @@ def test_unknown_view_runs_no_detector_and_refuses_with_reason(rigged):
     assert row["champs"] is None and st["roster"] is None
     assert p["items"]["roster"]["value"] is None
     assert "вид неизвестен" in st["note"]
+
+
+class _ReadChamps(_Champs):
+    """_Champs с настоящим правилом раскладки LiveChampions по чтениям `reads`."""
+
+    view = lc.LiveChampions.view
+    votes = lc.LiveChampions.votes
+    view_how = lc.LiveChampions.view_how
+
+    def __init__(self, reads, **kw):
+        super().__init__(**kw)
+        self.reads, self._view = deque(reads, maxlen=lc.VIEW_READS), None
+
+
+@pytest.mark.parametrize("reads,want", [
+    ([None] * 8, "unknown"),                                  # портретов нет — не игрок
+    ([None] * 6 + ["spectator"] * 2, "unknown"),              # мало голосов
+    ([None] * 4 + ["spectator"] * 4, "spectator"),
+    (["player"] * 4 + [None] * 4, "player"),                  # панель игрока видна
+])
+def test_passport_view_only_from_positive_signs(rigged, monkeypatch, reads, want):
+    # #799: без положительного признака вида игрока паспорт получает unknown
+    # или spectator, а не player.
+    build, cfg, _ = rigged
+    monkeypatch.setattr(live, "LiveChampions", lambda device: _ReadChamps(reads))
+    s = live.Session("vid", "r", _Source([_ok(0.0), _ok(0.5)]), device="cpu", build=build)
+    st = _finish(s)
+    view = st["passport"]["items"]["view"]
+    assert view["value"] == want and st["view"] == want
+    if want == "unknown":
+        assert view["how"].startswith("раскладка не решена")
+    else:
+        assert view["source"] == "hud" and view["how"].startswith("HUD:")
 
 
 def _api_session(rigged, n: int, forever=None, state_port=None):
