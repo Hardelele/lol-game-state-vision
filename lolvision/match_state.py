@@ -11,8 +11,10 @@
 юнитов детектора — записи records.py — и центр камеры) и ведёт по каждому из
 десяти чемпионов последнее известное:
 
-* где — с миникарты (точно) или с основного вида (имя над плашкой + камера,
-  грубо: без учёта перспективы); у каждого значения время наблюдения и
+* где — с миникарты (точно) или с основного вида: имя над плашкой, точка
+  кадра → карта общей проекцией geometry.Projection (гомография с учётом
+  наклона камеры плюс центр камеры); без проекции или без ответа камеры
+  место с экрана не берётся. У каждого значения время наблюдения и
   источник, поэтому «не виден сейчас» не путается с «нет данных»;
 * жив / мёртв — по панелям HUD; таймер возрождения переводится в момент
   возрождения, и если панели не видно, возрождение выводится по времени;
@@ -37,6 +39,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from lolvision.geometry import Projection
 from lolvision.records import (ChampCtx, DeathEvent, Event, MinimapChamp, RespawnEvent,
                                RosterEvent, UnitRec)
 
@@ -81,7 +84,8 @@ class Champ:
 @dataclass
 class MatchState:
     """Состояние матча; `update` на каждый кадр, `frame_view` — снимок кадра."""
-    view: tuple[float, float] = (0.27, 0.15)   # размер вида камеры, доли миникарты
+    # Кадр → карта (та же, что у трекера юнитов); None — места с экрана нет.
+    proj: Projection | None = None
     champs: dict[str, Champ] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
@@ -164,9 +168,11 @@ class MatchState:
 
     def _from_units(self, t: float, units: list[UnitRec],
                     cam: tuple[float | None, float | None] | None) -> None:
-        """Чемпионы на основном виде с именем: виден сейчас, ХП, грубое место
-        (центр камеры + сдвиг от центра экрана в размерах вида)."""
+        """Чемпионы на основном виде с именем: виден сейчас, ХП и место на
+        карте — через проекцию кадра при этом центре камеры. Нет проекции или
+        ответа камеры — место остаётся прежним: выдумывать его не из чего."""
         px, py = cam if cam is not None else (None, None)
+        placeable = self.proj is not None and px is not None and py is not None
         for u in units:
             if u.kind != "champion" or u.name not in self.champs:
                 continue
@@ -175,9 +181,9 @@ class MatchState:
                 continue                # мёртвого на экране нет: имя спутано
             c.seen, c.hp = t, Fact(u.hp, t, "screen")
             minimap_now = c.pos is not None and c.pos.src == "minimap" and c.pos.t >= t
-            if px is not None and py is not None and not minimap_now:
-                c.pos = Fact((px + (u.x - 0.5) * self.view[0],
-                              py + (u.y - 0.5) * self.view[1]), t, "screen")
+            if placeable and not minimap_now:
+                uv = self.proj.frac_to_map([[u.x, u.y]], (px, py))[0]
+                c.pos = Fact((float(uv[0]), float(uv[1])), t, "screen")
 
     def _infer(self, t: float, new: list[Event]) -> None:
         for c in self.champs.values():

@@ -1,10 +1,18 @@
 from dataclasses import replace
 
+import numpy as np
+
+from lolvision.geometry import Projection
 from lolvision.match_state import FOUNTAIN, MatchState
 from lolvision.records import DeathEvent, MinimapChamp, UnitRec
 
 NAMES = ["Irelia", "Evelynn", "TwistedFate", "Jhin", "Zyra",
          "Volibear", "Hecarim", "Locke", "Jinx", "Lulu"]
+# Кадр 1000×1000 целиком — сцена 100×100; пиксель сцены — 0.001 доли карты,
+# центр кадра — центр камеры (как в test_unit_tracker).
+PROJ = Projection(np.array([[0.001, 0, -0.05], [0, 0.001, -0.05], [0, 0, 1.0]]),
+                  (100, 100), (0, 0, 1000, 1000), (1000, 1000))
+JINX = UnitRec("champion", "CHAOS", .75, .5, .4, .9, "Jinx")
 
 
 def champs(**over):
@@ -75,13 +83,36 @@ def test_death_without_timer_needs_two_frames():
     assert [e.type for e in ev] == ["death"]
 
 
-def test_screen_unit_with_name_is_seen_with_hp():
-    m = MatchState(view=(0.2, 0.1))
-    m.update(0, "game", champs(), [UnitRec("champion", "CHAOS", .75, .5, .4, .9, "Jinx"),
-                                   UnitRec("minion", "ORDER", .1, .1, 1.0, .8)], (.5, .5))
+def test_screen_unit_with_name_is_placed_through_projection():
+    m = MatchState(proj=PROJ)
+    m.update(0, "game", champs(), [JINX, UnitRec("minion", "ORDER", .1, .1, 1.0, .8)], (.5, .5))
     r = view(m, "Jinx")
     assert r.state == "visible" and r.src == "screen" and r.hp == .4
-    assert abs(r.u - .55) < 1e-6 and abs(r.v - .5) < 1e-6
+    # (750, 500) px → (75, 50) px сцены → смещение (0.025, 0) от камеры.
+    assert abs(r.u - .525) < 1e-6 and abs(r.v - .5) < 1e-6
+
+
+def test_screen_place_comes_from_the_projection_not_view_share():
+    # Наклонённая камера: внизу кадра пиксель стоит меньше карты, чем вверху.
+    tilt = Projection(np.array([[0.001, 0, -0.05], [0, 0.001, -0.05], [0, 0.004, 1.0]]),
+                      (100, 100), (0, 0, 1000, 1000), (1000, 1000))
+    m = MatchState(proj=tilt)
+    m.update(0, "game", champs(), [replace(JINX, y=.9)], (.5, .5))
+    want = tilt.frac_to_map([[.75, .9]], (.5, .5))[0]
+    r = view(m, "Jinx")
+    assert (r.u, r.v) == (float(want[0]), float(want[1]))
+    # (75, 90) px сцены: w = 1.36 → смещение (0.0184, 0.0294), а не (0.025, 0.04).
+    assert abs(r.u - .5184) < 1e-3 and abs(r.v - .5294) < 1e-3
+
+
+def test_no_projection_or_camera_gives_no_screen_place():
+    for proj, cam in ((None, (.5, .5)), (PROJ, None), (PROJ, (None, None))):
+        m = MatchState(proj=proj)
+        m.update(0, "game", champs(), [JINX], cam)
+        r = view(m, "Jinx")
+        # Виден и ХП известно, а места нет: выдумывать его не из чего.
+        assert r.state == "visible" and r.hp == .4
+        assert r.u is None and r.src is None
 
 
 def test_roster_switch_needs_several_frames():

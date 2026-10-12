@@ -21,7 +21,7 @@ class _Out:
 def _session(found: bool, view: str) -> live.Session:
     s = object.__new__(live.Session)
     s.start, s.fps, s._n_emit = 0.0, 3.0, 0
-    s.match, s.tracker = None, None
+    s.match, s.tracker, s.proj = None, None, None
     s.minimap = {"box": [0.85, 0.75, 1.0, 1.0], "scale": None, "found": found}
     s.view = view
     s._out = _Out()

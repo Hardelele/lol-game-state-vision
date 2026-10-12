@@ -622,7 +622,8 @@ class Session:
         # Контекст матча: память о чемпионах между кадрами, смерти и
         # возрождения. В строку — снимок на этот кадр и новые события.
         if self.match is None:
-            self.match = MatchState(view=(bw / MM, bh / MM))
+            # Места чемпионов с экрана — той же проекцией, что у трекера.
+            self.match = MatchState(proj=self.proj)
         ev = self.match.update(row["t"], row.get("kind", "game"), mini_champs, units,
                                (row["px"], row["py"]))
         if self.match.order:
