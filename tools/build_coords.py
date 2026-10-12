@@ -37,12 +37,9 @@ import _bootstrap  # noqa: F401 — корень репозитория в sys.p
 from lolvision.paths import COORDS_DATA, VIDEOS
 from lolvision.mask_frames import crop_box, mask_boxes
 from lolvision.minimap_camera import MM, white_mask, find_box_clipped, estimate_box
-from lolvision.minimap_locate import Locator, box_px, search_region
+from lolvision.minimap_locate import LOCATE_MAX, Locator, box_px, search_region
 from lolvision.dataset_io import MINI_STORE, STORE_W
 from lolstream.video_stream import frames, have_nvdec, probe, probe_url, short_stream, write_atomic
-
-LOCATE_MAX = 300   # кадров на поиск миникарты (~40 мс каждый, только до находки)
-
 
 
 def main() -> None:

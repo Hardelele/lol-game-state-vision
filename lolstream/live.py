@@ -86,7 +86,9 @@ from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
 from lolvision.unit_net import LIVE_NET, REF_H, REF_W, UnitNetRunner, live_net
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
-from lolvision.minimap_locate import Locator, box_px
+# Поиск миникарты (#785): ~40 мс на кадр «игра», только пока не найдена; не
+# нашлась за LOCATE_MAX попыток — остаётся раскладка.
+from lolvision.minimap_locate import LOCATE_MAX, Locator, box_px
 from lolstream.live_champions import LiveChampions
 from lolvision.match_state import MatchState
 from lolvision.records import SCHEMA, UnitRec, dicts
@@ -94,9 +96,6 @@ from lolvision.records import SCHEMA, UnitRec, dicts
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
-# Поиск миникарты (minimap_locate.py, #785): ~40 мс на кадр «игра», только
-# пока не найдена. Не нашлась за столько попыток — остаётся раскладка.
-LOCATE_MAX = 300
 # Типы сцены «игра под оверлеем»: миникарта видна, сцена закрыта окном.
 OVERLAY_KINDS = ("shop", "tab")
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
