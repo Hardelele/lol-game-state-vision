@@ -18,3 +18,8 @@ scipy==1.17.0
 # YouTube ingest: build_coords.py --url, live.py, channels.py.
 # YouTube changes often; an outdated yt-dlp is the usual cause of failures.
 yt-dlp==2026.8.19
+# Screen capture of the game window: lolstream/frame_source.py, tools/bench_screen.py
+# (Windows only, imported lazily; the YouTube path does not need them).
+# dxcam (DXGI Desktop Duplication) is preferred; mss (GDI) is the announced fallback.
+dxcam==0.3.0; sys_platform == "win32"
+mss==10.2.0; sys_platform == "win32"

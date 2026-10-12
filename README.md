@@ -167,6 +167,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `probe_hud.py` | Robustness check of any coordinate model against mask, HUD, crop, resolution and partial-frame changes; share of frames the "not a game" head rejects |
 | `build_not_game.py`, `train_not_game.py` | Frames of streams and other games from a YouTube stream; the "game / not a game" frame head on top of the frozen patch model |
 | `bench_models.py` | Speed and memory of the models, GPU/CPU and the full live path |
+| `bench_screen.py` | Screen capture time per frame, dxcam (DXGI) vs mss, on the game window or the whole monitor: median and p95 ([docs/screen-source.md](docs/screen-source.md)) |
 | `build_coords.py` | Dense dataset "frame → camera position" from a local file or a YouTube stream (`--url`) |
 | `minimap_camera.py` | Camera position from the minimap for the reference frames in `dataset/videos/` |
 | `mask_frames.py` | HUD/minimap mask applied to frames, for a visual check of a layout |
@@ -200,6 +201,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | Module | Purpose |
 | --- | --- |
 | `video_stream.py` | A local file or a YouTube video as a stream of frames (yt-dlp, ffmpeg, NVDEC) |
+| `frame_source.py` | Frame source interface for the live mode: a YouTube video or file, or the game window on screen (dxcam with an announced mss fallback, pause when unfocused or minimized, fps limit); "no frame" is a state with a reason ([docs/screen-source.md](docs/screen-source.md)) |
 | `live.py` | Live mode: frames from a stream → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk |
 | `channels.py`, `video_side.py` | Channel catalog, video lists, ingest jobs; player role and side from the video description |
 | `serve_inspect.py`, `webapp/` | Local web viewer (standard library HTTP server, plain HTML/JS) |
