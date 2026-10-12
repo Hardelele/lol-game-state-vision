@@ -33,6 +33,7 @@ loopback, несколько раз в секунду:
 | --- | --- | --- |
 | состав, жив / мёртв, таймер возрождения, место, ХП, время матча, расхождения источников | контекст матча `lolvision.match_state.MatchState` (приоритет API > HUD > зрение, счётчик `conflicts`) | снимок `MatchView` (`match_view(ms, at)`) |
 | ник, уровень, предметы, счёт, золото и статы своего игрока, режим, карта, своя команда | Live Client API (`LiveStatus`) — без конкуренции со зрением | прямо |
+| недавние события матча (убийства, драконы, башни) | Live Client API (`GameSnapshot.events`) | ники → чемпионы по составу API (`recent_events`, #803) |
 | можно ли читателю зрения отвечать (имена над плашками, детектор юнитов) | паспорт трансляции `lolvision.passport.Passport` | `Passport.verdict(reader)` |
 | свои / враги / сам и сторона у юнитов и треков | `lolvision.sides` (поля `relation`, `side` записей `UnitRec` / `TrackRec`) | поля записи как есть |
 | камера, тип сцены, юниты, треки | кадр сеанса live | `VisionFrame` |
@@ -67,7 +68,7 @@ coach» ниже).
 незнакомые поля, а не отказывать из-за них. Машинная схема ниже закрытая
 (`additionalProperties: false`) — это проверка самого сервиса на опечатки,
 а не требование к клиентам; новое поле добавляется в неё вместе с кодом
-(так добавлено `me.position`, #802). Исключение — записи
+(так добавлены `me.position`, #802, и `events`, #803). Исключение — записи
 юнитов и треков и пункты паспорта: это `to_dict()` записей lolvision как
 есть, их поля версионируются там (`records.SCHEMA`, docs/passport.md), а
 схема сервиса проверяет только поля, на которые он опирается. Клиент,
@@ -130,6 +131,7 @@ unix-времени — `t − age`.
 | `sources` | объект | состояние входов (ниже) |
 | `passport` | факт | паспорт трансляции |
 | `match` | объект фактов | матч |
+| `events` | факт: массив | недавние события матча по API, без ников (#803) |
 | `me` | объект фактов | свой игрок |
 | `champions` | факт: массив | десять чемпионов |
 | `enemies` | факт: массив | враги с местом и давностью |
@@ -193,6 +195,57 @@ unix-времени — `t − age`.
 | `map` | целое | api | номер карты (11 — Ущелье) |
 | `side` | `ORDER` / `CHAOS` | api | сторона своего игрока (activePlayer среди allPlayers) |
 | `state` | `no_game` / `loading` / `in_game` / `ended` / `error` | api | состояние API (есть и без снимка игры) |
+
+### `events` — недавние события матча
+
+Чтобы ответить «что сейчас произошло»: кто меня убил, кто взял дракона или
+башню (#803). Поле добавлено в schema 1 (новое поле — та же версия).
+
+Факт (`source = "api"`, `age` — давность снимка API): массив событий Live
+Client **старые → новые**, не больше `EVENTS_MAX` = 20, за последние
+`EVENTS_WINDOW` = 180 с игрового времени до `match.time` (время матча
+неизвестно — до времени последнего снимка API). Служебные `GameStart` и
+`MinionsSpawning` не входят. Событий в окне нет — пустой массив. Отказ: API
+не подключён или снимка игры нет — причина API (как у `match.mode`); снимок
+есть, но игра не идёт (`loading`) — «не в игре: Live Client loading (…)».
+После конца игры (`ended`) список остаётся — последний снимок, с `GameEnd`.
+
+| Поле элемента | Тип | Смысл |
+| --- | --- | --- |
+| `time` | число, с | игровое время события (`EventTime`, до 0,1 с) |
+| `ago` | число, с / `null` | `match.time − time` (не меньше 0); время матча неизвестно — `null` |
+| `kind` | строка | `EventName` API как есть: `ChampionKill`, `FirstBlood`, `Multikill`, `Ace`, `DragonKill`, `HeraldKill`, `BaronKill`, `HordeKill` (личинки), `AtakhanKill`, `TurretKilled`, `InhibKilled`, `InhibRespawningSoon`, `InhibRespawned`, `FirstBrick`, `GameEnd`… — незнакомый вид проходит как есть |
+| `killer` | who / `null` | кто: `KillerName`; у `FirstBlood` — `Recipient`, у `Ace` — `Acer`; поля нет — `null` |
+| `victim` | who / `null` | кого: у `ChampionKill` — `VictimName`; у `TurretKilled` — сама башня (`other = "turret"` и чья); у `DragonKill`, `HeraldKill`, `BaronKill`, `HordeKill`, `AtakhanKill` — `{"champion": null, "relation": null, "other": "monster"}`; у остальных (`Multikill`, `Ace`, `InhibKilled`, `FirstBlood`…) — `null` |
+| `assisters` | массив who | `Assisters` по порядку API; нет — `[]` |
+| `detail` | строка / `null` | не-ники из события через «, » в таком порядке: `DragonType` (`Fire`, `Elder`…), `KillStreak` (`"2"`…), `TurretKilled` / `InhibKilled` / `InhibRespawned` / `InhibRespawningSoon` (имя объекта как в API: `Turret_TOrder_L1_P3_1242677625_0`), `AcingTeam` (`ORDER` / `CHAOS`), `Result` у `GameEnd` (`Win` / `Lose`), `Stolen` — слово `Stolen`, только если украден. Ничего нет — `null` |
+
+who — участник события, **без ника**:
+
+```json
+{"champion": "Darius", "relation": "enemy", "other": null}
+{"champion": null, "relation": "ally", "other": "turret"}
+```
+
+| Поле | Значения | Смысл |
+| --- | --- | --- |
+| `champion` | Id Data Dragon / `null` | чемпион игрока с этим ником; не чемпион или не нашёлся — `null` |
+| `relation` | `self` / `ally` / `enemy` / `null` | к своему игроку: у чемпиона — `relation_to_me` (как `champions[].relation`); у башни и миньона — по команде в имени объекта (`_TOrder_`, `_T1_`, `_T100`…): своя — `ally`, чужая — `enemy`; монстр, неопознанное, своего игрока нет — `null` |
+| `other` | `null` / `turret` / `minion` / `monster` / `unknown` | не чемпион: `Turret_…` — `turret`, имя с `Minion` — `minion`, `SRU_…` — `monster`; ник не нашёлся в составе или имя незнакомое — `unknown` |
+
+**Ники не выводятся никогда.** `KillerName`, `VictimName`, `Assisters`,
+`Acer`, `Recipient` — ники игроков; они сопоставляются с составом API
+(`PlayerRecord.riot_id`, «Имя#тег» или summonerName): сперва точное
+совпадение, иначе — единственный игрок с той же частью до `#` (в событиях
+своей игры ник идёт без тега). Не нашёлся или таких игроков двое —
+`{"champion": null, "relation": null, "other": "unknown"}`. Сырые имена
+объектов-убийц (`Turret_T2_C_05_A`, `Minion_T200L2S29N0180`, `SRU_Baron…`)
+тоже не выводятся — только метка `other`. На журналах двух своих игр
+2026-10-12 (52 и 70 `ChampionKill`) сопоставлены все 378 упоминаний
+игроков в убийствах, счёт убийств по чемпионам совпал со `scores.kills` API.
+
+Поток SSE `game` (ниже) — `EventRecord.to_dict()` как есть, то есть **с
+никами**; обезличенный вид — только это поле.
 
 ### `me` — свой игрок
 
@@ -326,6 +379,20 @@ unix-времени — `t − age`.
   "side":  {"value": "ORDER", "source": "api", "age": 0.2, "reason": null},
   "state": {"value": "in_game", "source": "api", "age": 0.2, "reason": null}
  },
+ "events": {"source": "api", "age": 0.2, "reason": null, "value": [
+  {"time": 227.0, "ago": 110.4, "kind": "ChampionKill",
+   "killer": {"champion": "Amumu", "relation": "ally", "other": null},
+   "victim": {"champion": "Lux", "relation": "enemy", "other": null},
+   "assisters": [{"champion": "Yone", "relation": "ally", "other": null}], "detail": null},
+  {"time": 327.9, "ago": 9.4, "kind": "ChampionKill",
+   "killer": {"champion": "Lux", "relation": "enemy", "other": null},
+   "victim": {"champion": "Yone", "relation": "ally", "other": null},
+   "assisters": [], "detail": null},
+  {"time": 333.2, "ago": 4.1, "kind": "ChampionKill",
+   "killer": {"champion": "Darius", "relation": "enemy", "other": null},
+   "victim": {"champion": "Zilean", "relation": "self", "other": null},
+   "assisters": [], "detail": null}
+ ]},
  "me": {
   "riot_id":    {"value": "Player1#0000", "source": "api", "age": 0.2, "reason": null},
   "champion":   {"value": "Zilean", "source": "api", "age": 0.2, "reason": null},
@@ -397,7 +464,7 @@ unix-времени — `t − age`.
 }
 ```
 
-`"…": "…"` — пропуск в примере, не поле. Без API: в `match` и `me` — отказы «Live Client API не подключён к
+`"…": "…"` — пропуск в примере, не поле. Без API: в `match`, `events` и `me` — отказы «Live Client API не подключён к
 сервису», состав — по HUD (`source = "hud"`), `relation` и `enemies` —
 отказ «своя сторона неизвестна». Без кадра: `camera`, `scene`, `units`,
 `tracks`, `on_screen` — отказ «нет обработанного кадра…», `sources.frames`
@@ -438,7 +505,7 @@ data: {"schema":1,"t":1791807815.383,"data":{…}}
 | --- | --- | --- |
 | `hello` | первым сообщением после подключения (`id: 0`) | снимок целиком |
 | `state` | не чаще раза в `state_every` с (по умолчанию 1 с) | снимок целиком |
-| `game` | новое событие Live Client (по `EventID`; новая игра — счёт заново) | `live_client.EventRecord.to_dict()`: `event_id, name, time, data, source` |
+| `game` | новое событие Live Client (по `EventID`; новая игра — счёт заново) | `live_client.EventRecord.to_dict()`: `event_id, name, time, data, source` — `data` с никами как в API; без ников — поле снимка `events` |
 | `vision` | новое событие контекста матча (`death` — с `src` у смерти по API, `respawn`, `roster`) | `records.Event.to_dict()` + `source: "inferred"` |
 | `source` | сменилось `state` одного из `sources` (`frames`, `vision`, `match`, `api`) | `sources` снимка |
 
@@ -493,7 +560,9 @@ srv.url; srv.hub.snapshot(); srv.close()
 отказ — причиной) и `to_source_facts(snapshot)` —
 короткий список фактов `{id, text, source, observed_at}` под
 `coach.analysis_types.SourceFact` (время матча, сторона, свой чемпион и
-таймер, враги: мёртв или место с давностью). Отказы в факты не
+таймер, враги: мёртв или место с давностью, `events.recent` — последние
+пять событий одной строкой: «ChampionKill Darius (враг) → Zilean (вы), 4 с
+назад»; `event_text(e)` — строка одного элемента `events`). Отказы в факты не
 превращаются. В coach его место — `Observer._analyze_once()`
 (`facts=` в `analyze`) и `visual_context()`; сам coach этой задачей не
 меняется.
