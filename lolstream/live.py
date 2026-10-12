@@ -107,6 +107,7 @@ KIND_HZ = 2.0
 UNIT_NET_NOBARS = RUNS / "units" / "net-nobars2" / "model.pt"
 UNIT_NETS = ((UNIT_NET_NOBARS, 0.4), (DEFAULT_NET, 0.3))
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
+STOP_WAIT = 20.0         # с: сколько ждать остановки прежнего сеанса перед новым
 
 
 # ---------- модели ----------
@@ -297,6 +298,10 @@ class Session:
         # Ошибка потока состава (#788): поток жив, но состав мог не читаться.
         champs_error = self._champs.error if self._champs is not None else None
         note = self.note
+        # Раскладка может смениться по ходу ролика: в note — текущая, а не
+        # дописанная однажды (прежде «вид игрока» оставался навсегда).
+        if self.view == "player":
+            note += " · вид игрока"
         if champs_error:
             ago = round(time.time() - champs_error["time"])
             note += f" · состав: ошибка {ago} с назад — {champs_error['text']}"
@@ -313,6 +318,10 @@ class Session:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def join(self, timeout: float) -> None:
+        """Дождаться конца работы сеанса (после stop)."""
+        self._th.join(timeout)
 
     # ---------- работа ----------
 
@@ -513,7 +522,6 @@ class Session:
                     unit_model.set_zone(keep, valid)
                     self.tracker.valid = valid_src
                     self.view = view
-                    self.note += " · вид игрока" if view == "player" else ""
             ms["full_img"] = _full_small(fr, fr_dev)
             n_frame += 1
 
@@ -752,9 +760,11 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
     run = run or DEFAULT_RUN
     run_checkpoint(run)                  # путь вне runs/ отвергается сразу
     with _reg:
+        stopped = []
         for other in list(_sessions.values()):
-            if other.vid != vid:
+            if other.vid != vid and other.state.active:
                 other.stop()
+                stopped.append(other)
         # Кадры закрытого сеанса ещё можно листать, но держать их все вечно
         # нельзя: две тысячи кадров — это около 120 МБ. Оставляем последние
         # два ролика, остальные забываем.
@@ -768,6 +778,12 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
             if old.run == run:
                 return old.status()
             old.stop()                   # тот же ролик, но другой моделью
+            stopped.append(old)
+        # Новый сеанс захватывает CUDA graph; если старый в это время ещё
+        # гоняет свои, захват падает (два сеанса подряд оба кончались
+        # «сбоем»). Ждём, пока остановленные отпустят видеокарту.
+        for other in stopped:
+            other.join(STOP_WAIT)
         s = Session(vid, run, fps, start_sec)
         _sessions[vid] = s
     return s.status()

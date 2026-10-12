@@ -73,8 +73,12 @@ ROSTER_FRAMES = 8         # по скольким последним кадра�
 ROSTER_MIN = 2
 # Раскладка ролика (#786) — по последним чтениям портретов на игровых кадрах:
 # у наблюдателя таблица портретов есть почти всегда, у вида игрока её нет.
-# Решение — когда чтений не меньше VIEW_MIN, по большинству из VIEW_READS.
-VIEW_READS, VIEW_MIN = 8, 4
+# Решение — когда чтений не меньше VIEW_MIN, по большинству из VIEW_READS;
+# принятое решение меняется, только если против него не меньше VIEW_FLIP
+# чтений: кадры со скрытым HUD (затемнение, заставка, клавиша H) у
+# наблюдателя иначе дёргают раскладку туда-обратно (j8_-kWWh5qM: 15 из 54
+# кадров без таблицы).
+VIEW_READS, VIEW_MIN, VIEW_FLIP = 8, 4, 6
 # Полосы боковых панелей в кадре 1080p — всё, что читает hud_panels.
 PANEL_COLS = ((0, 80), (1840, 1920))
 PANEL_ROWS = (140, 680)
@@ -199,6 +203,7 @@ class LiveChampions:
         self.match: Match | None = None
         self.hud: deque = deque(maxlen=ROSTER_FRAMES)
         self.reads: deque = deque(maxlen=VIEW_READS)        # был ли HUD наблюдателя
+        self._view: str | None = None                       # принятая раскладка
         self.next_roster = 0.0
         self.prev: list[tuple[str, str, float, float]] = []   # имя, команда, x, y (px)
         self.bgr = np.zeros((1080, 1920, 3), np.uint8)       # только полосы панелей
@@ -217,9 +222,16 @@ class LiveChampions:
     @property
     def view(self) -> str | None:
         """«spectator», «player» или None — чтений пока мало."""
-        if len(self.reads) < VIEW_MIN:
+        n, spec = len(self.reads), sum(self.reads)
+        if n < VIEW_MIN:
             return None
-        return "spectator" if sum(self.reads) * 2 >= len(self.reads) else "player"
+        prev = self._view
+        if prev == "spectator" and n - spec < VIEW_FLIP:
+            return prev
+        if prev == "player" and spec < VIEW_FLIP:
+            return prev
+        self._view = "spectator" if spec * 2 >= n else "player"
+        return self._view
 
     def close(self) -> None:
         self._closed = True
