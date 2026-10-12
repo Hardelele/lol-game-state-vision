@@ -257,18 +257,45 @@ function render() {
     $("vKind").innerHTML = `<span class="kchip" style="background:${color}"></span>${esc(name)}` +
       (f.kind_p !== undefined ? ` <i>${num(f.kind_p, 2)}</i>` : "");
   }
+  const off = f.off || {};
   $("fUnits").classList.toggle("hidden", f.units === undefined);
-  if (f.units !== undefined) {
-    const n = (k, t) => f.units.filter((u) => u.kind === k && (!t || u.team === t)).length;
-    $("vUnitsN").innerHTML = ["champion", "minion", "ward"].map((k) =>
-      `<span class="uo">${n(k, "ORDER")}</span>/<span class="uc">${n(k, "CHAOS")}</span>`)
-      .join(" · ");
+  if (f.units === null) {
+    // Паспорт отказал детектору (вид неизвестен, нет модели…): не ноль, а «нет».
+    $("vUnitsN").innerHTML = `<span class="faint">нет — ${esc(off.units || "не считались")}</span>`;
+  } else if (f.units !== undefined) {
+    // На виде игрока — свои / враги / сам (relation), у наблюдателя — стороны.
+    const player = f.view === "player";
+    const n = (k, test) => f.units.filter((u) => u.kind === k && test(u)).length;
+    $("vUnitsN").innerHTML = ["champion", "minion", "ward"].map((k) => player
+      ? `<span class="ua">${n(k, (u) => u.relation === "ally" || u.relation === "self")}</span>/` +
+        `<span class="ue">${n(k, (u) => u.relation === "enemy")}</span>` +
+        `<span class="un">/${n(k, (u) => u.relation == null)}</span>`
+      : `<span class="uo">${n(k, (u) => u.team === "ORDER")}</span>/` +
+        `<span class="uc">${n(k, (u) => u.team === "CHAOS")}</span>`).join(" · ");
+    $("fUnits").title = player
+      ? "юниты на основном виде: чемпионы · миньоны · варды (свои / враги / не определено)"
+      : "юниты на основном виде: чемпионы · миньоны · варды (синие / красные)";
   }
-  const champs = S.champs && f.champs !== undefined;
+  const champs = S.champs && f.champs != null;
   $("champSvg").classList.toggle("hidden", !champs);
   if (champs) drawChamps(f);
   $("fRoster").classList.toggle("hidden", f.champs === undefined);
-  if (f.champs !== undefined) $("vRoster").innerHTML = rosterHtml(f.champs, f.ctx);
+  if (f.champs === null) {
+    $("vRoster").innerHTML = `<span class="faint">нет — ${esc(off.minimap_icons || off.hud_roster || "состав не решён")}</span>`;
+  } else if (f.champs !== undefined) $("vRoster").innerHTML = rosterHtml(f.champs, f.ctx);
+  // Live Client в контексте: время матча (или почему его нет), расхождения
+  // источников, отказ снимка; и читатели, которым паспорт отказал.
+  $("fApi").classList.toggle("hidden", f.game_time === undefined);
+  if (f.game_time !== undefined) $("vApi").innerHTML = apiFrameHtml(f);
+  const offN = Object.keys(off).length;
+  $("fOff").classList.toggle("hidden", f.off === undefined);
+  if (f.off !== undefined) {
+    $("vOff").innerHTML = offN ? `<span class="warn">${offN}</span> · ` +
+      Object.keys(off).map((k) => `<span title="${esc(off[k])}">${esc(k)}</span>`).join(", ")
+      : "нет";
+    $("fOff").title = "читатели, которым паспорт трансляции отказал на этом кадре:\n" +
+      (Object.entries(off).map(([k, v]) => `${k}: ${v}`).join("\n") || "все отвечают");
+  }
   const evs = recentEvents(6);
   $("fEvents").classList.toggle("hidden", !evs.length);
   if (evs.length) $("vEvents").innerHTML = evs.map(eventHtml).join("");
@@ -283,7 +310,7 @@ function render() {
   $("vErr").textContent = !truth ? "нет истины" : answered ? f.err.toFixed(3)
     : (notGame ? "не игра" : "нет ответа");
   $("vErr").className = "big " + (truth ? errClass(f.err) : "");
-  $("vErr").title = truth ? "" : "миникарта не найдена в кадре — сверять не с чем";
+  $("vErr").title = truth ? "" : (f.truth_reason || "миникарта не найдена в кадре — сверять не с чем");
   $("vUnits").textContent = answered && truth ? `${Math.round(f.err * S.mapUnits)} ед.` : "";
   $("vTrue").textContent = truth ? `${f.cx.toFixed(3)}, ${f.cy.toFixed(3)}` : "—";
   $("vPred").textContent = `${num(f.px, 3)}, ${num(f.py, 3)}`;
@@ -319,17 +346,35 @@ function render() {
 // чемпион — кольцо с полосой ХП и именем, миньон — точка с короткой полосой,
 // вард — ромб. Записи строки кадра — lolvision/records.py (schema 1); имя
 // чемпиона (live_champions.py) может быть null.
+// Цвет юнита или трека. На виде игрока цвета относительны (sides.py, #790):
+// свои / враги / сам — по relation, а не по team детектора (тот выучен на
+// наблюдателе); relation null — серый, причина — в подсказке.
+const REL_CLASS = { self: "us", ally: "ua", enemy: "ue" };
+function unitClass(view, r) {
+  if (view === "player") return REL_CLASS[r.relation] || "un";
+  return r.team === "ORDER" ? "uo" : "uc";
+}
+
+function sidesTip(view, r) {
+  if (view !== "player") return r.team;
+  const rel = r.relation ? { self: "сам", ally: "свой", enemy: "враг" }[r.relation]
+    : `не определено: ${r.relation_reason || "?"}`;
+  const side = r.side ? `${r.side} (${r.side_src || "?"})` : `сторона: ${r.side_reason || "?"}`;
+  return `${rel} · ${side} · детектор ${r.team}`;
+}
+
 function drawUnits(f) {
   const W = 640, H = 360;
   let s = "";
   // id трека (unit_tracker.py, #782) — у видимых треков место в кадре то же,
   // что у юнита детектора.
   const ids = new Map((f.tracks || []).filter((t) => t.state === "seen").map((t) => [`${t.x},${t.y}`, t.id]));
-  for (const { kind: k, team, x: ux, y: uy, hp, score: sc, name } of f.units || []) {
-    const x = ux * W, y = uy * H, c = team === "ORDER" ? "uo" : "uc";
+  for (const u of f.units || []) {
+    const { kind: k, x: ux, y: uy, hp, score: sc, name } = u;
+    const x = ux * W, y = uy * H, c = unitClass(f.view, u);
     const who = name ? `${name} · ` : "";
     const id = ids.get(`${ux},${uy}`);
-    const tip = `<title>${id ? `${esc(id)} · ` : ""}${esc(who)}${k} · ${team} · ХП ${Math.round(hp * 100)}% · ${num(sc, 2)}</title>`;
+    const tip = `<title>${id ? `${esc(id)} · ` : ""}${esc(who)}${k} · ${esc(sidesTip(f.view, u))} · ХП ${Math.round(hp * 100)}% · ${num(sc, 2)}</title>`;
     if (k === "champion") {
       s += `<g class="unit ${c}">${tip}<circle cx="${x}" cy="${y}" r="13"/>` +
         `<rect class="hpbg" x="${x - 14}" y="${y - 24}" width="28" height="4"/>` +
@@ -382,11 +427,12 @@ function drawChamps(f) {
   // Треки миньонов и вардов на миникарте — поверх иконок: волна часто стоит
   // прямо под чемпионом. Видимые — ярко, ушедшие из кадра (трекер помнит,
   // где они должны быть) — тускло.
-  for (const { id, kind: k, team, state: st, u, v, hp, age } of f.tracks || []) {
+  for (const tr of f.tracks || []) {
+    const { id, kind: k, state: st, u, v, hp, age } = tr;
     if (k === "champion") continue;
-    const c = team === "ORDER" ? "uo" : "uc";
+    const c = unitClass(f.view, tr);
     s += `<circle class="trk ${c} ${st}" cx="${u * 256}" cy="${v * 256}" r="${k === "ward" ? 2.6 : 2}">` +
-      `<title>${esc(id)} · ${st === "seen" ? "виден" : `не виден ${age} с`} · ХП ${Math.round(hp * 100)}%</title></circle>`;
+      `<title>${esc(id)} · ${esc(sidesTip(f.view, tr))} · ${st === "seen" ? "виден" : `не виден ${age} с`} · ХП ${Math.round(hp * 100)}%</title></circle>`;
   }
   $("champSvg").innerHTML = s;
 }
@@ -404,10 +450,26 @@ function recentEvents(n) {
 function eventHtml(e) {
   const tm = `${Math.floor(e.t / 60)}:${String(Math.floor(e.t % 60)).padStart(2, "0")}`;
   const c = e.team === "ORDER" ? "uo" : e.team === "CHAOS" ? "uc" : "";
-  const what = e.type === "death" ? `☠ ${esc(e.name)}${e.respawn_in != null ? ` <i>${e.respawn_in} с</i>` : ""}`
-    : e.type === "respawn" ? `↺ ${esc(e.name)}${e.src === "inferred" ? " <i>вывод</i>" : ""}`
+  const api = e.src === "api" ? " <i>API</i>" : "";
+  const what = e.type === "death" ? `☠ ${esc(e.name)}${e.respawn_in != null ? ` <i>${e.respawn_in} с</i>` : ""}${api}`
+    : e.type === "respawn" ? `↺ ${esc(e.name)}${e.src === "inferred" ? " <i>вывод</i>" : ""}${api}`
     : e.type === "roster" ? "новый состав" : esc(e.type);
   return `<span class="ev ${c}"><b>${tm}</b> ${what}</span>`;
+}
+
+// Время матча из Live Client (или почему его нет), расхождения источников
+// контекста (conflicts: вид → счёт за матч) и отказ снимка API.
+function apiFrameHtml(f) {
+  const g = f.game_time;
+  let s = g.value != null ? `<b>${fmtTime(g.value)}</b> <i>${esc(g.src)}</i>`
+    : `<span class="faint" title="${esc(g.reason || "")}">время матча: нет</span>`;
+  const cf = Object.entries(f.conflicts || {});
+  if (cf.length) {
+    s += ` · <span class="warn" title="расхождения источников за матч (#781)">` +
+      cf.map(([k, n]) => `${esc(k)} ${n}`).join(", ") + "</span>";
+  }
+  if (f.api_refused) s += ` · <span class="warn">снимок API не принят: ${esc(f.api_refused)}</span>`;
+  return s;
 }
 
 // Состав: синие, затем красные; мёртвый — серый портрет с таймером,
@@ -1327,6 +1389,31 @@ function liveSource(d) {
   L.api = d.api || null;
   L.apiReason = d.api_reason || null;
   if (d.source) L.backend = d.source.backend_note || d.source.backend || null;
+  L.passport = d.passport || null;
+  L.stateUrl = d.state_url || null;
+  L.stateReason = d.state_reason || null;
+}
+
+// Кусок строки потока про паспорт трансляции (#799): вид и откуда он, и
+// сколько читателей отключено — причины в подсказке.
+function passportBits(L) {
+  const p = L.passport;
+  if (!p) return [];
+  const v = p.items.view;
+  const name = { player: "вид игрока", spectator: "наблюдатель", unknown: "вид неизвестен" }[v.value] || v.value;
+  const tip = [`вид: ${v.how || v.source}`, `миникарта: ${p.items.minimap.how || "—"}`,
+    `состав: ${p.items.roster.value || "нет"} (${p.items.roster.how || "—"})`,
+    ...p.disabled.map((d) => `✕ ${d.title}: ${d.reason}`)].join("\n");
+  const n = p.disabled.length;
+  return [`<span${v.value === "unknown" ? ' class="warn"' : ""} title="${esc(tip)}">${esc(name)}` +
+    (n ? ` · отключено ${n}` : "") + "</span>"];
+}
+
+// Адрес сервиса состояния для coach (state_service.py) или почему его нет.
+function stateBits(L) {
+  if (L.stateUrl) return [`<a href="${esc(L.stateUrl)}/state" target="_blank" title="снимок состояния для coach">состояние</a>`];
+  return L.source === "screen" && L.stateReason
+    ? [`<span class="faint">состояние: ${esc(L.stateReason)}</span>`] : [];
 }
 
 // Кусок строки потока про источник: есть ли кадр, а если нет — почему
@@ -1369,7 +1456,7 @@ function liveMeta() {
   const train = (L.trained_on || []).includes(L.id);
   const bits = [`<span class="live">ПОТОК · ${esc(L.state)}</span>`];
   bits.push(`<b>${esc(L.source === "screen" ? "свой экран" : L.title)}</b>`);
-  bits.push(...sourceBits(L), ...apiBits(L));
+  bits.push(...sourceBits(L), ...apiBits(L), ...passportBits(L), ...stateBits(L));
   bits.push(`модель <code>${esc(L.run)}</code>` +
     (L.model ? ` <i>${esc(L.model)}</i>` : ""));
   if (S.frames.length) {
