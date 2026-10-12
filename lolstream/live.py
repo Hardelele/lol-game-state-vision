@@ -64,20 +64,21 @@ from lolvision.dataset_io import MINI_STORE, STORE_W
 from lolstream.video_stream import probe_url, frames as frame_stream
 from lolstream.channels import check_fps, youtube_id
 from lolvision.coord_model import expected_point, peak_point, spread
-from lolvision.geometry import MAP_UNITS, load_projection
-from lolvision.unit_tracker import Projection, UnitTracker
+from lolvision.geometry import MAP_UNITS, Projection
+from lolvision.unit_tracker import UnitTracker
 from lolvision.mask_frames import crop_box, mask_boxes
 from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
                                       find_box_clipped, estimate_box)
 from lolvision.patch_infer import PatchInfer
 from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
-from lolvision.unit_net import DEFAULT_NET, REF_H, REF_W, UnitNetRunner
+from lolvision.unit_net import LIVE_NET, REF_H, REF_W, UnitNetRunner, live_net
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolvision.minimap_locate import Locator, box_px
 from lolstream.live_champions import LiveChampions
 from lolvision.match_state import MatchState
+from lolvision.records import SCHEMA, UnitRec, dicts
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -99,13 +100,6 @@ FULL_STORE_W = 640
 # ~14 мс) — тогда примерно KIND_HZ раз в секунду потока, между этим берём
 # прошлый ответ.
 KIND_HZ = 2.0
-# Детектор юнитов без опоры на полоски ХП (#773, docs/unit-detection.md):
-# с полосками миньоны не хуже прежнего, без них — 0.79 против 0.015. Его
-# рабочий порог 0.4 (у прежней сети 0.3). Нет файла — прежняя сеть. Выбор —
-# при каждом запуске сеанса (unit_net_choice), а не при загрузке модуля:
-# сервер живёт дольше, чем файлы моделей на месте.
-UNIT_NET_NOBARS = RUNS / "units" / "net-nobars2" / "model.pt"
-UNIT_NETS = ((UNIT_NET_NOBARS, 0.4), (DEFAULT_NET, 0.3))
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 STOP_WAIT = 20.0         # с: сколько ждать остановки прежнего сеанса перед новым
 
@@ -282,6 +276,7 @@ class Session:
         self._n_emit = 0
         self.match: MatchState | None = None   # контекст матча (#780)
         self.tracker: UnitTracker | None = None  # id юнитов между кадрами (#782)
+        self.proj: Projection | None = None    # кадр → карта (есть, когда есть юниты)
         self._out = ThreadPoolExecutor(1, thread_name_prefix="live-out")
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
@@ -386,22 +381,22 @@ class Session:
         # где, чьи, доля ХП. Маска HUD — та же, что при обучении; у краёв HUD
         # ответы отбрасываются (там сеть не училась).
         unit_model = None
-        unit_net, unit_thr = unit_net_choice()
+        # Боевой детектор и его порог выбираются в одном месте — unit_net.live_net.
+        unit_net, unit_thr = live_net()
         if not self.device.startswith("cuda"):
             self.note += " · без юнитов (нет видеокарты)"
         elif unit_net is None:
-            self.note += f" · без юнитов (нет {_rel(UNIT_NETS[0][0])})"
+            self.note += f" · без юнитов (нет {_rel(LIVE_NET)})"
         else:
             keep, valid, valid_src = _unit_zone(w, h)
             unit_model = UnitNetRunner(unit_net, self.device, keep=keep, thr=unit_thr,
                                        valid=valid, size=(h, w))
             # Трекер юнитов (#782): сопоставление на карте через проекцию
             # экрана и центр камеры; «должен быть виден» — та же зона ответов.
-            hp_, scene_size = load_projection()
-            self.tracker = UnitTracker(Projection(hp_, scene_size, (cx0, cy0, cx1, cy1)),
-                                       frame_size=(w, h), valid=valid_src)
-            self.note += (" · юниты" if unit_net == UNIT_NETS[0][0] else
-                          f" · юниты (прежняя сеть: нет {_rel(UNIT_NETS[0][0])})")
+            self.proj = Projection.load((cx0, cy0, cx1, cy1), (w, h))
+            self.tracker = UnitTracker(self.proj, valid=valid_src)
+            self.note += (" · юниты" if unit_net == LIVE_NET else
+                          f" · юниты (прежняя сеть: нет {_rel(LIVE_NET)})")
         # Зона детектора юнитов — под раскладку ролика (#786): пока раскладка
         # не решена — наблюдатель, у вида игрока своя маска от миникарты.
         zone = ("spectator", None)
@@ -496,10 +491,8 @@ class Session:
             if unit_model is not None:
                 t4 = time.perf_counter()
                 units = unit_model.units(fr_dev)
-                ms["units_list"] = [
-                    [u.kind, u.team, round(u.x / w, 4), round(u.y / h, 4), round(u.hp, 2),
-                     round(u.score, 2)] for u in units]
                 ms["units"] = (time.perf_counter() - t4) * 1000
+            names = None
             if champs is not None and (game or overlay):
                 t5 = time.perf_counter()
                 if game:
@@ -509,10 +502,12 @@ class Session:
                 t6 = time.perf_counter()
                 ms["mini"] = (t6 - t5) * 1000
                 if units and game:
-                    # Имя — седьмым полем юнита: старые поля на месте.
-                    for row_u, name in zip(ms["units_list"], champs.who(fr, units)):
-                        row_u.append(name)
+                    names = champs.who(fr, units)
                     ms["who"] = (time.perf_counter() - t6) * 1000
+            if units is not None:
+                # Юниты детектора — записи records.UnitRec (доли кадра, имя).
+                ms["unit_recs"] = [UnitRec.from_unit(u, (w, h), names[k] if names else None)
+                                   for k, u in enumerate(units)]
             if unit_model is not None and champs is not None:
                 view = champs.view or "spectator"
                 want = (view, locator.box if view == "player" else None)
@@ -585,7 +580,7 @@ class Session:
         # потока сжатия.
         i = self._n_emit
         self._n_emit += 1
-        row = {"i": i, "t": round(self.start + i / self.fps, 2),
+        row = {"schema": SCHEMA, "i": i, "t": round(self.start + i / self.fps, 2),
                "cx": None, "cy": None,
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
                "err": None, "spread": _r(out["spread"], 3), "q": None}
@@ -600,13 +595,15 @@ class Session:
         for k in ("votes", "is_game"):
             if k in out:
                 row[k] = out[k]
-        units = ms.pop("units_list", None)
+        # Записи кадра (records.py) идут в контекст и трекер как есть, в
+        # строку — словарями: строка уходит в JSON.
+        units = ms.pop("unit_recs", None)
         full_img = ms.pop("full_img", None)
         if units is not None:
-            row["units"] = units
+            row["units"] = dicts(units)
         mini_champs = ms.pop("champs", None)
         if mini_champs is not None:
-            row["champs"] = mini_champs
+            row["champs"] = dicts(mini_champs)
         kp = ms.pop("kind_p", None)
         if kp is not None:
             # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
@@ -619,21 +616,23 @@ class Session:
         # Контекст матча: память о чемпионах между кадрами, смерти и
         # возрождения. В строку — снимок на этот кадр и новые события.
         if self.match is None:
-            self.match = MatchState(view=(bw / MM, bh / MM))
-        ev = self.match.update(row["t"], row)
+            # Места чемпионов с экрана — той же проекцией, что у трекера.
+            self.match = MatchState(proj=self.proj)
+        ev = self.match.update(row["t"], row.get("kind", "game"), mini_champs, units,
+                               (row["px"], row["py"]))
         if self.match.order:
-            row["ctx"] = self.match.frame_view()
+            row["ctx"] = dicts(self.match.frame_view())
         if ev:
-            row["ev"] = ev
+            row["ev"] = dicts(ev)
         # Треки юнитов: id, состояние (seen / unseen / lost), место на карте.
         # События юнитов — отдельно от событий чемпионов: смертей крипов
         # десятки в минуту.
-        if self.tracker is not None and row.get("kind", "game") == "game" and "units" in row:
-            cam = (row.get("px"), row.get("py"))
-            uev = self.tracker.update(row["t"], None if cam[0] is None else cam, row["units"])
-            row["tracks"] = self.tracker.frame_view(row["t"])
+        if self.tracker is not None and row.get("kind", "game") == "game" and units is not None:
+            cam = (row["px"], row["py"])
+            uev = self.tracker.update(row["t"], None if cam[0] is None else cam, units)
+            row["tracks"] = dicts(self.tracker.frame_view(row["t"]))
             if uev:
-                row["uev"] = uev
+                row["uev"] = dicts(uev)
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         self._out.submit(self._store, row, scene, full_img, mini, hm)
@@ -658,14 +657,6 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
-
-
-def unit_net_choice() -> tuple[Path | None, float | None]:
-    """Сеть детектора юнитов и её порог — первая из UNIT_NETS, что есть на диске."""
-    for path, thr in UNIT_NETS:
-        if path.is_file():
-            return path, thr
-    return None, None
 
 
 def _rel(path: Path) -> str:

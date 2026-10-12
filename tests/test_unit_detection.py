@@ -196,3 +196,14 @@ def test_runner_mask_must_be_1080p_grid():
     with pytest.raises(ValueError):
         UnitNetRunner(_BlobNet(), "cpu", keep=np.ones((720, 1280), np.uint8), graph=False,
                       size=(720, 1280))
+
+
+def test_live_net_is_first_present_with_its_threshold(tmp_path, monkeypatch):
+    from lolvision import unit_net
+    new, old = tmp_path / "new.pt", tmp_path / "old.pt"
+    monkeypatch.setattr(unit_net, "LIVE_NETS", ((new, 0.4), (old, 0.3)))
+    assert unit_net.live_net() == (None, None)
+    old.write_bytes(b"")
+    assert unit_net.live_net() == (old, 0.3)
+    new.write_bytes(b"")
+    assert unit_net.live_net() == (new, 0.4)

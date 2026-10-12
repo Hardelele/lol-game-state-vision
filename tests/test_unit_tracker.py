@@ -1,7 +1,8 @@
 import numpy as np
 
-from lolvision.geometry import MAP_UNITS
-from lolvision.unit_tracker import Projection, UnitTracker, lane_of
+from lolvision.geometry import MAP_UNITS, Projection
+from lolvision.records import UnitRec
+from lolvision.unit_tracker import UnitTracker, lane_of
 
 # Кадр 1000×1000 целиком — «сцена» 100×100; экран → смещение от камеры:
 # 0.001 доли карты на пиксель сцены, то есть 0.1 карты на весь кадр
@@ -11,11 +12,11 @@ U_PER_PX = 0.1 * MAP_UNITS / 1000
 
 
 def tracker():
-    return UnitTracker(Projection(H, (100, 100), (0, 0, 1000, 1000)), frame_size=(1000, 1000))
+    return UnitTracker(Projection(H, (100, 100), (0, 0, 1000, 1000), (1000, 1000)))
 
 
 def minion(x, y, hp=1.0, team="ORDER"):
-    return ["minion", team, x / 1000, y / 1000, hp, 0.9]
+    return UnitRec("minion", team, x / 1000, y / 1000, hp, 0.9)
 
 
 def seen(tr):
@@ -23,11 +24,13 @@ def seen(tr):
 
 
 def test_projection_roundtrip():
-    p = Projection(H, (100, 100), (0, 0, 1000, 1000))
+    p = Projection(H, (100, 100), (0, 0, 1000, 1000), (1000, 1000))
     xy = np.array([[500.0, 500.0], [100.0, 900.0]])
     uv = p.to_map(xy, (0.4, 0.6))
     assert np.allclose(uv[0], (0.4, 0.6))
     assert np.allclose(p.to_frame(uv, (0.4, 0.6)), xy)
+    # Доли кадра — те же точки: юниты строки live записаны в долях.
+    assert np.allclose(p.frac_to_map(xy / 1000, (0.4, 0.6)), uv)
 
 
 def test_same_minion_keeps_id_while_camera_moves():
@@ -50,7 +53,7 @@ def test_low_hp_vanishing_in_view_is_death_not_loss():
     tr.update(0.0, (0.5, 0.5), [minion(500, 500, 0.6)])
     tr.update(1.0, (0.5, 0.5), [minion(500, 500, 0.15)])
     ev = tr.update(2.0, (0.5, 0.5), [])
-    assert [e["type"] for e in ev] == ["unit_death"]
+    assert [e.type for e in ev] == ["unit_death"]
     assert not tr.tracks and tr.gone[0].state == "dead"
 
 
@@ -80,8 +83,8 @@ def test_hp_rise_does_not_match_minion():
 
 def test_champion_gets_named_id_when_name_is_read():
     tr = tracker()
-    tr.update(0.0, (0.5, 0.5), [["champion", "CHAOS", 0.5, 0.5, 1.0, 0.9, None]])
-    tr.update(1.0, (0.5, 0.5), [["champion", "CHAOS", 0.51, 0.5, 1.0, 0.9, "Volibear"]])
+    tr.update(0.0, (0.5, 0.5), [UnitRec("champion", "CHAOS", 0.5, 0.5, 1.0, 0.9, None)])
+    tr.update(1.0, (0.5, 0.5), [UnitRec("champion", "CHAOS", 0.51, 0.5, 1.0, 0.9, "Volibear")])
     assert [t.id for t in tr.tracks] == ["champ-CHAOS-Volibear"]
 
 

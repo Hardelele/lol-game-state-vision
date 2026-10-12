@@ -100,7 +100,7 @@ def train_head(x: np.ndarray, y: list[str], epochs: int = 300, wd: float = 1e-3)
 
 
 def train_projection(x: np.ndarray, y: list[str], dim: int = 128, epochs: int = 400,
-                     temp: float = 0.07) -> ap_.Projection:
+                     temp: float = 0.07) -> ap_.FeatureProjection:
     """Проекция 384 → dim: косинусный классификатор по чемпионам обучения
     (нормированные признаки и нормированные веса классов, температура)."""
     ids = sorted(set(y))
@@ -118,7 +118,7 @@ def train_projection(x: np.ndarray, y: list[str], dim: int = 128, epochs: int = 
         logits = z @ F.normalize(cls, dim=1).T / temp
         F.cross_entropy(logits, yi, weight=w).backward()
         opt.step()
-    return ap_.Projection(proj.weight.detach().cpu().numpy().T)
+    return ap_.FeatureProjection(proj.weight.detach().cpu().numpy().T)
 
 
 def proto_scores(f: np.ndarray, t: np.ndarray, labs: list[str], sure: np.ndarray,
@@ -144,7 +144,7 @@ METHODS = ("head", "proto", "proto_past", "mix", "proj", "proj_past")
 
 
 def evaluate(v: dict, f: np.ndarray, labs: list[str], sure: np.ndarray,
-             head: ap_.LinearHead, proj: ap_.Projection) -> dict:
+             head: ap_.LinearHead, proj: ap_.FeatureProjection) -> dict:
     t = v["t"][v["bars"]["frame"]]
     g = proj(f)
     res = {m: [] for m in METHODS}
