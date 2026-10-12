@@ -25,6 +25,7 @@ def reader() -> lc.LiveChampions:
     obj.name_tm = np.ascontiguousarray(names.bank.T.reshape(-1, WIN_H, WIN_W))
     obj.reads = deque(maxlen=lc.VIEW_READS)
     obj._view = None
+    obj.match = None
     return obj
 
 
@@ -50,7 +51,7 @@ def test_name_found_near_detector_center(dx, dy):
 def test_who_assigns_distinct_names_and_tracks():
     r = reader()
     r.prev = []
-    r.match = SimpleNamespace(roster=["Irelia", "Evelynn", "A", "B", "C"] + CANDS)
+    r.match = SimpleNamespace(roster=["Irelia", "Evelynn", "A", "B", "C"] + CANDS, api=False)
     f = frame_with("Hecarim", 900, 500)
     units = [SimpleNamespace(kind="champion", team="CHAOS", x=900, y=500),
              SimpleNamespace(kind="minion", team="CHAOS", x=300, y=300)]
@@ -88,7 +89,7 @@ def test_who_silent_in_player_view():
     # ни переносом с прошлого кадра (#786: Brand был «Ivern» в 100% кадров).
     r = reader()
     r.prev = []
-    r.match = SimpleNamespace(roster=["Irelia", "Evelynn", "A", "B", "C"] + CANDS)
+    r.match = SimpleNamespace(roster=["Irelia", "Evelynn", "A", "B", "C"] + CANDS, api=False)
     r.reads.extend([False] * lc.VIEW_READS)
     units = [SimpleNamespace(kind="champion", team="CHAOS", x=900, y=500)]
     assert r.who(frame_with("Hecarim", 900, 500), units) == [None]

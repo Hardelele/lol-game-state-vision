@@ -67,6 +67,22 @@ Data Dragon); на журнале своей игры все десять све
 `MatchState` их не получает. Отсутствие API (`no_game`, `error`) сеанс не
 роняет — это только состояние в `api`.
 
+## Наблюдение для контекста матча (#798)
+
+`api_observation(snap, age=0)` переводит `GameSnapshot` в
+`lolvision.match_state.ApiObs` — запись, которую принимает `MatchState`
+(`lolvision` не импортирует `lolstream`): время матча, десять игроков
+(чемпион, команда, `isDead`, `respawnTimer`) — ORDER, затем CHAOS, своя
+команда. `age` — возраст снимка: время матча сдвигается вперёд, таймеры —
+назад (не ниже 0). Отказ `(None, причина)`, а не половина состава: чемпион не
+опознан, игроков не десять, команды не 5/5, чемпионы повторяются.
+`status_observation(status, now)` — то же по последнему `LiveStatus`:
+наблюдение есть в `loading` с составом (время матча стоит) и `in_game`; в
+`no_game`, `error` и `ended` — `None` и причина. Порог новой игры
+`NEW_GAME_BACKSTEP` один на `Tracker` и `MatchState` (задан в
+`match_state.py`). Правила приоритета и сверки — в
+[match-context.md](match-context.md).
+
 ## Журнал и воспроизведение
 
 Журнал — JSONL `{"t": unix-время, "code": 200 | текст ошибки, "body": текст allgamedata | null}`.
