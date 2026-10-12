@@ -548,3 +548,27 @@ def test_example_client_reads_state_and_stream():
 def test_server_refuses_non_loopback():
     with pytest.raises(ValueError):
         StateServer(lambda: StateInputs(), host="0.0.0.0", port=0)
+
+
+def test_refused_api_snapshot_is_the_reason():
+    """Practice Tool: в снимке API один игрок — status_observation его
+    отклоняет, в MatchState он не доходит. Причина в /state — этот отказ, а
+    не «API пропал» и не «контекст матча ещё не знает состава» (#796)."""
+    st = api_last()
+    me = st.game.my_player
+    solo = replace(st, game=replace(st.game, players=(me,)))
+    obs, why = status_observation(solo, solo.t)
+    assert obs is None and why == "игроков 1, а не 10"
+    snap = build_snapshot(StateInputs(api=solo, match=match_view(MatchState(), solo.t, why)),
+                          solo.t)
+    assert check_snapshot(snap) == []
+    want = "снимок API не принят: игроков 1, а не 10"
+    assert snap["match"]["time"]["value"] is None and snap["match"]["time"]["reason"] == want
+    assert snap["champions"]["reason"] == want and snap["enemies"]["reason"] == want
+    assert snap["me"]["alive"]["reason"] == want and snap["me"]["respawn_in"]["reason"] == want
+    assert snap["me"]["champion"]["value"] == me.champion       # статика API — своя правда
+    assert snap["sources"]["match"]["api_refused"] == why
+    # Без отказа причина прежняя: API жив, состава в контексте нет.
+    plain = build_snapshot(StateInputs(api=solo, match=match_view(MatchState(), solo.t)),
+                           solo.t)
+    assert "ещё не знает состава" in plain["champions"]["reason"]
