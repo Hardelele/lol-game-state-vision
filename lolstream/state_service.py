@@ -17,10 +17,20 @@
 `inferred`) и давностью в секундах, либо `value = null` с причиной.
 Молчаливых подстановок нет: нет входа — null и почему.
 
-Приоритет источников: Live Client API > HUD > зрение. Где API и зрение
-говорят разное про одно и то же (команда, жив ли, таймер, состав), в выход
-идёт API, а расхождение — в `conflicts` (сигнал #781), без тихого
-перетирания.
+Сервис ничего не сводит сам — он только переводит в контракт:
+
+* состояние десяти чемпионов (состав, жив / мёртв, таймер, место, ХП),
+  время матча и расхождения источников (`conflicts`) — у одного хозяина,
+  контекста матча (lolvision.match_state.MatchState: приоритет API > HUD >
+  зрение, счётчик конфликтов по видам). Сюда приходит его снимок
+  `MatchView` (`match_view` — под замком сеанса);
+* статические поля API без конкуренции со зрением (ник, уровень, предметы,
+  счёт, статы и золото своего игрока, режим, карта) — прямо из `LiveStatus`;
+* можно ли читателю зрения отвечать — решает паспорт трансляции
+  (lolvision.passport: `Passport.verdict`); без паспорта условия не
+  проверены — отказ;
+* свои / враги / сам и сторона у юнитов и треков — поля записей
+  (lolvision/sides.py, #790) как есть, со своими причинами отказа.
 
 Устройство. `build_snapshot` — чистая функция: входы (`StateInputs`) →
 словарь снимка; ни сети, ни потоков. `StateHub` раз в `period` секунд зовёт
@@ -43,7 +53,9 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from lolstream.live_client import NEW_GAME_BACKSTEP, GameSnapshot, LiveStatus, PlayerRecord
+from lolstream.live_client import LiveStatus, PlayerRecord, status_observation
+from lolvision.match_state import NEW_GAME_BACKSTEP, MatchState
+from lolvision.passport import READERS, Passport
 from lolvision.records import ChampCtx, Event, TrackRec, UnitRec
 
 SCHEMA = 1
@@ -52,19 +64,13 @@ PORT = 8733                    # смотрелка — 8732
 SOURCES = ("api", "minimap", "screen", "hud", "inferred")
 RELATIONS = ("self", "ally", "enemy")
 TEAMS = ("ORDER", "CHAOS")
-OTHER = {"ORDER": "CHAOS", "CHAOS": "ORDER"}
-# Цвет плашки на виде игрока — отношение к игроку (unit_bars.TEAM_BY_COLOR["player"]).
-RELATION_BY_COLOR = {"SELF": "self", "ALLY": "ally", "ENEMY": "enemy"}
-# Расхождение таймеров возрождения API и HUD, которое считается конфликтом, с.
-RESPAWN_TOLERANCE = 3.0
 
 # Причины отказов, общие для многих полей.
 WHY_NO_API = "Live Client API не подключён к сервису"
 WHY_NO_VISION = "нет обработанного кадра: сеанс зрения не подключён или ещё не дал кадр"
-WHY_NO_PASSPORT = "паспорт трансляции ещё не построен (2C)"
-WHY_NO_RELATION = "свои/враги по экрану ещё не определяются (2A, #790)"
-WHY_PLAYER_COLORS = ("на виде игрока цвет плашки относителен: ORDER/CHAOS по цвету "
-                     "недостоверны (2A, #790)")
+WHY_NO_MATCH = "контекст матча (MatchState) не подключён к сервису"
+WHY_NO_PASSPORT = "паспорт трансляции не подключён к сервису"
+WHY_NO_SIDES = "запись прошла мимо sides.assign: причина не указана"
 
 
 # ---------------------------------------------------------------- входы
@@ -88,24 +94,68 @@ class FrameStatus:
 
 @dataclass(frozen=True)
 class VisionFrame:
-    """Итог зрения по последнему обработанному кадру.
+    """Итог зрения по последнему обработанному кадру (без чемпионов: они —
+    в контексте матча).
 
-    `at` — unix-время, когда кадр обработан (от него считается давность
-    фактов зрения); `t` — время кадра по шкале потока. `view` — раскладка:
-    spectator / player / None (неизвестна). `camera` — центр камеры (доли
-    карты) или None — модель камеры не ответила. Списки None — этот читатель
-    не работал (нет модели, кадр не «игра»), пустой список — работал и ничего
-    не нашёл."""
+    `at` — unix-время, когда кадр обработан (от него считается давность);
+    `t` — время кадра по шкале потока. `camera` — центр камеры (доли карты)
+    или None — модель камеры не ответила. Списки None — читатель не работал
+    (нет модели, кадр не «игра»), пустой список — работал и ничего не нашёл."""
     i: int
     t: float
     at: float
-    view: str | None
     scene: str | None = None
     camera: tuple[float, float] | None = None
     spread: float | None = None
     units: Sequence[UnitRec] | None = None
     tracks: Sequence[TrackRec] | None = None
-    ctx: Sequence[ChampCtx] | None = None
+
+
+@dataclass(frozen=True)
+class Observed:
+    """Значение контекста матча: что, откуда, когда (время потока)."""
+    value: Any
+    src: str
+    t: float
+
+
+@dataclass(frozen=True)
+class ChampView:
+    """Один из десяти в контексте матча: запись кадра и то, чего в ней нет."""
+    ctx: ChampCtx
+    alive: Observed | None       # Champ.alive: жив / мёртв с источником
+    hp: Observed | None          # Champ.hp: доля ХП с источником
+    conflicts: int               # Champ.conflicts
+
+
+@dataclass(frozen=True)
+class MatchView:
+    """Неизменяемый снимок MatchState на момент `t` (время потока); `at` —
+    unix-время этого момента. Собирается `match_view` под замком сеанса:
+    провайдер зовётся из потока хаба, а MatchState меняет поток кадра."""
+    t: float
+    at: float
+    champs: tuple[ChampView, ...]
+    roster_src: str | None       # api — состав из API, hud — по HUD, None — нет
+    clock: Observed | None       # MatchState.game_clock()
+    api_live: bool
+    api_refused: str | None
+    conflicts: Mapping[str, int]
+
+
+def _observed(f) -> Observed | None:
+    return None if f is None else Observed(f.value, f.src, f.t)
+
+
+def match_view(ms: MatchState, at: float) -> MatchView:
+    """MatchState → MatchView. `at` — unix-время момента `ms.t`."""
+    champs = []
+    for c in ms.frame_view():
+        ch = ms.champs[c.name]
+        champs.append(ChampView(c, _observed(ch.alive), _observed(ch.hp), ch.conflicts))
+    roster = None if not ms.order else ("api" if ms.api is not None else "hud")
+    return MatchView(ms.t, at, tuple(champs), roster, _observed(ms.game_clock()),
+                     ms.api_live(), ms.api_refused, dict(ms.conflicts))
 
 
 @dataclass(frozen=True)
@@ -113,14 +163,16 @@ class StateInputs:
     """Всё, из чего собирается снимок. None — входа нет (не подключён).
 
     `session` — состояние сеанса live (подпись, например «идёт») или None;
-    `vision_events` — события контекста матча (records.Event), можно
-    накопительно: хаб сам отсеивает уже разосланные; `error` — провайдер
-    упал, все отказы получают эту причину."""
+    `match` — снимок контекста матча (`match_view`); `passport` — паспорт
+    трансляции (2C); `vision_events` — события контекста матча
+    (`MatchState.events`, можно накопительно: хаб сам отсеивает
+    разосланные); `error` — провайдер упал, все отказы получают эту причину."""
     session: str | None = None
     frames: FrameStatus | None = None
     vision: VisionFrame | None = None
+    match: MatchView | None = None
     api: LiveStatus | None = None
-    passport: Mapping[str, Any] | None = None
+    passport: Passport | None = None
     vision_events: Sequence[Event] = field(default_factory=tuple)
     error: str | None = None
 
@@ -155,171 +207,45 @@ def _uv(u: float, v: float) -> dict:
     return {"u": round(float(u), 4), "v": round(float(v), 4)}
 
 
+# ---------------------------------------------------------------- правила
+
+def relation_to_me(team: str, champion: str, me: PlayerRecord) -> str:
+    """Отношение чемпиона к своему игроку по API: сам — его чемпион, свой —
+    его команда (activePlayer среди allPlayers), иначе враг. Это факт API,
+    а не цвет плашки."""
+    if champion == me.champion:
+        return "self"
+    return "ally" if team == me.team else "enemy"
+
+
+def record_sides(rec: UnitRec | TrackRec, age: float | None) -> dict:
+    """Свой / враг / сам и сторона у юнита или трека — поля записи
+    (lolvision/sides.py, #790) как есть: значение или null с причиной записи.
+    Источник отношения — `screen` (цвет полоски в пикселях); сторону
+    sides.assign берёт то из ответа детектора, то из команды своего игрока
+    по API — в записи источник не указан, поэтому `inferred`."""
+    return {"relation": maybe(rec.relation, "screen", age, rec.relation_reason or WHY_NO_SIDES),
+            "side": maybe(rec.side, "inferred", age, rec.side_reason or WHY_NO_SIDES)}
+
+
+def _record(rec: UnitRec | TrackRec, age: float | None) -> dict:
+    """Запись records.py в выход: поля как есть, отношение и сторона — фактами."""
+    d = {k: v for k, v in rec.to_dict().items() if k not in ("relation_reason", "side_reason")}
+    d.update(record_sides(rec, age))
+    return d
+
+
+def reader_ok(passport: Passport | None, reader: str,
+              miss: Callable[[str], str]) -> tuple[bool, str | None]:
+    """Можно ли читателю отвечать — по паспорту; без паспорта — нельзя."""
+    if passport is None:
+        return False, miss(f"{WHY_NO_PASSPORT}: условия читателя «{READERS[reader].title}» "
+                           "не проверены")
+    ok, why = passport.verdict(reader)
+    return ok, why
+
+
 # ---------------------------------------------------------------- сборка
-
-@dataclass
-class _Api:
-    """Разобранный вход API для сборки: снимок игры или почему его нет."""
-    game: GameSnapshot | None
-    age: float | None            # с от получения снимка игры
-    why: str
-    me: PlayerRecord | None = None
-    me_why: str = ""
-    side: str | None = None      # своя команда ORDER / CHAOS
-
-
-def _api_view(api: LiveStatus | None, now: float, miss: Callable[[str], str]) -> _Api:
-    if api is None:
-        return _Api(None, None, miss(WHY_NO_API), me_why=miss(WHY_NO_API))
-    if api.game is None:
-        why = f"Live Client: {api.state.value}" + (f" ({api.reason})" if api.reason else "")
-        return _Api(None, None, why, me_why=why)
-    age = None if api.game_t is None else now - api.game_t
-    out = _Api(api.game, age, "")
-    me = api.game.my_player
-    if me is None:
-        out.me_why = f"свой игрок не найден: {api.game.me_reason}"
-    else:
-        out.me, out.side = me, me.team
-    return out
-
-
-def _player_key(p: PlayerRecord, i: int) -> str:
-    return p.champion if p.champion is not None else f"#{i}"
-
-
-def _relation(i: int, p: PlayerRecord, a: _Api) -> dict:
-    if a.side is None:
-        return refuse(a.me_why or a.why)
-    if a.game is not None and a.game.me == i:
-        return fact("self", "api", a.age)
-    return fact("ally" if p.team == a.side else "enemy", "api", a.age)
-
-
-def _unit_side(team: str, view: str | None, side: str | None, side_why: str,
-               lag: float | None) -> tuple[dict, dict]:
-    """Цвет плашки → (команда, отношение к игроку) как факты или отказы."""
-    if team in RELATION_BY_COLOR:                       # вид игрока: цвет — отношение
-        rel = RELATION_BY_COLOR[team]
-        if side is None:
-            t = refuse(f"цвет даёт отношение, а своя сторона неизвестна: {side_why}")
-        else:
-            t = fact(side if rel in ("self", "ally") else OTHER[side], "inferred", lag)
-        return t, fact(rel, "screen", lag)
-    if team not in TEAMS:
-        why = f"цвет плашки вне ожидаемого: {team!r}"
-        return refuse(why), refuse(why)
-    if view == "spectator":
-        t = fact(team, "screen", lag)
-        if side is None:
-            return t, refuse(f"своя сторона неизвестна: {side_why}")
-        return t, fact("ally" if team == side else "enemy", "inferred", lag)
-    if view == "player":
-        return refuse(WHY_PLAYER_COLORS), refuse(WHY_NO_RELATION)
-    why = "вид (наблюдатель / игрок) неизвестен: цвет плашки не переводится в сторону"
-    return refuse(why), refuse(why)
-
-
-def _screen_names(vis: VisionFrame | None) -> dict[str, UnitRec]:
-    if vis is None or vis.units is None:
-        return {}
-    return {u.name: u for u in vis.units if u.kind == "champion" and u.name}
-
-
-def _on_screen(name: str | None, vis: VisionFrame | None, lag: float | None,
-               named: dict[str, UnitRec], why_vis: str) -> tuple[dict, dict]:
-    """(виден ли на экране, ХП с плашки) — только по чемпиону с прочитанным именем."""
-    if vis is None:
-        return refuse(why_vis), refuse(why_vis)
-    if vis.units is None:
-        why = "юниты на экране не ищутся (нет детектора или кадр не «игра»)"
-        return refuse(why), refuse(why)
-    if name is not None and name in named:
-        return fact(True, "screen", lag), fact(round(named[name].hp, 2), "screen", lag)
-    if vis.view == "player":
-        why = "на виде игрока имена над плашками не читаются"
-    else:
-        why = "на экране не опознан: имени над плашкой нет в кадре или оно не прочитано"
-    return refuse(why), refuse(why)
-
-
-def _champion_entry(name: str | None, p: PlayerRecord | None, i: int | None, a: _Api,
-                    c: ChampCtx | None, vis: VisionFrame | None, lag: float | None,
-                    named: dict[str, UnitRec], why_vis: str, conflicts: list[dict]) -> dict:
-    """Один из десяти: API (если есть) поверх зрения, расхождения — в conflicts."""
-    why_ctx = why_vis if vis is None else (
-        "контекст матча не ведёт этого чемпиона" if vis.ctx is not None
-        else "контекст матча пуст: состава по HUD ещё нет")
-    vage = None if lag is None or c is None or c.age is None else lag + c.age
-
-    # кто и чей
-    if p is not None:
-        champion = maybe(p.champion, "api", a.age, p.champion_reason or "чемпион не опознан")
-        team = fact(p.team, "api", a.age)
-        relation = _relation(i, p, a)
-        riot_id = fact(p.riot_id, "api", a.age)
-        level = fact(p.level, "api", a.age)
-        items = fact([it.item_id for it in p.items], "api", a.age)
-        scores = fact(p.scores.to_dict(), "api", a.age)
-    else:
-        champion = fact(name, "hud", lag)
-        team = fact(c.team, "hud", lag)
-        relation = refuse(a.me_why or a.why)
-        riot_id = level = items = scores = refuse(a.why)
-
-    # жив ли и таймер: API > HUD; зрение — только где API нет
-    if p is not None:
-        alive = fact(not p.is_dead, "api", a.age)
-        respawn = (fact(p.respawn_timer, "api", a.age) if p.is_dead
-                   else refuse("жив (api)"))
-    elif c is None:
-        alive = respawn = refuse(why_ctx)
-    elif c.state == "dead":
-        alive = fact(False, "hud", lag)
-        respawn = maybe(c.respawn_in, "hud", lag, "мёртв, таймер возрождения не прочитан")
-    elif c.state == "visible":
-        alive = fact(True, c.src or "inferred", lag)
-        respawn = refuse("жив (виден)")
-    else:
-        alive = respawn = refuse(f"зрение не знает: чемпион {c.state}")
-
-    if p is not None and c is not None:
-        _conflicts_of(conflicts, p, a, c, lag)
-
-    if c is None:
-        position = map_state = refuse(why_ctx)
-    else:
-        position = (refuse("место не наблюдалось") if c.u is None or c.v is None
-                    else fact(_uv(c.u, c.v), c.src or "inferred", vage))
-        map_state = fact(c.state, "inferred", lag)
-    on_screen, hp = _on_screen(name, vis, lag, named, why_vis)
-    return {"champion": champion, "riot_id": riot_id, "team": team, "relation": relation,
-            "level": level, "alive": alive, "respawn_in": respawn, "position": position,
-            "map_state": map_state, "on_screen": on_screen, "hp": hp, "items": items,
-            "scores": scores}
-
-
-def _conflicts_of(conflicts: list[dict], p: PlayerRecord, a: _Api, c: ChampCtx,
-           lag: float | None) -> None:
-    """Расхождения API и зрения по одному чемпиону. В выход идёт API."""
-    who = p.champion
-    if c.team != p.team:
-        conflicts.append({"field": "team", "champion": who, "used": "api",
-                          "values": {"api": p.team, "hud": c.team}})
-    vis_alive = {"dead": False, "visible": True}.get(c.state)
-    if vis_alive is not None and vis_alive == p.is_dead:
-        conflicts.append({"field": "alive", "champion": who, "used": "api",
-                          "values": {"api": not p.is_dead,
-                                     ("hud" if c.state == "dead" else c.src or "inferred"):
-                                     vis_alive}})
-    if p.is_dead and c.state == "dead" and c.respawn_in is not None and a.age is not None \
-            and lag is not None:
-        api_now = p.respawn_timer - a.age
-        hud_now = c.respawn_in - lag
-        if abs(api_now - hud_now) > RESPAWN_TOLERANCE:
-            conflicts.append({"field": "respawn_in", "champion": who, "used": "api",
-                              "values": {"api": round(api_now, 1), "hud": round(hud_now, 1)}})
-
 
 def _sources(inp: StateInputs, now: float, miss: Callable[[str], str]) -> dict:
     f = inp.frames
@@ -334,16 +260,22 @@ def _sources(inp: StateInputs, now: float, miss: Callable[[str], str]) -> dict:
         frames["reason"] = f"кадра нет: {f.state}"
     v = inp.vision
     vision = ({"state": "absent", "reason": miss(WHY_NO_VISION), "frame": None,
-               "stream_t": None, "age": None, "view": None, "session": inp.session}
+               "stream_t": None, "age": None, "session": inp.session}
               if v is None else
               {"state": "ok", "reason": None, "frame": v.i, "stream_t": v.t,
-               "age": _age(now - v.at), "view": v.view, "session": inp.session})
+               "age": _age(now - v.at), "session": inp.session})
+    m = inp.match
+    match = ({"state": "absent", "reason": miss(WHY_NO_MATCH), "stream_t": None, "age": None,
+              "roster": None, "api_live": None, "api_refused": None}
+             if m is None else
+             {"state": "ok", "reason": None, "stream_t": m.t, "age": _age(now - m.at),
+              "roster": m.roster_src, "api_live": m.api_live, "api_refused": m.api_refused})
     a = inp.api
     api = ({"state": "absent", "reason": miss(WHY_NO_API), "age": None, "game_age": None}
            if a is None else
            {"state": a.state.value, "reason": a.reason, "age": _age(now - a.t),
             "game_age": None if a.game_t is None else _age(now - a.game_t)})
-    return {"frames": frames, "vision": vision, "api": api}
+    return {"frames": frames, "vision": vision, "match": match, "api": api}
 
 
 def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
@@ -354,81 +286,98 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     def miss(why: str) -> str:
         return why if inp.error is None else f"сбой провайдера состояния: {inp.error}"
 
-    a = _api_view(inp.api, now, miss)
+    # --- API: статические поля ---
+    st = inp.api
+    game = None if st is None else st.game
+    if st is None:
+        api_why = miss(WHY_NO_API)
+    elif game is None:
+        api_why = f"Live Client: {st.state.value}" + (f" ({st.reason})" if st.reason else "")
+    else:
+        api_why = ""
+    api_age = None if st is None or st.game_t is None else now - st.game_t
+    me = None if game is None else game.my_player
+    me_why = api_why or (f"свой игрок не найден: {game.me_reason}" if me is None else "")
+    players = {} if game is None else {p.champion: p for p in game.players if p.champion}
+
+    # --- контекст матча ---
+    mv = inp.match
+    why_match = miss(WHY_NO_MATCH)
+    mlag = None if mv is None else max(0.0, now - mv.at)
+
+    def mage(t: float) -> float:
+        return mlag + max(0.0, mv.t - t)
+
     vis = inp.vision
     why_vis = miss(WHY_NO_VISION)
     lag = None if vis is None else max(0.0, now - vis.at)
-    named = _screen_names(vis)
-    conflicts: list[dict] = []
+    names_ok, names_why = reader_ok(inp.passport, "names", miss)
+    units_ok, units_why = reader_ok(inp.passport, "units", miss)
+    named = {} if vis is None or vis.units is None else \
+        {u.name: u for u in vis.units if u.kind == "champion" and u.name}
 
-    # --- матч и свой игрок (только API) ---
-    g = a.game
-    if g is None:
-        match = {"time": refuse(a.why), "mode": refuse(a.why), "map": refuse(a.why),
-                 "side": refuse(a.why), "state": refuse(a.why) if inp.api is None
-                 else fact(inp.api.state.value, "api", now - inp.api.t)}
+    # --- матч ---
+    if mv is None:
+        clock = refuse(why_match)
+    elif mv.clock is not None:
+        clock = fact(mv.clock.value, mv.clock.src, mage(mv.clock.t))
     else:
-        match = {"time": fact(g.game_time, "api", a.age), "mode": fact(g.game_mode, "api", a.age),
-                 "map": maybe(g.map_number, "api", a.age, "API не дал mapNumber"),
-                 "side": maybe(a.side, "api", a.age, a.me_why or "свой игрок не найден"),
-                 "state": fact(inp.api.state.value, "api", now - inp.api.t)}
+        clock = refuse(f"контекст матча без времени по API: "
+                       f"{mv.api_refused or api_why or 'API пропал'}")
+    match = {"time": clock,
+             "mode": refuse(api_why) if game is None else fact(game.game_mode, "api", api_age),
+             "map": refuse(api_why) if game is None else
+             maybe(game.map_number, "api", api_age, "API не дал mapNumber"),
+             "side": refuse(me_why) if me is None else fact(me.team, "api", api_age),
+             "state": refuse(api_why) if st is None else
+             fact(st.state.value, "api", now - st.t)}
+
+    # --- десять чемпионов ---
+    entries: list[dict] = []
+    if mv is None:
+        champions = refuse(why_match)
+    elif not mv.champs:
+        champions = refuse("состава нет: " + (mv.api_refused or api_why or
+                                              "контекст матча ещё не знает состава"))
+    else:
+        for cv in mv.champs:
+            entries.append(_champion(cv, mv.roster_src, mlag, mage, me, me_why, players, api_age,
+                                     api_why, vis, why_vis, lag, named, names_ok, names_why))
+        champions = fact(entries, mv.roster_src, mlag)
+
+    # --- свой игрок: статика из API, жив / мёртв — из контекста матча ---
     me_fields = ("riot_id", "champion", "team", "level", "gold", "alive", "respawn_in", "stats")
-    if a.me is None:
-        me = {k: refuse(a.me_why or a.why) for k in me_fields}
+    if me is None:
+        me_out = {k: refuse(me_why) for k in me_fields}
     else:
-        p, act = a.me, g.active
-        me = {"riot_id": fact(p.riot_id, "api", a.age),
-              "champion": maybe(p.champion, "api", a.age, p.champion_reason or "не опознан"),
-              "team": fact(p.team, "api", a.age), "level": fact(p.level, "api", a.age),
-              "gold": (fact(act.current_gold, "api", a.age) if act is not None
-                       else refuse("нет activePlayer")),
-              "alive": fact(not p.is_dead, "api", a.age),
-              "respawn_in": (fact(p.respawn_timer, "api", a.age) if p.is_dead
-                             else refuse("жив (api)")),
-              "stats": (fact(dict(act.stats), "api", a.age) if act is not None
-                        else refuse("нет activePlayer"))}
-
-    # --- десять чемпионов: состав API, иначе контекст зрения ---
-    ctx = {c.name: c for c in (vis.ctx or ())} if vis is not None else {}
-    if g is not None and g.players:
-        entries = []
-        keys = set()
-        for i, p in enumerate(g.players):
-            key = _player_key(p, i)
-            keys.add(key)
-            entries.append(_champion_entry(p.champion, p, i, a, ctx.get(key), vis, lag, named,
-                                           why_vis, conflicts))
-        extra = sorted(set(ctx) - keys)
-        if extra:
-            conflicts.append({"field": "roster", "champion": None, "used": "api",
-                              "values": {"api": sorted(k for k in keys if not k.startswith("#")),
-                                         "hud": sorted(ctx)}})
-        champions = fact(entries, "api", a.age)
-    elif ctx:
-        entries = [_champion_entry(c.name, None, None, a, c, vis, lag, named, why_vis, conflicts)
-                   for c in vis.ctx]
-        champions = fact(entries, "hud", lag)
-    else:
-        why = a.why if vis is not None and vis.ctx is not None else \
-            f"{a.why}; {why_vis if vis is None else 'контекст матча не ведётся'}"
-        champions = refuse(f"состава нет: {why}")
+        act = game.active
+        mine = next((e for e in entries if e["champion"]["value"] == me.champion), None)
+        why_mine = why_match if mv is None else "своего чемпиона нет в контексте матча"
+        me_out = {"riot_id": fact(me.riot_id, "api", api_age),
+                  "champion": maybe(me.champion, "api", api_age,
+                                    me.champion_reason or "не опознан"),
+                  "team": fact(me.team, "api", api_age), "level": fact(me.level, "api", api_age),
+                  "gold": (fact(act.current_gold, "api", api_age) if act is not None
+                           else refuse("нет activePlayer")),
+                  "alive": mine["alive"] if mine else refuse(why_mine),
+                  "respawn_in": mine["respawn_in"] if mine else refuse(why_mine),
+                  "stats": (fact(dict(act.stats), "api", api_age) if act is not None
+                            else refuse("нет activePlayer"))}
 
     # --- враги с давностью места ---
     if champions["value"] is None:
         enemies = refuse(champions["reason"])
-    elif a.side is None:
-        enemies = refuse(f"своя сторона неизвестна: {a.me_why or a.why}")
+    elif me is None:
+        enemies = refuse(f"своя сторона неизвестна: {me_why}")
     else:
         enemies = fact([{k: e[k] for k in ("champion", "position", "map_state", "alive",
                                             "respawn_in", "on_screen")}
-                        for e in champions["value"] if e["relation"]["value"] == "enemy"],
-                       "api", a.age)
+                        for e in entries if e["relation"]["value"] == "enemy"], "api", api_age)
 
     # --- камера, сцена, юниты, треки ---
     if vis is None:
         camera = {"center": refuse(why_vis), "spread": refuse(why_vis)}
-        scene = refuse(why_vis)
-        units = tracks = refuse(why_vis)
+        scene = units = tracks = refuse(why_vis)
     else:
         cam = vis.camera
         ok = cam is not None and cam[0] is not None and cam[1] is not None
@@ -437,37 +386,96 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                   "spread": maybe(None if vis.spread is None else round(vis.spread, 4),
                                   "screen", lag, "разброс камеры не считается")}
         scene = maybe(vis.scene, "screen", lag, "тип сцены не считается (нет модели)")
-        side_why = a.me_why or a.why
-        if vis.units is None:
-            units = refuse("юниты на экране не ищутся (нет детектора или кадр не «игра»)")
+        if not units_ok:
+            units = tracks = refuse(units_why)
         else:
-            out = []
-            for u in vis.units:
-                team, rel = _unit_side(u.team, vis.view, a.side, side_why, lag)
-                out.append({"kind": u.kind, "x": round(u.x, 4), "y": round(u.y, 4),
-                            "hp": round(u.hp, 2), "score": round(u.score, 2),
-                            "name": maybe(u.name, "screen", lag,
-                                          "не чемпион или имя не прочитано"),
-                            "team": team, "relation": rel})
-            units = fact(out, "screen", lag)
-        if vis.tracks is None:
-            tracks = refuse("треки юнитов не ведутся")
-        else:
-            out = []
-            for tr in vis.tracks:
-                team, rel = _unit_side(tr.team, vis.view, a.side, side_why, lag + tr.age)
-                d = tr.to_dict()
-                d.update(team=team, relation=rel)
-                out.append(d)
-            tracks = fact(out, "screen", lag)
+            if vis.units is None:
+                units = refuse("юниты на экране не ищутся (кадр не «игра»)")
+            else:
+                out = []
+                for u in vis.units:
+                    d = _record(u, lag)
+                    d["name"] = (maybe(u.name, "screen", lag, "не чемпион или имя не прочитано")
+                                 if names_ok else refuse(names_why))
+                    out.append(d)
+                units = fact(out, "screen", lag)
+            if vis.tracks is None:
+                tracks = refuse("треки юнитов не ведутся")
+            else:
+                out = []
+                for tr in vis.tracks:
+                    out.append(_record(tr, lag + tr.age))
+                tracks = fact(out, "screen", lag)
 
+    if mv is None:
+        conflicts = refuse(why_match)
+    else:
+        conflicts = fact({"total": sum(mv.conflicts.values()), "kinds": dict(mv.conflicts)},
+                         "inferred", mlag)
     passport = (refuse(miss(WHY_NO_PASSPORT)) if inp.passport is None
-                else fact(dict(inp.passport), "inferred"))
+                else fact(inp.passport.to_dict(), "inferred"))
     return {"schema": SCHEMA, "seq": seq, "t": round(now, 3), "error": inp.error,
             "sources": _sources(inp, now, miss), "passport": passport, "match": match,
-            "me": me, "champions": champions, "enemies": enemies, "camera": camera,
-            "scene": scene, "units": units, "tracks": tracks,
-            "conflicts": {"count": len(conflicts), "items": conflicts}}
+            "me": me_out, "champions": champions, "enemies": enemies, "camera": camera,
+            "scene": scene, "units": units, "tracks": tracks, "conflicts": conflicts}
+
+
+def _champion(cv: ChampView, roster_src: str, mlag: float, mage: Callable[[float], float],
+              me: PlayerRecord | None, me_why: str, players: Mapping[str, PlayerRecord],
+              api_age: float | None, api_why: str, vis: VisionFrame | None, why_vis: str,
+              lag: float | None, named: Mapping[str, UnitRec], names_ok: bool,
+              names_why: str | None) -> dict:
+    """Один из десяти: состояние — из контекста матча, статика — из API."""
+    c = cv.ctx
+    p = players.get(c.name)
+    why_p = api_why or "нет в составе API"
+    if me is None:
+        relation = refuse(f"своя сторона неизвестна: {me_why}")
+    elif roster_src != "api":
+        relation = refuse("состав не из API: команды по HUD с своим игроком API не сверяются")
+    else:
+        relation = fact(relation_to_me(c.team, c.name, me), "api", api_age)
+
+    a = cv.alive
+    if a is None:
+        alive = respawn = refuse("жив / мёртв не наблюдался")
+    else:
+        alive = fact(a.value, a.src, mage(a.t))
+        if a.value:
+            respawn = refuse(f"жив ({a.src})")
+        else:
+            # Таймер ставит тот же источник, что объявил смерть (match_state:
+            # респаун из API или с панели HUD вместе с alive = False).
+            respawn = maybe(None if c.respawn_in is None else round(c.respawn_in, 1),
+                            a.src, mlag, "мёртв, таймер возрождения неизвестен")
+
+    position = (refuse("место не наблюдалось") if c.u is None or c.v is None or c.src is None
+                else fact(_uv(c.u, c.v), c.src, mlag + (c.age or 0.0)))
+    hp = (refuse("ХП не наблюдалось") if cv.hp is None
+          else fact(round(float(cv.hp.value), 2), cv.hp.src, mage(cv.hp.t)))
+
+    if vis is None:
+        on_screen = refuse(why_vis)
+    elif not names_ok:
+        on_screen = refuse(names_why)
+    elif vis.units is None:
+        on_screen = refuse("юниты на экране не ищутся (кадр не «игра»)")
+    elif c.name in named:
+        on_screen = fact(True, "screen", lag)
+    else:
+        on_screen = refuse("на экране не опознан: имени над плашкой нет в кадре "
+                           "или оно не прочитано")
+
+    return {"champion": fact(c.name, roster_src, mlag), "team": fact(c.team, roster_src, mlag),
+            "relation": relation,
+            "riot_id": refuse(why_p) if p is None else fact(p.riot_id, "api", api_age),
+            "level": refuse(why_p) if p is None else fact(p.level, "api", api_age),
+            "items": refuse(why_p) if p is None else
+            fact([it.item_id for it in p.items], "api", api_age),
+            "scores": refuse(why_p) if p is None else fact(p.scores.to_dict(), "api", api_age),
+            "alive": alive, "respawn_in": respawn, "position": position,
+            "map_state": fact(c.state, "inferred", mlag), "on_screen": on_screen, "hp": hp,
+            "conflicts": cv.conflicts}
 
 
 # ---------------------------------------------------------------- схема
@@ -479,7 +487,7 @@ def _fact_of(value: dict | None = None) -> dict:
     return s
 
 
-def _obj(props: dict, extra: bool = False) -> dict:
+def _obj(props: dict, extra: bool | dict = False) -> dict:
     return {"type": "object", "required": sorted(props), "properties": props,
             "additionalProperties": extra}
 
@@ -488,8 +496,8 @@ def snapshot_schema() -> dict:
     """JSON Schema (draft 2020-12) снимка. Проверка без зависимостей — `check_snapshot`."""
     num, s, b, i = {"type": "number"}, {"type": "string"}, {"type": "boolean"}, \
         {"type": "integer"}
-    nnum, ns, ni = {"type": ["number", "null"]}, {"type": ["string", "null"]}, \
-        {"type": ["integer", "null"]}
+    nnum, ns, ni, nb = {"type": ["number", "null"]}, {"type": ["string", "null"]}, \
+        {"type": ["integer", "null"]}, {"type": ["boolean", "null"]}
     uv = _obj({"u": num, "v": num})
     team = {"enum": list(TEAMS)}
     rel = {"enum": list(RELATIONS)}
@@ -499,17 +507,18 @@ def snapshot_schema() -> dict:
                   "map_state": _fact_of({"enum": ["visible", "remembered", "dead", "unknown"]}),
                   "on_screen": _fact_of(b), "hp": _fact_of(num),
                   "items": _fact_of({"type": "array", "items": i}),
-                  "scores": _fact_of({"type": "object"})})
+                  "scores": _fact_of({"type": "object"}), "conflicts": i})
     enemy = _obj({k: champ["properties"][k] for k in ("champion", "position", "map_state",
                                                       "alive", "respawn_in", "on_screen")})
-    unit = _obj({"kind": s, "x": num, "y": num, "hp": num, "score": num,
-                 "name": _fact_of(s), "team": _fact_of(team), "relation": _fact_of(rel)})
-    track = _obj({"id": s, "kind": s, "state": {"enum": ["seen", "unseen", "lost"]},
-                  "u": num, "v": num, "x": nnum, "y": nnum, "hp": num, "age": num,
-                  "team": _fact_of(team), "relation": _fact_of(rel)})
-    conflict = _obj({"field": {"enum": ["team", "alive", "respawn_in", "roster"]},
-                     "champion": ns, "used": {"enum": list(SOURCES)},
-                     "values": {"type": "object"}})
+    # Юнит и трек — запись records.py как есть (to_dict) плюс факты; поля
+    # записи не закрываются схемой сервиса: их версия — records.SCHEMA.
+    unit = {"type": "object", "required": ["kind", "x", "y", "name", "relation", "side"],
+            "properties": {"kind": s, "x": num, "y": num, "name": _fact_of(s),
+                           "relation": _fact_of(rel), "side": _fact_of(team)}}
+    track = {"type": "object", "required": ["id", "kind", "state", "u", "v", "relation", "side"],
+             "properties": {"id": s, "kind": s, "state": {"enum": ["seen", "unseen", "lost"]},
+                            "u": num, "v": num, "relation": _fact_of(rel),
+                            "side": _fact_of(team)}}
     frames = _obj({"state": {"enum": ["absent", "ok", "paused", "minimized", "no_window",
                                       "no_frame", "ended"]},
                    "reason": ns, "kind": ns, "backend": ns, "backend_note": ns, "fps": nnum,
@@ -517,11 +526,18 @@ def snapshot_schema() -> dict:
                                        "maxItems": 2}, {"type": "null"}]},
                    "last_frame_age": nnum})
     vision = _obj({"state": {"enum": ["absent", "ok"]}, "reason": ns, "frame": ni,
-                   "stream_t": nnum, "age": nnum,
-                   "view": {"enum": ["spectator", "player", None]}, "session": ns})
+                   "stream_t": nnum, "age": nnum, "session": ns})
+    match_src = _obj({"state": {"enum": ["absent", "ok"]}, "reason": ns, "stream_t": nnum,
+                      "age": nnum, "roster": {"enum": ["api", "hud", None]},
+                      "api_live": nb, "api_refused": ns})
     api = _obj({"state": {"enum": ["absent", "no_game", "loading", "in_game", "ended",
                                    "error"]},
                 "reason": ns, "age": nnum, "game_age": nnum})
+    passport = _obj({"items": {"type": "object"}, "pending": {"type": "array", "items": s},
+                     "disabled": {"type": "array",
+                                  "items": _obj({"reader": s, "title": s, "reason": s})},
+                     "enabled": {"type": "array", "items": s}})
+    conflicts = _obj({"total": i, "kinds": {"type": "object", "additionalProperties": i}})
     fact_def = {
         "type": "object", "required": ["value", "source", "age", "reason"],
         "properties": {"value": {}, "source": {"enum": [*SOURCES, None]},
@@ -542,8 +558,9 @@ def snapshot_schema() -> dict:
         "$defs": {"fact": fact_def},
         **_obj({
             "schema": {"const": SCHEMA}, "seq": i, "t": num, "error": ns,
-            "sources": _obj({"frames": frames, "vision": vision, "api": api}),
-            "passport": _fact_of({"type": "object"}),
+            "sources": _obj({"frames": frames, "vision": vision, "match": match_src,
+                             "api": api}),
+            "passport": _fact_of(passport),
             "match": _obj({"time": _fact_of(num), "mode": _fact_of(s), "map": _fact_of(i),
                            "side": _fact_of(team),
                            "state": _fact_of({"enum": ["no_game", "loading", "in_game",
@@ -557,7 +574,7 @@ def snapshot_schema() -> dict:
             "scene": _fact_of(s),
             "units": _fact_of({"type": "array", "items": unit}),
             "tracks": _fact_of({"type": "array", "items": track}),
-            "conflicts": _obj({"count": i, "items": {"type": "array", "items": conflict}}),
+            "conflicts": _fact_of(conflicts),
         }),
     }
 
@@ -606,6 +623,8 @@ def _check(x: Any, s: dict, root: dict, path: str, out: list[str]) -> None:
                 _check(v, props[k], root, f"{path}.{k}", out)
             elif s.get("additionalProperties") is False:
                 out.append(f"{path}: лишнее поле {k}")
+            elif isinstance(s.get("additionalProperties"), dict):
+                _check(v, s["additionalProperties"], root, f"{path}.{k}", out)
     if isinstance(x, list):
         if "minItems" in s and len(x) < s["minItems"]:
             out.append(f"{path}: меньше {s['minItems']} элементов")
@@ -653,7 +672,7 @@ class StateHub:
     События потока (`event` SSE): `state` — снимок, не чаще раза в
     `state_every` с; `game` — новое событие Live Client (по EventID, новая
     игра — счёт заново); `vision` — новое событие контекста матча; `source`
-    — сменилось состояние источника кадров, зрения или API. Провайдер упал —
+    — сменилось состояние источника кадров, зрения, контекста или API. Провайдер упал —
     снимок из одних отказов с причиной, хаб живёт дальше."""
 
     def __init__(self, provider: Provider, period: float = 0.25, state_every: float = 1.0,
@@ -697,7 +716,7 @@ class StateHub:
 
     def _new_events(self, inp: StateInputs, snap: dict) -> list[tuple[str, dict]]:
         out: list[tuple[str, dict]] = []
-        src = tuple(snap["sources"][k]["state"] for k in ("frames", "vision", "api"))
+        src = tuple(snap["sources"][k]["state"] for k in ("frames", "vision", "match", "api"))
         if src != self._src:
             self._src = src
             out.append(("source", snap["sources"]))
@@ -896,10 +915,20 @@ class StateServer:
 
 # ---------------------------------------------------------------- без сеанса live
 
-def api_only_provider(client) -> Provider:
-    """Провайдер только из Live Client (`live_client.LiveClient`): зрения нет,
-    его поля — отказы с причиной. Сеанс live подключает свой провайдер."""
-    return lambda: StateInputs(api=client.status())
+def api_only_provider(client, clock: Callable[[], float] = time.time) -> Provider:
+    """Провайдер только из Live Client (`live_client.LiveClient`): свой
+    контекст матча кормится одним API (`status_observation`), зрения нет —
+    его поля отказы с причиной. Сеанс live подключает свой провайдер.
+    Время контекста — unix-время: кадров, а значит и шкалы потока, нет."""
+    ms = MatchState()
+
+    def provide() -> StateInputs:
+        now = clock()
+        status = client.status()
+        obs, _why = status_observation(status, now)   # причина видна в sources.api
+        ms.update(now, kind="none", api=obs)
+        return StateInputs(api=status, match=match_view(ms, now))
+    return provide
 
 
 def main(argv: Sequence[str] | None = None) -> None:
