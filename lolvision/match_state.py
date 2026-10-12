@@ -46,12 +46,23 @@ alive / timer / minimap_dead), а не тихое перетирание. Мес
 (новая игра); скользящее окно HUD при API её не сбрасывает. API молчит
 дольше API_STALE — жив / мёртв снова по HUD и выводу по таймеру, а состав
 остаётся из API до новой игры в API.
+
+Свой чемпион на виде игрока (#802). Имена над плашками на виде игрока не
+читаются, но свой юнит узнаётся по цвету полоски (UnitRec.relation = self,
+sides.py), а кто из десяти свой — говорит API (ApiObs.me). Такой юнит даёт
+место своего чемпиона с экрана той же проекцией; два и больше self на
+кадре — не выбираем наугад: отказ и conflicts["self_many"]. Если в том же
+кадре своя иконка есть на миникарте, место — с миникарты (она не зависит
+от ответа камеры), а экран с ней сверяется: дальше SELF_PLACE_TOL —
+conflicts["self_place"].
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+
+import numpy as np
 
 from lolvision.geometry import Projection
 from lolvision.records import (ChampCtx, DeathEvent, Event, MinimapChamp, RespawnEvent,
@@ -70,6 +81,13 @@ API_STALE = 5.0            # с без наблюдения API — источн
 # опережает на долю секунды — расхождение в этом окне не конфликт.
 API_SLACK = 1.5
 TIMER_SLACK = 2.0          # с: таймер панели против API — дальше конфликт
+# Доля карты: место своего чемпиона с экрана против своей иконки миникарты в
+# том же кадре — дальше конфликт (#802). Обычная ошибка обоих — иконка p90
+# ~150 ед. (minimap-champions.md), камера внутри карты p90 ~160 ед.
+# (replay-api.md), точка тела → земля ~50 ед. (entity-model-plan.md 4.2):
+# вместе ~0.025 карты (14 800 ед.). 0.05 (~740 ед.) — вдвое выше, но ниже
+# грубых промахов камеры (p99 у края — тысячи ед.) и иконки не того.
+SELF_PLACE_TOL = 0.05
 
 
 # ---------- наблюдение Live Client API ----------
@@ -86,11 +104,12 @@ class ApiPlayer:
 @dataclass(frozen=True)
 class ApiObs:
     """Снимок API на момент наблюдения: время матча, десять игроков (ORDER,
-    затем CHAOS), своя команда — None, если своего игрока нет (наблюдатель
-    в клиенте)."""
+    затем CHAOS), своя команда и свой чемпион (Id Data Dragon) — None, если
+    своего игрока нет (наблюдатель в клиенте)."""
     game_time: float           # с от начала матча
     players: tuple[ApiPlayer, ...]
     me_team: str | None = None
+    me: str | None = None
 
     @property
     def roster(self) -> tuple[str, ...]:
@@ -110,6 +129,12 @@ class ApiObs:
             return "чемпионы повторяются"
         if self.me_team is not None and self.me_team not in TEAMS:
             return f"своя команда {self.me_team!r}"
+        if self.me is not None:
+            mine = next((p for p in self.players if p.name == self.me), None)
+            if mine is None:
+                return f"своего чемпиона {self.me!r} нет в составе"
+            if self.me_team is not None and mine.team != self.me_team:
+                return f"свой чемпион {self.me!r} в {mine.team}, а своя команда {self.me_team}"
         return None
 
 
@@ -161,7 +186,9 @@ class MatchState:
     api_refused: str | None = None   # почему последний снимок API не принят
     game_time: Fact | None = None    # время матча из API на момент api_t
     # Расхождения источников по виду (#781): roster / alive / timer /
-    # minimap_dead — против API, hud_flicker — панель против таймера.
+    # minimap_dead — против API, hud_flicker — панель против таймера,
+    # self_many — несколько своих юнитов на кадре, self_place — место
+    # своего с экрана против своей иконки миникарты (#802).
     conflicts: Counter = field(default_factory=Counter)
     _other: tuple | None = None
     _other_n: int = 0
@@ -190,8 +217,10 @@ class MatchState:
         if kind in ("game", "shop", "tab") and champs:
             self._roster(t, champs, new)
             self._from_champs(t, champs, new)
-            if kind == "game":
-                self._from_units(t, units or [], cam)
+        # Юниты — и без миникарты на кадре: состав уже известен (из API или
+        # прошлых кадров), а свой чемпион узнаётся по полоске (#802).
+        if kind == "game" and units and self.order:
+            self._from_units(t, units, cam)
         self._infer(t, new)
         self.events += new
         return new
@@ -349,22 +378,46 @@ class MatchState:
 
     def _from_units(self, t: float, units: list[UnitRec],
                     cam: tuple[float | None, float | None] | None) -> None:
-        """Чемпионы на основном виде с именем: виден сейчас, ХП и место на
+        """Чемпионы на основном виде: опознанные по имени над плашкой и свой
+        по цвету полоски (relation self, #802). Виден сейчас, ХП и место на
         карте — через проекцию кадра при этом центре камеры. Нет проекции или
         ответа камеры — место остаётся прежним: выдумывать его не из чего."""
         px, py = cam if cam is not None else (None, None)
         placeable = self.proj is not None and px is not None and py is not None
+        where = (px, py) if placeable else None
+        mine = [u for u in units if u.kind == "champion" and u.relation == "self"]
         for u in units:
-            if u.kind != "champion" or u.name not in self.champs:
+            if u.kind != "champion" or u.relation == "self" or u.name not in self.champs:
                 continue
-            c = self.champs[u.name]
-            if c.alive is not None and c.alive.value is False:
-                continue                # мёртвого на экране нет: имя спутано
-            c.seen, c.hp = t, Fact(u.hp, t, "screen")
-            minimap_now = c.pos is not None and c.pos.src == "minimap" and c.pos.t >= t
-            if placeable and not minimap_now:
-                uv = self.proj.frac_to_map([[u.x, u.y]], (px, py))[0]
-                c.pos = Fact((float(uv[0]), float(uv[1])), t, "screen")
+            self._seen_on_screen(self.champs[u.name], u, t, where)
+        me = self.api.me if self.api is not None else None
+        if not mine or me not in self.champs:
+            return                      # свой чемпион неизвестен — некого ставить
+        if len(mine) > 1:
+            # Своя полоска одна; несколько — проба цвета ошиблась (табло,
+            # эффект): который настоящий, не знаем — отказ, а не догадка.
+            self._conflict(None, "self_many")
+            return
+        self._seen_on_screen(self.champs[me], mine[0], t, where, check_minimap=True)
+
+    def _seen_on_screen(self, c: Champ, u: UnitRec, t: float,
+                        where: tuple[float, float] | None, check_minimap: bool = False) -> None:
+        """Чемпион `c` виден на экране юнитом `u`: виден, ХП и место с экрана,
+        если в этом кадре нет места с миникарты — она точнее (не зависит от
+        ответа камеры). `check_minimap` — сверить место с экрана с иконкой."""
+        if c.alive is not None and c.alive.value is False:
+            return                      # мёртвого на экране нет: опознан не тот
+        c.seen, c.hp = t, Fact(u.hp, t, "screen")
+        if where is None:
+            return
+        uv = self.proj.frac_to_map([[u.x, u.y]], where)[0]
+        uv = (float(uv[0]), float(uv[1]))
+        if c.pos is not None and c.pos.src == "minimap" and c.pos.t >= t:
+            off = np.hypot(uv[0] - c.pos.value[0], uv[1] - c.pos.value[1])
+            if check_minimap and off > SELF_PLACE_TOL:
+                self._conflict(c, "self_place")
+            return
+        c.pos = Fact(uv, t, "screen")
 
     def _infer(self, t: float, new: list[Event]) -> None:
         if self.api_live(t):

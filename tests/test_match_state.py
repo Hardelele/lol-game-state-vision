@@ -6,7 +6,8 @@ import pytest
 
 from lolstream.live_client import read_journal, replay, status_observation
 from lolvision.geometry import Projection
-from lolvision.match_state import API_STALE, FOUNTAIN, ApiObs, ApiPlayer, MatchState
+from lolvision.match_state import (API_STALE, FOUNTAIN, SELF_PLACE_TOL, ApiObs, ApiPlayer,
+                                  MatchState)
 from lolvision.records import DeathEvent, MinimapChamp, RosterEvent, UnitRec
 
 OWN = Path(__file__).parent / "fixtures" / "live_client" / "own_game.jsonl"
@@ -147,12 +148,12 @@ def test_shop_frame_still_reads_minimap():
 
 # ---------- Live Client API как источник (#798, 2B) ----------
 
-def api(game_time=60.0, dead=None, names=NAMES, me_team="ORDER"):
-    """Снимок API: все живы, `dead` — {имя: таймер}."""
+def api(game_time=60.0, dead=None, names=NAMES, me_team="ORDER", me=None):
+    """Снимок API: все живы, `dead` — {имя: таймер}, `me` — свой чемпион."""
     dead = dead or {}
     return ApiObs(game_time, tuple(ApiPlayer(n, "ORDER" if s < 5 else "CHAOS", n in dead,
                                              float(dead.get(n, 0.0)))
-                                   for s, n in enumerate(names)), me_team)
+                                   for s, n in enumerate(names)), me_team, me)
 
 
 def test_api_gives_roster_deaths_and_clock_without_frames():
@@ -314,4 +315,65 @@ def test_own_game_journal_through_match_state():
     deaths = [name for typ, name, _ in got_ev if typ == "death"]
     assert deaths == ["Yone", "Lux", "Yone", "Zilean"] == kills    # каждое убийство API
     assert not any(isinstance(e, RosterEvent) for e in m.events)    # ложных сбросов нет
-    assert not m.conflicts and m.api.me_team == "ORDER"
+    assert not m.conflicts and m.api.me_team == "ORDER" and m.api.me in IDS
+
+
+# ---------- свой чемпион на виде игрока (#802) ----------
+
+# Свой юнит: имени нет (на виде игрока имена не читаются), relation по полоске.
+SELF = UnitRec("champion", "ORDER", .75, .5, .6, .9, relation="self", side="ORDER")
+
+
+def test_own_unit_is_placed_on_screen_through_projection():
+    m = MatchState(proj=PROJ)
+    m.update(0, "game", api=api(me="Jhin"))
+    m.update(1, "game", champs(), [SELF, UnitRec("minion", "ORDER", .1, .1, 1.0, .8)], (.5, .5))
+    r = view(m, "Jhin")
+    assert r.state == "visible" and r.src == "screen" and r.hp == .6 and r.age == 0.0
+    assert abs(r.u - .525) < 1e-6 and abs(r.v - .5) < 1e-6
+    assert not m.conflicts
+    # Миникарты на кадре нет (не прочитана) — состав известен, место всё равно с экрана.
+    m.update(2, "game", None, [replace(SELF, x=.5)], (.6, .5))
+    r = view(m, "Jhin")
+    assert (r.src, r.age) == ("screen", 0.0) and abs(r.u - .6) < 1e-6
+
+
+def test_own_unit_without_projection_or_camera_or_me_gives_no_place():
+    for proj, cam, me in ((None, (.5, .5), "Jhin"), (PROJ, None, "Jhin"),
+                          (PROJ, (None, None), "Jhin"), (PROJ, (.5, .5), None)):
+        m = MatchState(proj=proj)
+        m.update(0, "game", champs(), [SELF], cam, api=api(me=me))
+        r = view(m, "Jhin")
+        assert r.u is None and r.src is None
+        # Свой известен — виден и ХП с плашки; неизвестен — не ставим никого.
+        assert (r.state, r.hp) == (("visible", .6) if me else ("unknown", None))
+
+
+def test_two_own_units_are_refused_and_counted():
+    m = MatchState(proj=PROJ)
+    m.update(0, "game", champs(), [SELF], (.5, .5), api=api(me="Jhin"))
+    m.update(1, "game", champs(), [replace(SELF, x=.2), replace(SELF, x=.9)], (.5, .5))
+    r = view(m, "Jhin")
+    assert (r.age, r.hp) == (1.0, .6) and abs(r.u - .525) < 1e-6   # прежнее место
+    assert m.conflicts == {"self_many": 1}
+
+
+def test_own_place_is_from_minimap_and_screen_is_checked_against_it():
+    m = MatchState(proj=PROJ)
+    m.update(0, "game", api=api(me="Jhin"))
+    # Иконка рядом с экраном: место с миникарты, расхождения нет.
+    m.update(1, "game", champs(Jhin=dict(visible=True, u=.53, v=.51)), [SELF], (.5, .5))
+    r = view(m, "Jhin")
+    assert (r.u, r.v, r.src, r.hp) == (.53, .51, "minimap", .6) and not m.conflicts
+    # Экран (.525, .5) против иконки дальше порога — конфликт, место с миникарты.
+    far = .525 + SELF_PLACE_TOL + .01
+    m.update(2, "game", champs(Jhin=dict(visible=True, u=far, v=.5)), [SELF], (.5, .5))
+    r = view(m, "Jhin")
+    assert (r.u, r.src) == (far, "minimap")
+    assert m.conflicts == {"self_place": 1} and r.conflicts == 1
+
+
+def test_api_me_must_be_in_roster_and_own_team():
+    assert api(me="Jhin").problem() is None
+    assert "нет в составе" in api(me="Ahri").problem()
+    assert "своя команда" in api(me="Jinx").problem()        # Jinx в CHAOS, свои — ORDER
