@@ -14,9 +14,15 @@
   geometry.Projection (гомография dataset/layouts/projection.json плюс
   центр камеры — ответ модели камеры).
 * Предсказание места — по скорости трека; сопоставление — венгерским
-  алгоритмом внутри (класс, команда) со стробом по расстоянию: юнит не может
+  алгоритмом внутри класса со стробом по расстоянию: юнит не может
   пройти больше, чем позволяет его скорость за прошедшее время. У миньона
   ХП не растёт — рост ХП штрафуется.
+* Команда в паре — по сторонам и отношению (sides.py, #790), а не по
+  `team` детектора: на виде игрока `team` — «синий или красный» по выучке
+  наблюдателя, и своя зелёная плашка получает то ORDER, то CHAOS. Пара
+  запрещена, если у юнита и трека известны и различаются side или
+  relation; неизвестное не запрещает. Записи, прошедшие мимо
+  sides.assign (обе причины UNSET), — как раньше: по `team`.
 * Чемпион с именем (live_champions) — трек `champ-<команда>-<имя>`: имя
   важнее геометрии.
 * Трек без пары: если он должен быть виден (предсказанное место внутри
@@ -43,7 +49,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from lolvision.geometry import MAP_UNITS, Projection
-from lolvision.records import Event, TrackRec, UnitDeathEvent, UnitNewEvent, UnitRec
+from lolvision.records import UNSET, Event, TrackRec, UnitDeathEvent, UnitNewEvent, UnitRec
 
 # Скорость с запасом, ед./с (миньон 325, чемпион до ~500 с бонусами), и
 # базовый строб — ошибка проекции и детектора (~60–100 ед.).
@@ -104,9 +110,35 @@ class Track:
     miss: int = 0                  # кадров подряд «должен быть виден, но нет»
     state: str = "new"             # new / seen / unseen / lost / dead
     xy: tuple[float, float] | None = None   # место в кадре на последнем наблюдении (доли)
+    # Отношение и сторона (sides.py): первое известное значение; пока его
+    # нет — None и причина последнего наблюдения.
+    relation: str | None = None
+    relation_reason: str | None = UNSET
+    side: str | None = None
+    side_reason: str | None = UNSET
 
     def predict(self, t: float) -> np.ndarray:
         return self.uv + self.vel * (t - self.t)
+
+    def take_sides(self, det: UnitRec) -> None:
+        """Отношение и сторона из наблюдения: известное не перетирается."""
+        if self.relation is None:
+            self.relation, self.relation_reason = det.relation, det.relation_reason
+        if self.side is None:
+            self.side, self.side_reason = det.side, det.side_reason
+
+
+def _unassigned(r) -> bool:
+    return r.relation_reason == UNSET and r.side_reason == UNSET and \
+        r.relation is None and r.side is None
+
+
+def clash(det: UnitRec, tr: Track) -> bool:
+    """Юнит и трек — заведомо разные стороны или отношения."""
+    if _unassigned(det) and _unassigned(tr):
+        return det.team != tr.team         # записи без sides.assign: как раньше
+    return any(a is not None and b is not None and a != b
+               for a, b in ((det.side, tr.side), (det.relation, tr.relation)))
 
 
 @dataclass
@@ -144,37 +176,37 @@ class UnitTracker:
         matched_tracks = set()
         live = [k for k, tr in enumerate(self.tracks) if tr.state not in ("dead",)]
         for kind in SPEED:
-            for team in ("ORDER", "CHAOS"):
-                di = [i for i, u in enumerate(dets) if u.kind == kind and u.team == team]
-                ti = [k for k in live
-                      if self.tracks[k].kind == kind and self.tracks[k].team == team]
-                if not di or not ti:
-                    continue
-                cost = np.full((len(di), len(ti)), 1e9)
-                for a, i in enumerate(di):
-                    name = dets[i].name
-                    for b, k in enumerate(ti):
-                        tr = self.tracks[k]
-                        if name and tr.name:
-                            cost[a, b] = 0.0 if name == tr.name else 1e9
-                            continue
-                        dt = max(0.0, t - tr.t)
-                        d = np.hypot(*(uv[i] - tr.predict(t))) * MAP_UNITS
-                        gate = GATE0[kind] + SPEED[kind] * dt
-                        if d > gate:
-                            continue
-                        c = d
-                        if kind == "minion" and dets[i].hp > tr.hp + 0.1:
-                            c += HP_RISE_COST * (dets[i].hp - tr.hp)
-                        cost[a, b] = c
-                rows, cols = linear_sum_assignment(cost)
-                for a, b in zip(rows, cols):
-                    if cost[a, b] >= 1e9:
+            di = [i for i, u in enumerate(dets) if u.kind == kind]
+            ti = [k for k in live if self.tracks[k].kind == kind]
+            if not di or not ti:
+                continue
+            cost = np.full((len(di), len(ti)), 1e9)
+            for a, i in enumerate(di):
+                name = dets[i].name
+                for b, k in enumerate(ti):
+                    tr = self.tracks[k]
+                    if clash(dets[i], tr):
                         continue
-                    i, k = di[a], ti[b]
-                    self._observe(self.tracks[k], t, uv[i], dets[i], ev)
-                    used.add(i)
-                    matched_tracks.add(k)
+                    if name and tr.name:
+                        cost[a, b] = 0.0 if name == tr.name else 1e9
+                        continue
+                    dt = max(0.0, t - tr.t)
+                    d = np.hypot(*(uv[i] - tr.predict(t))) * MAP_UNITS
+                    gate = GATE0[kind] + SPEED[kind] * dt
+                    if d > gate:
+                        continue
+                    c = d
+                    if kind == "minion" and dets[i].hp > tr.hp + 0.1:
+                        c += HP_RISE_COST * (dets[i].hp - tr.hp)
+                    cost[a, b] = c
+            rows, cols = linear_sum_assignment(cost)
+            for a, b in zip(rows, cols):
+                if cost[a, b] >= 1e9:
+                    continue
+                i, k = di[a], ti[b]
+                self._observe(self.tracks[k], t, uv[i], dets[i], ev)
+                used.add(i)
+                matched_tracks.add(k)
         # Треки без пары: умер / потерян / не виден.
         vis = self.visible(np.array([tr.predict(t) for tr in self.tracks]).reshape(-1, 2), cam)
         for k, tr in enumerate(self.tracks):
@@ -185,7 +217,8 @@ class UnitTracker:
                 if tr.kind == "minion" and tr.hp <= DEATH_HP and tr.state != "new":
                     tr.state = "dead"
                     ev.append(UnitDeathEvent(t, tr.id, tr.kind, tr.team,
-                                             float(tr.uv[0]), float(tr.uv[1])))
+                                             float(tr.uv[0]), float(tr.uv[1]),
+                                             tr.relation, tr.side))
                 elif tr.miss >= MISS_IN_VIEW:
                     tr.state = "lost"
             else:
@@ -196,9 +229,11 @@ class UnitTracker:
                 continue
             if u.name and any(tr.name == u.name for tr in self.tracks):
                 continue                    # чемпион с этим именем уже есть
-            self.tracks.append(Track(new_id(u.kind, u.team, *uv[i], u.name), u.kind, u.team,
-                                     uv[i].copy(), np.zeros(2), t, t, float(u.hp), u.name,
-                                     xy=(float(u.x), float(u.y))))
+            tr = Track(new_id(u.kind, u.team, *uv[i], u.name), u.kind, u.team,
+                       uv[i].copy(), np.zeros(2), t, t, float(u.hp), u.name,
+                       xy=(float(u.x), float(u.y)))
+            tr.take_sides(u)
+            self.tracks.append(tr)
         # Сроки: умершие и давно не виденные уходят из активных.
         keep = []
         for tr in self.tracks:
@@ -225,6 +260,7 @@ class UnitTracker:
         tr.xy = (float(det.x), float(det.y))
         tr.hits += 1
         tr.miss = 0
+        tr.take_sides(det)
         if det.name and not tr.name:
             # Имя прочиталось позже рождения трека: id становится именным —
             # один раз, дальше он не меняется.
@@ -232,7 +268,7 @@ class UnitTracker:
             tr.id = new_id(tr.kind, tr.team, *tr.uv, tr.name)
         if tr.state == "new" and tr.hits >= CONFIRM:
             tr.state = "seen"
-            ev.append(UnitNewEvent(t, tr.id, tr.kind, tr.team))
+            ev.append(UnitNewEvent(t, tr.id, tr.kind, tr.team, tr.relation, tr.side))
         elif tr.state != "new":
             tr.state = "seen"
 
@@ -246,5 +282,6 @@ class UnitTracker:
             p = tr.predict(t) if tr.state != "seen" else tr.uv
             xy = tr.xy if tr.state == "seen" else None
             out.append(TrackRec(tr.id, tr.kind, tr.team, tr.state, float(p[0]), float(p[1]),
-                                xy[0] if xy else None, xy[1] if xy else None, tr.hp, t - tr.t))
+                                xy[0] if xy else None, xy[1] if xy else None, tr.hp, t - tr.t,
+                                tr.relation, tr.relation_reason, tr.side, tr.side_reason))
         return out
