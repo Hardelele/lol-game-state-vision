@@ -155,7 +155,7 @@
 | после `source.open()` | `Passport.build(source.describe())`; у ролика — `set_api(None, …, reason="нет — источник YouTube")`; у своего экрана — сразу `set_view("player", how="свой экран: своя игра", source="source")` |
 | собран путь кадра | `set_asset` для `unit_net`, `names_bank`, `minimap_model` — что есть у пути |
 | кадр с новым `Frame.size` | `set_frame_size`; у экрана ещё `set_game_rect` (кадр — окно игры); путь кадра пересобирается с новым `Locator` |
-| `Locator.offer_region` нашёл | `set_minimap(box, scale, score, t)` |
+| `Locator.offer_region` нашёл | `set_minimap(box, scale, score, t, how)`; `how` — чем: эталон Ущелья, рамка миникарты, сохранённый прямоугольник или явный масштаб (#803); у рамки и сохранённого `score` — совпадение рамки (порог `FRAME_MIN` выше `MIN_SCORE`) |
 | `Locator.tried >= LOCATE_MAX` (`minimap_locate.LOCATE_MAX`, общий с `tools/build_coords.py`) | `minimap_missing` |
 | `"minimap" in pending` и игровой кадр | `Locator.locate(region)`; ответ в другом прямоугольнике (дальше `AGREE_PX`) — совпадение 0; `check_minimap`; потеряна — снова раскладка и новый поиск |
 | вид | свой экран — игрок (наблюдатель, только если API сказал, что своего игрока нет); ролик — `LiveChampions.view`, `None` → `unknown` с причиной `LiveChampions.view_how()` («раскладка не решена: портреты наблюдателя в S, панель игрока в P из N чтений; …») |

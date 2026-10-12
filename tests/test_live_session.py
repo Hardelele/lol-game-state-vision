@@ -26,7 +26,7 @@ from lolstream import live_champions as lc
 from lolstream.frame_source import Frame, Status, gap
 from lolstream.live_client import LiveClient, Response, journal_transport, read_journal
 from lolstream.state_service import check_snapshot
-from lolvision.minimap_locate import STD_BOX
+from lolvision.minimap_locate import STD_BOX, Fit, load_fit, save_fit
 from lolvision.records import MinimapChamp
 from lolvision.unit_net import Unit
 
@@ -425,15 +425,19 @@ class _Champs:
 class _Locator:
     """Поиск миникарты, который находит стандартную с первой попытки."""
 
-    def __init__(self, size):
+    made: list = []
+
+    def __init__(self, size, saved=None, manual=None):
         w, h = size
         self.size, self.region = size, (int(0.7 * w), int(0.5 * h), w, h)
+        self.saved, self.manual = saved, manual
         self.box = self.fit = None
         self.tried = 0
+        _Locator.made.append(self)
 
     def offer_region(self, region):
         self.tried += 1
-        self.fit = SimpleNamespace(box=STD_BOX, scale=1.0, score=0.8)
+        self.fit = SimpleNamespace(box=STD_BOX, scale=1.0, score=0.8, how="map")
         self.box = STD_BOX
         return True
 
@@ -498,6 +502,27 @@ def rigged(monkeypatch, cpu_models, tmp_path):
 
 def _off(row) -> dict:
     return row["off"]
+
+
+def test_minimap_found_by_reference_is_saved_and_offered_next_time(rigged, tmp_path):
+    """Свой экран (#803): прямоугольник, найденный эталоном, — в файл вне
+    репозитория; следующий поиск того же размера получает его и масштаб из
+    настройки. Без файла (ролик) ничего не пишется."""
+    build, _, _ = rigged
+    store = tmp_path / "lolstream" / "minimap_fit.json"
+    s = live.Session("screen", "r", _Source([_ok(0.0), _ok(0.5)], kind="screen"),
+                     device="cpu", build=build, minimap_store=store, minimap_scale=1.3)
+    st = _finish(s)
+    loc = _Locator.made[-1]
+    assert loc.saved is None and loc.manual == 1.3            # файла ещё не было
+    assert load_fit(store, (640, 360)).box == STD_BOX
+    assert st["passport"]["items"]["minimap"]["how"] == "найдена в кадре: эталон Ущелья"
+    save_fit(store, (640, 360), Fit((0.8, 0.7, 0.99, 0.98), 1.2, 0.6))
+    _finish(live.Session("screen", "r", _Source([_ok(0.0)], kind="screen"), device="cpu",
+                         build=build, minimap_store=store))
+    assert _Locator.made[-1].saved.box == (0.8, 0.7, 0.99, 0.98)
+    _finish(live.Session("v", "r", _Source([_ok(0.0)]), device="cpu", build=build))
+    assert _Locator.made[-1].saved is None
 
 
 def test_screen_passport_player_view_refuses_spectator_readers(rigged):

@@ -88,7 +88,9 @@ def main() -> None:
     # раскладке истина у них съезжает к левому верхнему углу (#785). Пока
     # миникарта не найдена, кадр сохраняется без неё, а угол кадра ждёт в
     # памяти (~0.9 МБ при 1080p); не нашлась за LOCATE_MAX кадров — раскладка.
-    locator = Locator((w, h)) if args.minimap == "auto" else None
+    # Набор — только Ущелье: поиск по рамке (для других карт, #803) выключен,
+    # чтобы набор собирался так же, как раньше.
+    locator = Locator((w, h), by_frame=False) if args.minimap == "auto" else None
     rx0, ry0 = search_region((w, h))[:2]
     print(f"  сцена {cx1 - cx0}x{cy1 - cy0} → хранение {STORE_W}x{store_h}")
     use_gpu = args.decode == "gpu" or (args.decode == "auto" and have_nvdec())

@@ -6,8 +6,8 @@ import pytest
 
 from lolstream.live_client import read_journal, replay, status_observation
 from lolvision.geometry import Projection
-from lolvision.match_state import (API_STALE, FOUNTAIN, SELF_PLACE_TOL, ApiObs, ApiPlayer,
-                                  MatchState)
+from lolvision.match_state import (ABYSS, API_STALE, FOUNTAIN, FOUNTAIN_ABYSS, RIFT,
+                                  SELF_PLACE_TOL, ApiObs, ApiPlayer, MatchState, fountain)
 from lolvision.records import DeathEvent, MinimapChamp, RosterEvent, UnitRec
 
 OWN = Path(__file__).parent / "fixtures" / "live_client" / "own_game.jsonl"
@@ -377,3 +377,39 @@ def test_api_me_must_be_in_roster_and_own_team():
     assert api(me="Jhin").problem() is None
     assert "нет в составе" in api(me="Ahri").problem()
     assert "своя команда" in api(me="Jinx").problem()        # Jinx в CHAOS, свои — ORDER
+
+
+# ---------- другие карты: Воющая бездна (#803) ----------
+
+def test_fountain_by_map():
+    assert fountain("CHAOS", None) == fountain("CHAOS", RIFT) == FOUNTAIN["CHAOS"]
+    assert fountain("CHAOS", ABYSS) == FOUNTAIN_ABYSS["CHAOS"]
+    assert fountain("ORDER", 30) is None                        # карта без замера
+    # ARAM: CHAOS справа сверху, ORDER слева снизу.
+    (ou, ov), (cu, cv) = FOUNTAIN_ABYSS["ORDER"], FOUNTAIN_ABYSS["CHAOS"]
+    assert ou < .2 and ov > .8 and cu > .8 and cv < .2
+
+
+@pytest.mark.parametrize("map_number, want", [(ABYSS, FOUNTAIN_ABYSS["CHAOS"]), (30, None),
+                                              (RIFT, FOUNTAIN["CHAOS"])])
+def test_api_respawn_at_fountain_of_this_map(map_number, want):
+    m = MatchState()
+    m.update(0, "game", api=replace(api(60.0), map_number=map_number))
+    m.update(1, "game", champs(Jinx=dict(visible=True, u=.6, v=.4)),
+             api=replace(api(61.0, {"Jinx": 10.0}), map_number=map_number))
+    assert m.map_number == map_number
+    m.update(12, "game", api=replace(api(72.0), map_number=map_number))
+    r = view(m, "Jinx")
+    if want is None:
+        assert (r.u, r.v, r.src) == (None, None, None)   # не там, где умер, а «не знаем»
+    else:
+        assert (r.u, r.v, r.src) == (*want, "inferred")
+
+
+def test_no_place_from_screen_off_rift():
+    """Проекция экрана — в единицах Ущелья: на ARAM место с экрана не берётся."""
+    m = MatchState(proj=PROJ)
+    m.update(0, "game", api=replace(api(me="Jhin"), map_number=ABYSS))
+    m.update(1, "game", champs(), [SELF], (.5, .5))
+    r = view(m, "Jhin")
+    assert r.state == "visible" and r.hp == .6 and r.u is None and r.src is None

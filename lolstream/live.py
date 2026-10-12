@@ -94,9 +94,10 @@ from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 # Поиск миникарты (#785): ~40 мс на кадр «игра», только пока не найдена; не
 # нашлась за LOCATE_MAX попыток — остаётся раскладка.
-from lolvision.minimap_locate import AGREE_PX, LOCATE_MAX, Locator, corner_px, box_px
+from lolvision.minimap_locate import (AGREE_PX, LOCATE_MAX, Locator, corner_px, box_px,
+                                      SCALES, fit_file, load_fit, save_fit)
 from lolstream.live_champions import LiveChampions
-from lolvision.match_state import API_STALE, ApiObs, MatchState
+from lolvision.match_state import API_STALE, ApiObs, MatchState, rift
 from lolvision.passport import UNKNOWN, Change, Passport
 from lolvision.records import SCHEMA, UnitRec, dicts
 from lolvision.sides import SideContext, assign as assign_sides
@@ -104,11 +105,18 @@ from lolvision.sides import SideContext, assign as assign_sides
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
+# Не Ущелье (#803): центр камеры — рамка на миникарте, если её качество не
+# ниже этого. Кадры ARAM: рамка видна — 0.70–0.85, у края карты (обрезана) —
+# 0.38, под окном выбора аугмента — 0.0.
+MINIMAP_CAM_Q = 0.3
 # Типы сцены «игра под оверлеем»: миникарта видна, сцена закрыта окном.
 OVERLAY_KINDS = ("shop", "tab")
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
 MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
+# Как найдена миникарта (minimap_locate.Fit.how) — для note и паспорта.
+FIT_HOW = {"map": "эталон Ущелья", "frame": "рамка миникарты",
+           "saved": "сохранённый прямоугольник, рамка на месте", "manual": "масштаб задан явно"}
 STAGES = ("decode", "prep", "net", "agg", "kind", "units", "mini", "who", "out")
 # Кадр целиком для показа юнитов: ширина хранимой копии (16:9).
 FULL_STORE_W = 640
@@ -442,13 +450,28 @@ class Session:
 
     `state_port` — поднять сервис состояния (state_service.StateServer) на
     этом порту loopback вместе с сеансом (0 — свободный порт); None — без него.
+
+    Миникарта (#803): `minimap_store` — файл последнего прямоугольника,
+    найденного эталоном Ущелья (minimap_locate.save_fit), по размеру кадра:
+    на другой карте он берётся, если рамка миникарты на его месте. Только у
+    своего экрана — масштаб миникарты это настройка своего клиента, у чужого
+    ролика он свой. `minimap_scale` — масштаб задан явно: без поиска.
     """
+
+    # Карта по Live Client API (mapNumber); None — API нет: ролик с Ущелья.
+    map_number: int | None = None
+    minimap_store: Path | None = None
+    minimap_scale: float | None = None
 
     def __init__(self, sid: str, run: str, source: FrameSource, device: str = "cuda",
                  api: LiveClient | None = None,
                  build: Callable[..., Pipeline] | None = None,
-                 state_port: int | None = None):
+                 state_port: int | None = None,
+                 minimap_store: Path | None = None,
+                 minimap_scale: float | None = None):
         self.sid, self.run, self.source = sid, run, source
+        self.minimap_store, self.minimap_scale = minimap_store, minimap_scale
+        self.map_number = None
         self.fps = float(source.fps)
         self.start = float(getattr(source, "start", 0.0))
         self.device = device if torch.cuda.is_available() else "cpu"
@@ -740,6 +763,7 @@ class Session:
         чемпионы прежнего пути (пересборка при смене размера)."""
         pl = (self._build(size, self.run, self.device, self.fps, champs=champs)
               if champs is not None else self._build(size, self.run, self.device, self.fps))
+        pl.locator = self._new_locator(pl.size)
         self._pipe = pl
         self.kind, self.model_label = pl.model.kind, pl.model.label
         self.trained_on = list(pl.model.trained_on)
@@ -750,6 +774,13 @@ class Session:
             self.match.proj = pl.proj
         self._assets(pl, t)
         return pl
+
+    def _new_locator(self, size: tuple[int, int]) -> Locator:
+        """Поиск миникарты под размер кадра: с сохранённым прямоугольником
+        своего экрана и явным масштабом, если они есть."""
+        saved = (load_fit(self.minimap_store, size) if self.minimap_store is not None
+                 else None)
+        return Locator(size, saved=saved, manual=self.minimap_scale)
 
     def _source_note(self, size: tuple[int, int] | None) -> str:
         src = self.source
@@ -836,6 +867,7 @@ class Session:
         obs, why = status_observation(st, wall)
         if obs is not None:
             self._api_obs, self._api_obs_t = obs, t
+            self.map_number = obs.map_number
             return obs, None
         if self._api_obs_t is not None and t - self._api_obs_t > API_STALE:
             self._api_obs = None
@@ -920,22 +952,32 @@ class Session:
 
     def _found(self, pl: Pipeline, t: float) -> None:
         locator = pl.locator
+        fit = locator.fit
         pl.mmbox = box_px(locator.box, pl.size)
-        pl.minimap = {"box": list(locator.box), "scale": locator.fit.scale, "found": True}
+        pl.minimap = {"box": list(locator.box), "scale": fit.scale, "found": True,
+                      "how": fit.how}
         self.minimap = dict(pl.minimap)
-        self.note += f" · миникарта ×{locator.fit.scale:g}"
+        self.note += f" · миникарта ×{fit.scale:g}" + ("" if fit.how == "map" else
+                                                       f" ({FIT_HOW[fit.how]})")
+        if fit.how == "map" and self.minimap_store is not None:
+            # Найдена эталоном — запомнить для другой карты (ARAM, #803).
+            try:
+                save_fit(self.minimap_store, pl.size, fit)
+            except OSError as exc:
+                self.note += f" · прямоугольник миникарты не сохранён: {exc}"
         if pl.bw is not None:
             # Найдена после прогрева: размер рамки оценён в чужой сетке.
             # Вьюпорт постоянен в единицах карты, поэтому в сетке своей
             # миникарты он меньше в масштаб раз.
             pl.bw = round(pl.bw / locator.fit.scale)
             pl.bh = round(pl.bh / locator.fit.scale)
-        self._sig(lambda p: p.set_minimap(locator.box, locator.fit.scale, locator.fit.score, t))
+        self._sig(lambda p: p.set_minimap(locator.box, fit.scale, fit.score, t,
+                                          how=f"найдена в кадре: {FIT_HOW[fit.how]}"))
 
     def _lost(self, pl: Pipeline) -> None:
         """Паспорт снял находку миникарты: снова раскладка и новый поиск."""
         scale = pl.locator.fit.scale if pl.locator.fit is not None else 1.0
-        pl.locator, pl.locate_done = Locator(pl.size), False
+        pl.locator, pl.locate_done = self._new_locator(pl.size), False
         pl.mmbox = box_px(pl.layout_mm, pl.size)
         pl.minimap = {"box": list(pl.layout_mm), "scale": None, "found": False}
         self.minimap = dict(pl.minimap)
@@ -1146,11 +1188,15 @@ class Session:
             if "minimap_icons" not in off:
                 off["minimap_icons"] = "состав не решён"
         kp = ms.pop("kind_p", None)
+        # Карта по API (#803): не Ущелье — модель камеры и проекция экрана
+        # (единицы Ущелья) не годятся; камера — по рамке на миникарте.
+        on_rift = rift(self.map_number)
         if kp is not None:
             # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
-            # без её подтверждения — не наша карта или чужая игра.
+            # без её подтверждения — не наша карта или чужая игра. Если API
+            # сказал, что карта другая (ARAM), её «не Ущелье» — не довод.
             c = int(np.argmax(kp))
-            if KIND_CLASSES[c] == "game" and row.get("is_game") is False:
+            if KIND_CLASSES[c] == "game" and row.get("is_game") is False and on_rift:
                 c = KIND_CLASSES.index("other")
             row["kind"] = KIND_CLASSES[c]
             row["kind_p"] = round(float(kp[int(np.argmax(kp))]), 3)
@@ -1164,7 +1210,7 @@ class Session:
                 # Места чемпионов с экрана — той же проекцией, что у трекера.
                 self.match = MatchState(proj=self.proj)
             ev = self.match.update(row["t"], row.get("kind", "game"), mini_champs, units,
-                                   (row["px"], row["py"]), api=obs)
+                                   (row["px"], row["py"]) if on_rift else None, api=obs)
             self._match_at = wall if wall is not None else time.time()
             ctx = self.match.frame_view() if self.match.order else None
             clock = self.match.game_clock()
@@ -1185,16 +1231,34 @@ class Session:
         # События юнитов — отдельно от событий чемпионов: смертей крипов
         # десятки в минуту.
         tracks = None
-        if self.tracker is not None and row.get("kind", "game") == "game" and units is not None:
+        if (self.tracker is not None and row.get("kind", "game") == "game"
+                and units is not None and on_rift):
             cam = (row["px"], row["py"])
             uev = self.tracker.update(row["t"], None if cam[0] is None else cam, units)
             tracks = self.tracker.frame_view(row["t"])
             row["tracks"] = dicts(tracks)
             if uev:
                 row["uev"] = dicts(uev)
-        cam = None if row["px"] is None or row["py"] is None else (row["px"], row["py"])
-        vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, row["spread"],
-                             units, tracks)
+        if on_rift:
+            cam = None if row["px"] is None or row["py"] is None else (row["px"], row["py"])
+            vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, row["spread"],
+                                 units, tracks)
+        else:
+            # Не Ущелье: центр камеры — рамка вьюпорта на миникарте (доли
+            # миникарты годятся для любой карты), если миникарта найдена и
+            # рамка на ней видна (под окном аугментов ARAM её нет: q = 0).
+            off_map = f"карта {self.map_number} — не Ущелье"
+            cam, cam_why = None, None
+            if row["cx"] is None:
+                cam_why = f"{off_map}: модель камеры знает только Ущелье, а миникарты нет ({why})"
+            elif row["q"] < MINIMAP_CAM_Q:
+                cam_why = (f"{off_map}: модель камеры знает только Ущелье, а рамка на миникарте "
+                           f"не видна (q {row['q']:g} < {MINIMAP_CAM_Q:g})")
+            else:
+                cam = (row["cx"], row["cy"])
+            vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, None,
+                                 units, None, camera_src="minimap", camera_why=cam_why,
+                                 tracks_why=f"{off_map}: треки ведутся в единицах Ущелья")
         with self._lock:
             self.vision = vision
         ms["out"] = (time.perf_counter() - t0) * 1000
@@ -1359,20 +1423,28 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
     return _open(vid, run, lambda: Session(vid, run, VideoSource(url, fps, float(start_sec))))
 
 
-def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto") -> dict:
+def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto",
+                 minimap_scale: float | None = None) -> dict:
     """Сеанс по своему экрану (окно игры) вместе с Live Client своей игры и
     сервисом состояния для coach на 127.0.0.1:STATE_PORT (state_service.py;
     адрес — `state_url` в status()).
 
+    Миникарта: найденный эталоном прямоугольник запоминается вне репозитория
+    (minimap_locate.fit_file) и выручает на других картах; `minimap_scale` —
+    масштаб миникарты из настроек клиента, тогда без поиска (#803).
+
     Захват открывается в потоке сеанса (mss привязан к потоку), не здесь."""
     fps = check_fps(fps)
+    if minimap_scale is not None and not SCALES[0] <= minimap_scale <= SCALES[1]:
+        raise ValueError(f"масштаб миникарты {minimap_scale:g} вне {SCALES[0]:g}–{SCALES[1]:g}")
     if backend not in ("auto", *BACKENDS):
         raise ValueError(f"неизвестный бэкенд захвата {backend!r}: auto, {', '.join(BACKENDS)}")
     run = run or DEFAULT_RUN
     run_checkpoint(run)
     return _open(SCREEN_ID, run, lambda: Session(
         SCREEN_ID, run, ScreenSource(fps, backend=backend),
-        api=LiveClient(champion_ids=ddragon_champion_ids()), state_port=STATE_PORT))
+        api=LiveClient(champion_ids=ddragon_champion_ids()), state_port=STATE_PORT,
+        minimap_store=fit_file(), minimap_scale=minimap_scale))
 
 
 def get(sid: str) -> Session | None:

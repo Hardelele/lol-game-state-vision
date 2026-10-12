@@ -118,10 +118,26 @@ def test_bad_backend_is_a_message(fake, monkeypatch, capsys):
 
 def test_defaults_match_viewer(monkeypatch):
     seen = {}
-    monkeypatch.setattr(ls, "run", lambda fps, backend, run: seen.update(
-        fps=fps, backend=backend, run=run) or 0)
+    monkeypatch.setattr(ls, "run", lambda fps, backend, run, minimap_scale: seen.update(
+        fps=fps, backend=backend, run=run, minimap_scale=minimap_scale) or 0)
     assert ls.main([]) == 0
-    assert seen == {"fps": 2.0, "backend": "auto", "run": live.DEFAULT_RUN}
+    assert seen == {"fps": 2.0, "backend": "auto", "run": live.DEFAULT_RUN,
+                    "minimap_scale": None}
+
+
+def test_minimap_scale_goes_to_session(monkeypatch):
+    """--minimap-scale доходит до start_screen; неверный масштаб — отказ с кодом 2."""
+    seen = {}
+
+    def start_screen(run, fps, backend, minimap_scale=None):
+        seen["scale"] = minimap_scale
+        raise ValueError("стоп после старта")
+
+    monkeypatch.setattr(live, "start_screen", start_screen)
+    monkeypatch.setattr(live, "get", lambda sid: None)
+    assert ls.run(2.0, "auto", "r", sleep=lambda s: None, busy=lambda: False,
+                  minimap_scale=1.2) == 2
+    assert seen == {"scale": 1.2}
 
 
 def test_pending_service_is_waited_for_not_taken_for_busy(fake, capsys):
