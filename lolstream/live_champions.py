@@ -28,11 +28,17 @@
   кадра; внутри команды все разные (венгерский алгоритм).
 
 Вид игрока (#786). Портретов наблюдателя у него нет, а над плашкой ник, а
-не имя чемпиона. Раскладка решается по последним чтениям портретов
-(`view`): у наблюдателя таблица совпадает с иконками на 0.97, у игрока —
-на 0.48–0.49. У игрока состав не решается и имена не выдаются: прежде
+не имя чемпиона. У игрока состав не решается и имена не выдаются: прежде
 заставка стримера случайно прошла проверку HUD, состав решился по ней, и
 Brand был «Ivern» в 100% кадров (ANXVB571YkE).
+
+Раскладка — только по положительным признакам (#799, `read_kind`, `view`).
+Каждое чтение — «наблюдатель» (хоть одна колонка портретов совпала с
+иконками), «игрок» (полоса здоровья своей панели внизу по центру, а
+портретов нет) или «ничего». «Портретов не видно» — не довод за игрока:
+оверлей стримера «TEAM STATS» закрывал левую колонку, и j8_-kWWh5qM шесть
+раз переключался spectator ↔ player, а каждый ложный «player» ставил
+детектору маску вида игрока и выключал имена на ~40 с.
 
 Своя игра (#798, 2B). Если есть Live Client API, состав берётся из него
 (`set_api`): портреты HUD и боковые панели не читаются, иконки миникарты
@@ -67,7 +73,7 @@ from lolvision.minimap_icons import (CROP, DEFAULT_RUN as MINI_RUN, MM, TEAMS, I
 from lolvision.name_reader import NONE, STATUS, WIN_H, WIN_W, NameReader, whiteness
 from lolvision.paths import RUNS
 from lolvision.records import MinimapChamp
-from lolvision.roster import IconBank, decide, read_frame
+from lolvision.roster import PANELS_MIN, TABLE_MIN, FrameSlots, IconBank, decide, read_frame
 from lolvision.unit_bars import BODY
 
 NAMES = RUNS / "identity" / "names.npz"
@@ -78,14 +84,30 @@ ROSTER_FRAMES = 8         # по скольким последним кадра�
 # чтение портретов идёт 2–3 с (замер 2026-10-12, а не ~250 мс, как выше), и
 # при потоке ×5 три чтения — это ~50 с ролика без имён.
 ROSTER_MIN = 2
-# Раскладка ролика (#786) — по последним чтениям портретов на игровых кадрах:
-# у наблюдателя таблица портретов есть почти всегда, у вида игрока её нет.
-# Решение — когда чтений не меньше VIEW_MIN, по большинству из VIEW_READS;
-# принятое решение меняется, только если против него не меньше VIEW_FLIP
-# чтений: кадры со скрытым HUD (затемнение, заставка, клавиша H) у
-# наблюдателя иначе дёргают раскладку туда-обратно (j8_-kWWh5qM: 15 из 54
-# кадров без таблицы).
-VIEW_READS, VIEW_MIN, VIEW_FLIP = 8, 4, 6
+# Раскладка ролика (#786, #799) — по последним VIEW_READS чтениям на игровых
+# кадрах, и голосуют только положительные признаки (`read_kind`): чтение без
+# признака («ничего» — HUD скрыт, закрыт оверлеем, затемнение) не голосует ни
+# за что. Первое решение — когда чтений не меньше VIEW_MIN, за один вид не
+# меньше VIEW_NEED голосов, а за другой не больше VIEW_AGAINST; иначе
+# раскладка не решена (unknown — честный отказ). Принятое решение меняется
+# только на другой вид и только если за него не меньше VIEW_FLIP голосов;
+# серия «ничего» его не трогает.
+VIEW_READS, VIEW_MIN, VIEW_NEED, VIEW_AGAINST, VIEW_FLIP = 8, 4, 3, 1, 6
+SPECTATOR, PLAYER = "spectator", "player"
+# Признак вида игрока — полоса здоровья своей панели (#799). Панель игрока
+# стоит внизу по центру; полоса здоровья в ней начинается левее центра кадра
+# и толще полос над юнитами. Замер (1080p, 30 кадров вида игрока 15 стримов
+# runs/units/eval/player и 54 кадра наблюдателя j8_-kWWh5qM): у игрока
+# зелёная полоса начинается на x 923–946, y 1037–1052, высота 8–13 px, длина
+# 60–173 px при здоровье не ниже ~30%; у наблюдателя в этой полосе кадра
+# зелёного ряда длиннее 12 px нет, а полоса выбранного чемпиона в левом
+# нижнем углу (x 76) тоньше — 4–6 px. Низкое здоровье, смерть, свой HUD не по
+# центру — признака нет, и чтение просто не голосует.
+BAR_BAND = (0.88, 1.0)            # доли высоты кадра: где ищем полосу
+BAR_X0 = (0.42, 0.53)             # доли ширины: где начинается зелёный ряд
+BAR_LEN = 60                      # px 1080p: ряд не короче
+BAR_H = (8, 20)                   # px 1080p: высота полосы
+GREEN_H, GREEN_S, GREEN_V = (40, 85), 120, 110   # HSV OpenCV: зелёный полосы
 # Полосы боковых панелей в кадре 1080p — всё, что читает hud_panels.
 PANEL_COLS = ((0, 80), (1840, 1920))
 PANEL_ROWS = (140, 680)
@@ -101,6 +123,70 @@ NAME_MARGIN = 0.03        # и отрыв от второго кандидата
 TRACK_PX = 260            # px 1080p: имя переносится с прошлого кадра не дальше
 TRACK_SCORE = 0.35        # «вес» перенесённого имени против прочитанного
 MAX_ICONS = 20            # детекций миникарты на кадр не больше (minimap_icons.decode)
+
+
+def spectator_hud(fs: FrameSlots) -> bool:
+    """Портреты HUD наблюдателя на кадре: хоть одна колонка — левая или правая
+    половина таблицы, левая или правая боковая панель — совпала с иконками.
+    По колонкам, а не по всем десяти сразу: оверлей стримера закрывает одну
+    сторону, а у камеры на одном чемпионе враги в тумане — «?» в своей
+    колонке таблицы; тогда медиана по десяти падает ниже порога, хотя
+    наблюдатель на кадре (j8_-kWWh5qM: по roster.hud 39 из 54 кадров, по
+    колонкам 53 из 54). Замер на тех же кадрах: у вида игрока медиана
+    колонки таблицы не выше 0.68, панели — не выше 0.64; у наблюдателя
+    видимая колонка таблицы 0.85–0.97. Пороги — те же, что у roster."""
+    best = fs.scores.max(-1)                    # (слоты, вид): лучшая иконка
+    for kind, thr in ((0, TABLE_MIN), (1, PANELS_MIN)):
+        for team in (slice(0, 5), slice(5, 10)):
+            if float(np.median(best[team, kind])) >= thr:
+                return True
+    return False
+
+
+def _longest_runs(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """По строкам маски: длина самой длинной серии True и её начало."""
+    pad = np.zeros((mask.shape[0], 1), np.int8)
+    d = np.diff(np.hstack([pad, mask.astype(np.int8), pad]), axis=1)
+    lens = np.zeros(mask.shape[0], np.int64)
+    starts = np.zeros(mask.shape[0], np.int64)
+    for i in np.flatnonzero(mask.any(1)):
+        s, e = np.flatnonzero(d[i] == 1), np.flatnonzero(d[i] == -1)
+        k = int(np.argmax(e - s))
+        lens[i], starts[i] = e[k] - s[k], s[k]
+    return lens, starts
+
+
+def player_hud(rgb: np.ndarray) -> bool:
+    """Полоса здоровья своей панели вида игрока на кадре 1080p RGB: зелёная
+    полоса высотой BAR_H, длиной не меньше BAR_LEN, начинается в BAR_X0
+    внизу кадра (BAR_BAND). ~1 мс на кадр."""
+    h, w = rgb.shape[:2]
+    y0 = round(BAR_BAND[0] * h)
+    hsv = cv2.cvtColor(np.ascontiguousarray(rgb[y0:round(BAR_BAND[1] * h)]), cv2.COLOR_RGB2HSV)
+    g = ((hsv[..., 0] >= GREEN_H[0]) & (hsv[..., 0] <= GREEN_H[1])
+         & (hsv[..., 1] >= GREEN_S) & (hsv[..., 2] >= GREEN_V))
+    lens, starts = _longest_runs(g)
+    x_lo, x_hi = BAR_X0[0] * w, BAR_X0[1] * w
+    ok = (lens >= BAR_LEN * w / 1920) & (starts >= x_lo) & (starts <= x_hi)
+    # Высота — самая длинная серия подряд идущих строк с такой полосой.
+    best = run = 0
+    for v in ok:
+        run = run + 1 if v else 0
+        best = max(best, run)
+    lo, hi = (b * h / 1080 for b in BAR_H)
+    return lo <= best <= hi
+
+
+def read_kind(fs: FrameSlots, rgb: np.ndarray) -> str | None:
+    """Чтение кадра для раскладки: SPECTATOR — портреты наблюдателя есть
+    (сильнее: портрет совпадает с иконкой, полоса зелёного — нет), PLAYER —
+    портретов нет, а полоса своей панели есть, None — признаков нет.
+    Отсутствие портретов само по себе — None, а не PLAYER."""
+    if spectator_hud(fs):
+        return SPECTATOR
+    if player_hud(rgb):
+        return PLAYER
+    return None
 
 
 def _few(names: list[str], n: int = 5) -> str:
@@ -226,7 +312,7 @@ class LiveChampions:
         self.digits = hud_panels.DigitReader()
         self.match: Match | None = None
         self.hud: deque = deque(maxlen=ROSTER_FRAMES)
-        self.reads: deque = deque(maxlen=VIEW_READS)        # был ли HUD наблюдателя
+        self.reads: deque = deque(maxlen=VIEW_READS)        # read_kind последних чтений
         self._view: str | None = None                       # принятая раскладка
         self.next_roster = 0.0
         self.prev: list[tuple[str, str, float, float]] = []   # имя, команда, x, y (px)
@@ -245,22 +331,43 @@ class LiveChampions:
 
     @property
     def view(self) -> str | None:
-        """«spectator», «player» или None — чтений пока мало. При составе из
-        Live Client API — по нему: есть свой игрок — вид игрока, нет —
-        наблюдатель в клиенте."""
+        """«spectator», «player» или None — не решена. При составе из Live
+        Client API — по нему: есть свой игрок — вид игрока, нет — наблюдатель
+        в клиенте. Иначе — голоса чтений (`read_kind`, правило у VIEW_READS)."""
         m = self.match
         if m is not None and m.api:
-            return "player" if m.me_team is not None else "spectator"
-        n, spec = len(self.reads), sum(self.reads)
-        if n < VIEW_MIN:
-            return None
+            return PLAYER if m.me_team is not None else SPECTATOR
+        votes = self.votes()
         prev = self._view
-        if prev == "spectator" and n - spec < VIEW_FLIP:
-            return prev
-        if prev == "player" and spec < VIEW_FLIP:
-            return prev
-        self._view = "spectator" if spec * 2 >= n else "player"
+        if prev is not None:
+            # Решённый вид меняется только на другой и только по его
+            # признакам: «таблица не прочитана» — не смена вида.
+            other = PLAYER if prev == SPECTATOR else SPECTATOR
+            if votes[other] >= VIEW_FLIP:
+                self._view = other
+            return self._view
+        if len(self.reads) < VIEW_MIN:
+            return None
+        for kind, other in ((SPECTATOR, PLAYER), (PLAYER, SPECTATOR)):
+            if votes[kind] >= VIEW_NEED and votes[other] <= VIEW_AGAINST:
+                self._view = kind
         return self._view
+
+    def votes(self) -> dict[str, int]:
+        """Голоса последних чтений: сколько за наблюдателя и за игрока."""
+        reads = list(self.reads)
+        return {k: reads.count(k) for k in (SPECTATOR, PLAYER)}
+
+    def view_how(self) -> str:
+        """Почему раскладка такая — для паспорта (how)."""
+        v, n = self.votes(), len(self.reads)
+        said = (f"портреты наблюдателя в {v[SPECTATOR]}, панель игрока в {v[PLAYER]} "
+                f"из {n} чтений")
+        if self.view is None:
+            return (f"раскладка не решена: {said}; нужно чтений не меньше {VIEW_MIN} "
+                    f"и за один вид не меньше {VIEW_NEED} при не больше {VIEW_AGAINST} "
+                    f"против")
+        return f"HUD: {said}"
 
     def close(self) -> None:
         self._closed = True
@@ -336,7 +443,7 @@ class LiveChampions:
         if self.match is not None and self.match.api:
             return False                    # состав дал API: портреты не нужны
         fs = read_frame(frame, self.bank)
-        self.reads.append(fs.hud)
+        self.reads.append(read_kind(fs, frame))
         if not fs.hud:
             return False
         self.hud.append(fs)

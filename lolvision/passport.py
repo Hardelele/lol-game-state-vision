@@ -19,7 +19,10 @@
 * `minimap` — найдена ли миникарта, прямоугольник (доли кадра), масштаб и
   совпадение с эталоном (minimap_locate.Locator);
 * `view` — spectator / player / **unknown**: «неизвестен» — честное
-  значение, пока раскладка не решена или не распознана;
+  значение, пока раскладка не решена или не распознана. По HUD вид решается
+  только по положительным признакам (lolstream/live_champions.py,
+  `read_kind`): «портретов наблюдателя не видно» — не вид игрока, а
+  unknown (или прежний вид, если он уже решён);
 * `api` — состояние Live Client API и доступны ли его факты;
 * `scene` — тип сцены последнего кадра (сигнал, не условие читателей);
 * `roster` — откуда известен состав: api / hud или неизвестен;
@@ -38,7 +41,7 @@
 Пример:
     p = Passport.build(source.describe(), t=0.0,
                        assets={"unit_net": True, "names_bank": False})
-    p.set_view("player", t, how="HUD: таблица не совпала в 6 из 8 чтений")
+    p.set_view("player", t, how="HUD: портреты наблюдателя в 0, панель игрока в 5 из 8 чтений")
     for ch in p.set_api("in_game", available=True, t=t):
         note(ch.text)
     ok, why = p.verdict("names")         # (False, "нужен вид наблюдателя, …")
