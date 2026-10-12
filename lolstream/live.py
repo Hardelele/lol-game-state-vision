@@ -505,7 +505,7 @@ class Session:
         self.state_server: StateServer | None = None
         self.state_url: str | None = None
         self.state_reason: str | None = ("сервис состояния у этого сеанса не поднимается"
-                                         if state_port is None else "ещё не поднят")
+                                         if state_port is None else STATE_PENDING)
         self._out = ThreadPoolExecutor(1, thread_name_prefix="live-out")
         self._th = threading.Thread(target=self._run, daemon=True)
         self._th.start()
@@ -1221,6 +1221,10 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+# Сервис состояния сеанса ещё поднимается — временная причина, а не отказ.
+STATE_PENDING = "ещё не поднят"
 
 
 def _rel(path: Path) -> str:
