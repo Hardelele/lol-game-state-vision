@@ -68,7 +68,8 @@ coach» ниже).
 незнакомые поля, а не отказывать из-за них. Машинная схема ниже закрытая
 (`additionalProperties: false`) — это проверка самого сервиса на опечатки,
 а не требование к клиентам; новое поле добавляется в неё вместе с кодом
-(так добавлены `me.position`, #802, и `events`, #803). Исключение — записи
+(так добавлены `me.position`, #802, `events`, #803, и `spells` /
+`spell_variants`, #804). Исключение — записи
 юнитов и треков и пункты паспорта: это `to_dict()` записей lolvision как
 есть, их поля версионируются там (`records.SCHEMA`, docs/passport.md), а
 схема сервиса проверяет только поля, на которые он опирается. Клиент,
@@ -257,7 +258,42 @@ who — участник события, **без ника**:
 полоске на кадре или своей иконке миникарты, #802,
 [match-context.md](match-context.md)). Нет API или себя не нашли — все
 отказы с этой причиной; своего нет в контексте матча — `alive`,
-`respawn_in`, `position` отказ с причиной контекста.
+`respawn_in`, `position` отказ с причиной контекста. `spells` и
+`spell_variants` — заклинания призывателя, как у записи в `champions`
+(ниже, «Заклинания призывателя»).
+
+### Заклинания призывателя: `spells`, `spell_variants` (#804)
+
+Есть у `me` и у каждой записи `champions`. Факт `api`: массив из двух id по
+слотам — `summonerSpellOne`, `summonerSpellTwo` (по умолчанию клавиши D и F;
+клавиши игрок может переназначить, слот — нет).
+
+* `spells` — **семья** заклинания: на неё и опираться в правилах («есть ли
+  Телепорт» — `"SummonerTeleport" in spells`). Улучшенный Телепорт и все
+  стадии Кары входят в свою семью.
+* `spell_variants` — точный вариант: id из API без сезонной приставки.
+
+Id берётся из `rawDisplayName` (`GeneratedTip_SummonerSpell_<id>_DisplayName`,
+запасной — `rawDescription`), не из локализованного `displayName`
+(«Телепорт»). Сезонная приставка `S<n>_` срезается; семья — `SummonerTeleport`
+или `SummonerSmite`, если вариант начинается с неё, иначе сам вариант.
+
+| Сырой `<id>` в API | `spell_variants` | `spells` | Что это |
+| --- | --- | --- | --- |
+| `SummonerTeleport` | `SummonerTeleport` | `SummonerTeleport` | Телепорт |
+| `S12_SummonerTeleportUpgrade` | `SummonerTeleportUpgrade` | `SummonerTeleport` | Усиленный телепорт: в журнале своей игры сменил обычный у обоих владельцев на 10:02 |
+| `SummonerSmite` | `SummonerSmite` | `SummonerSmite` | Кара |
+| `S5_SummonerSmitePlayerGanker` | `SummonerSmitePlayerGanker` | `SummonerSmite` | Усиленная кара (рост питомца, 6:37–10:22 в журналах) |
+| `SummonerSmiteAvatarOffensive`, `SummonerSmiteAvatarDefensive` | как есть | `SummonerSmite` | Первобытная кара (13:26–20:40 в журналах) |
+| `SummonerFlash`, `SummonerDot`, `SummonerHeal`, `SummonerHaste`, `SummonerBarrier`, `SummonerExhaust` | как есть | как есть | Скачок, Воспламенение, Исцеление, Призрак, Барьер, Изнурение |
+
+Таблица — все значения двух журналов своей игры 2026-10-12 (Ущелье, 20
+игроков); id других режимов (ARAM, Арена) не встречались и выходят как есть
+по тому же правилу. Заклинание меняется посреди игры (улучшение) — снимок
+показывает текущее. API не дал `summonerSpells` (старые сборки,
+обезличенные журналы-фикстуры) или ключ не в этом формате — отказ с
+причиной разбора; без API — отказ, как у `level`. **Готовности (перезарядки)
+API не отдаёт** — `spells` говорит только, что заклинание взято.
 
 ### `champions` — десять чемпионов
 
@@ -271,6 +307,7 @@ who — участник события, **без ника**:
 | `team` | `ORDER` / `CHAOS` | api / hud | команда в контексте матча |
 | `relation` | `self` / `ally` / `enemy` | api | отношение к своему игроку по API (`relation_to_me`: его чемпион — `self`, его команда — `ally`, иначе `enemy`); своего игрока нет или состав не из API — отказ |
 | `riot_id`, `level`, `items`, `scores` | строка, целое, массив id, объект | api | из `allPlayers` по Id чемпиона; без API — отказ |
+| `spells`, `spell_variants` | массив из двух строк | api | заклинания призывателя по слотам (см. выше); API их не дал — отказ с причиной разбора |
 | `alive` | bool | api / hud / minimap / inferred | `ChampCtx.alive` с источником `alive_src` и возрастом `alive_age`; не наблюдался — отказ |
 | `respawn_in` | с | api / hud (`ChampCtx.respawn_src`) | `ChampCtx.respawn_in` у мёртвого; живой — отказ «жив (источник)»; мёртв без таймера — отказ |
 | `position` | `{"u", "v"}` | minimap / screen / inferred | последнее известное место (`ChampCtx`); не наблюдалось — отказ |
@@ -403,7 +440,11 @@ who — участник события, **без ника**:
   "respawn_in": {"value": 9.9, "source": "api", "age": 0.2, "reason": null},
   "position":   {"value": null, "source": null, "age": null, "reason": "место не наблюдалось"},
   "stats":      {"value": {"abilityHaste": 10.0, "abilityPower": 36.0, "armor": 39.45},
-                 "source": "api", "age": 0.2, "reason": null}
+                 "source": "api", "age": 0.2, "reason": null},
+  "spells":     {"value": ["SummonerTeleport", "SummonerFlash"], "source": "api", "age": 0.2,
+                 "reason": null},
+  "spell_variants": {"value": ["SummonerTeleportUpgrade", "SummonerFlash"], "source": "api",
+                 "age": 0.2, "reason": null}
  },
  "champions": {"source": "api", "age": 0.2, "reason": null, "value": [
   {"champion":   {"value": "Darius", "source": "api", "age": 0.2, "reason": null},
