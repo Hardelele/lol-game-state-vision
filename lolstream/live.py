@@ -487,6 +487,7 @@ class Session:
         self._n_emit = 0
         self.match: MatchState | None = None   # контекст матча (#780)
         self._match_at: float | None = None    # unix-время момента match.t
+        self._api_refused: str | None = None   # почему снимок API последнего кадра не принят
         self.tracker: UnitTracker | None = None  # id юнитов между кадрами (#782)
         self.proj: Projection | None = None    # кадр → карта (есть, когда есть юниты)
         # Паспорт трансляции и его изменения (Change.to_dict, по порядку).
@@ -560,7 +561,7 @@ class Session:
         копией (сервис зовёт verdict/to_dict у себя)."""
         with self._lock:
             match = (None if self.match is None or self._match_at is None
-                     else match_view(self.match, self._match_at))
+                     else match_view(self.match, self._match_at, self._api_refused))
             passport = copy.deepcopy(self.passport)
             events = tuple(self.match.events) if self.match is not None else ()
             vision = self.vision
@@ -1169,6 +1170,7 @@ class Session:
             clock = self.match.game_clock()
             conflicts = dict(self.match.conflicts)
             refused = refused or self.match.api_refused
+            self._api_refused = refused          # сервису состояния: причина отказа API
         if ctx is not None:
             row["ctx"] = dicts(ctx)
         if ev:

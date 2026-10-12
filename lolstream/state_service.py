@@ -140,10 +140,15 @@ def _observed(f) -> Observed | None:
     return None if f is None else Observed(f.value, f.src, f.t)
 
 
-def match_view(ms: MatchState, at: float) -> MatchView:
-    """MatchState → MatchView. `at` — unix-время момента `ms.t`."""
+def match_view(ms: MatchState, at: float, refused: str | None = None) -> MatchView:
+    """MatchState → MatchView. `at` — unix-время момента `ms.t`.
+
+    `refused` — почему последний снимок API не принят до MatchState (отказ
+    status_observation: «игроков 1, а не 10» в Practice Tool). Такой снимок
+    в MatchState не попадает, и его api_refused пуст — без этой причины
+    снимок состояния врал бы «API пропал»."""
     return MatchView(ms.t, at, tuple(ms.frame_view()), ms.roster_src,
-                     _observed(ms.game_clock()), ms.api_live(), ms.api_refused,
+                     _observed(ms.game_clock()), ms.api_live(), refused or ms.api_refused,
                      dict(ms.conflicts))
 
 
@@ -306,14 +311,21 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     named = {} if vis is None or vis.units is None else \
         {u.name: u for u in vis.units if u.kind == "champion" and u.name}
 
+    # Снимок API отклонён контекстом матча — причина для времени, состава и
+    # всего, что от них зависит (свой чемпион в контексте, враги).
+    refused_why = (None if mv is None or not mv.api_refused
+                   else f"снимок API не принят: {mv.api_refused}")
+
     # --- матч ---
     if mv is None:
         clock = refuse(why_match)
     elif mv.clock is not None:
         clock = fact(mv.clock.value, mv.clock.src, mage(mv.clock.t))
+    elif mv.api_refused:
+        # Отказ снимка API — и есть причина: API жив, но снимок не принят.
+        clock = refuse(refused_why)
     else:
-        clock = refuse(f"контекст матча без времени по API: "
-                       f"{mv.api_refused or api_why or 'API пропал'}")
+        clock = refuse(f"контекст матча без времени по API: {api_why or 'API пропал'}")
     match = {"time": clock,
              "mode": refuse(api_why) if game is None else fact(game.game_mode, "api", api_age),
              "map": refuse(api_why) if game is None else
@@ -327,8 +339,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     if mv is None:
         champions = refuse(why_match)
     elif not mv.champs:
-        champions = refuse("состава нет: " + (mv.api_refused or api_why or
-                                              "контекст матча ещё не знает состава"))
+        champions = refuse(refused_why if mv.api_refused else
+                           "состава нет: " + (api_why or "контекст матча ещё не знает состава"))
     else:
         for c in mv.champs:
             entries.append(_champion(c, mv.roster_src, mlag, mage, me, me_why, players, api_age,
@@ -342,7 +354,9 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     else:
         act = game.active
         mine = next((e for e in entries if e["champion"]["value"] == me.champion), None)
-        why_mine = why_match if mv is None else "своего чемпиона нет в контексте матча"
+        why_mine = (why_match if mv is None else
+                    refused_why if refused_why and not entries else
+                    "своего чемпиона нет в контексте матча")
         me_out = {"riot_id": fact(me.riot_id, "api", api_age),
                   "champion": maybe(me.champion, "api", api_age,
                                     me.champion_reason or "не опознан"),
