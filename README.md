@@ -180,6 +180,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `video_side.py` | Player role and side from the video descriptions |
 | `inspect_coords.py`, `inspect_patches.py` | Self-contained HTML pages: predictions of one video; which patch size identifies a place |
 | `extract_frames.py` | Full reference frames every N seconds into `dataset/videos/` |
+| `eval_sides.py` | Ally / enemy / self and side on detector answers over frames (`preds.jsonl` of `eval_units.py`) with your team from the Live Client API: refusals by reason, several "self" in a frame, confident errors against a hand-labelled set, a sheet of champion plates for an eye check; no GPU ([docs/sides.md](docs/sides.md)) |
 | `runlog.py`, `_bootstrap.py` | `train.log` next to the checkpoint; the repository root on `sys.path` for the scripts |
 
 `lolvision/` — the model and its data, no YouTube, network or server code:
@@ -193,6 +194,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `geometry.py` | Map units, the screen → ground homography and `Projection`, the one frame ↔ map conversion (unit tracker, match context) |
 | `mask_frames.py` | HUD/minimap mask and the crop of the unmasked area by layout |
 | `records.py` | Typed records of a live frame row (unit, track, minimap champion, match-context champion, events) with `to_dict`; the row carries `schema` |
+| `sides.py` | Ally / enemy / self relation of a unit and its ORDER/CHAOS side, each a value or `null` with a reason: spectator view — side from the detector, no relation; player view — relation from the health bar colour measured in pixels, side from your own team in the Live Client API ([docs/sides.md](docs/sides.md)) |
 | `minimap_camera.py` | Camera box on the minimap → map coordinates (the label source) |
 | `dataset_io.py`, `augment.py` | Reading the built datasets; training augmentations and synthetic UI |
 | `paths.py` | Directory layout of the repository; defaults for the scripts and `lolstream` |
