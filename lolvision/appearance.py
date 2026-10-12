@@ -91,7 +91,7 @@ class LinearHead:
         return [candidates[j] for j in p.argmax(1)], p
 
 
-class Projection:
+class FeatureProjection:
     """Своё пространство облика: линейная проекция признаков DINOv2 (384 → d),
     обученная разводить чемпионов обучающих роликов (косинусный
     классификатор). Сама проекция чемпионов не называет — она для

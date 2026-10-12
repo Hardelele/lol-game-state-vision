@@ -190,7 +190,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `coord_model.py` | `CoordNet` baseline: encoder + heatmap head, soft targets, expected/peak point, spread |
 | `patch_infer.py` | Patch model on one frame for the live mode: frame preparation on the GPU, camera, vote spread and heatmap, share of "scene" patches |
 | `checkpoints.py` | The one place checkpoints are read; the model type comes from the checkpoint |
-| `geometry.py` | Map units and the screen → ground homography |
+| `geometry.py` | Map units, the screen → ground homography and `Projection`, the one frame ↔ map conversion (unit tracker, match context) |
 | `mask_frames.py` | HUD/minimap mask and the crop of the unmasked area by layout |
 | `minimap_camera.py` | Camera box on the minimap → map coordinates (the label source) |
 | `dataset_io.py`, `augment.py` | Reading the built datasets; training augmentations and synthetic UI |

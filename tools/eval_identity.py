@@ -163,7 +163,7 @@ def main() -> None:
     args = ap.parse_args()
 
     reader = nr.NameReader.load(args.names)
-    proj = ap_.Projection(np.load(args.proj)) if args.proj.exists() else None
+    proj = ap_.FeatureProjection(np.load(args.proj)) if args.proj.exists() else None
     vit = load_dino()
     report: dict = {"heldout": {}, "projection": proj is not None}
     rng = np.random.default_rng(0)

@@ -10,10 +10,9 @@
 
 * Сопоставление идёт **на карте**, а не на экране: камера двигается, и
   экранные координаты одного крипа на соседних кадрах расходятся на сотни
-  пикселей. Точка экрана переводится в смещение от центра камеры
-  гомографией dataset/layouts/projection.json (камера наклонена: масштаб по
-  высоте кадра меняется на ~28%, «центр плюс доля вида» неверен), центр
-  камеры — ответ модели камеры.
+  пикселей. Точка экрана переводится в точку карты общей проекцией
+  geometry.Projection (гомография dataset/layouts/projection.json плюс
+  центр камеры — ответ модели камеры).
 * Предсказание места — по скорости трека; сопоставление — венгерским
   алгоритмом внутри (класс, команда) со стробом по расстоянию: юнит не может
   пройти больше, чем позволяет его скорость за прошедшее время. У миньона
@@ -43,7 +42,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from lolvision.geometry import MAP_UNITS, apply_h
+from lolvision.geometry import MAP_UNITS, Projection
 
 # Скорость с запасом, ед./с (миньон 325, чемпион до ~500 с бонусами), и
 # базовый строб — ошибка проекции и детектора (~60–100 ед.).
@@ -89,25 +88,6 @@ def new_id(kind: str, team: str, u: float, v: float, name: str | None = None) ->
     return f"{kind}-{tail}"
 
 
-class Projection:
-    """Пиксель кадра ↔ точка карты (доли) при данном центре камеры."""
-
-    def __init__(self, h: np.ndarray, scene_size: tuple[int, int], crop: tuple[int, int, int, int]):
-        self.h, self.hi = h, np.linalg.inv(h)
-        self.sw, self.sh = scene_size
-        self.crop = crop
-
-    def to_map(self, xy: np.ndarray, cam: tuple[float, float]) -> np.ndarray:
-        cx0, cy0, cx1, cy1 = self.crop
-        s = np.c_[(xy[:, 0] - cx0) / (cx1 - cx0) * self.sw, (xy[:, 1] - cy0) / (cy1 - cy0) * self.sh]
-        return apply_h(self.h, s) + np.asarray(cam)
-
-    def to_frame(self, uv: np.ndarray, cam: tuple[float, float]) -> np.ndarray:
-        cx0, cy0, cx1, cy1 = self.crop
-        s = apply_h(self.hi, uv - np.asarray(cam))
-        return np.c_[s[:, 0] / self.sw * (cx1 - cx0) + cx0, s[:, 1] / self.sh * (cy1 - cy0) + cy0]
-
-
 @dataclass
 class Track:
     id: str
@@ -130,8 +110,7 @@ class Track:
 
 @dataclass
 class UnitTracker:
-    proj: Projection
-    frame_size: tuple[int, int] = (1920, 1080)
+    proj: Projection                       # кадр ↔ карта; в ней и размер кадра
     valid: np.ndarray | None = None        # (H, W) 0/1: где детектор отвечает
     tracks: list[Track] = field(default_factory=list)
     gone: list[Track] = field(default_factory=list)   # умершие и истёкшие (для отчёта)
@@ -141,7 +120,7 @@ class UnitTracker:
         if not len(uv):
             return np.zeros(0, bool)
         xy = self.proj.to_frame(uv, cam)
-        w, h = self.frame_size
+        w, h = self.proj.frame_size
         ok = (xy[:, 0] >= 0) & (xy[:, 0] < w) & (xy[:, 1] >= 0) & (xy[:, 1] < h)
         if self.valid is not None:
             ix = np.clip(xy[:, 0].astype(int), 0, w - 1)
@@ -157,10 +136,9 @@ class UnitTracker:
         ev: list[dict] = []
         if cam is None or not np.all(np.isfinite(cam)):
             return ev
-        w, h = self.frame_size
         dets = [u for u in units if u[0] in SPEED]
-        xy = np.array([[u[2] * w, u[3] * h] for u in dets]).reshape(-1, 2)
-        uv = self.proj.to_map(xy, cam) if len(dets) else np.zeros((0, 2))
+        uv = (self.proj.frac_to_map([[u[2], u[3]] for u in dets], cam) if dets
+              else np.zeros((0, 2)))
         used = set()
         matched_tracks = set()
         live = [k for k, tr in enumerate(self.tracks) if tr.state not in ("dead",)]
