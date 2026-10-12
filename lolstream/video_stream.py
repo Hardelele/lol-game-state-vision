@@ -16,6 +16,34 @@ from pathlib import Path
 
 import numpy as np
 
+# Поток короче этой доли «длительность × fps» — оборван (YouTube рвёт трубу:
+# 4AIX8QtRid4 дал 67 кадров из 2054), и сборщик выходит с ошибкой.
+COMPLETE = 0.95
+
+
+def short_stream(n: int, dur: float, fps: float, skip: float = 0.0,
+                 share: float = COMPLETE) -> str | None:
+    """Почему `n` кадров — не весь ролик, или None, если поток полный."""
+    want = (dur - skip) * fps
+    if not want > 0:
+        return f"длительность неизвестна ({dur} с), полноту не проверить"
+    if n < share * want:
+        return (f"поток оборван: {n} кадров из ~{int(want)} "
+                f"({n / want:.0%} < {share:.0%})")
+    return None
+
+
+def write_atomic(path: Path, write) -> None:
+    """Файл целиком или никак: `write(f)` пишет во временный файл рядом, он
+    заменяет `path` одним os.replace. Прерванный запуск не оставит пустого
+    или частичного манифеста, который перезапуск счёл бы готовым."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8", newline="") as f:
+            write(f)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def probe_url(url: str) -> tuple[int, int, float, str, dict]:

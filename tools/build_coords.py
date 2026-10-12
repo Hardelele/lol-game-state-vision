@@ -39,7 +39,7 @@ from lolvision.mask_frames import crop_box, mask_boxes
 from lolvision.minimap_camera import MM, white_mask, find_box_clipped, estimate_box
 from lolvision.minimap_locate import Locator, box_px, search_region
 from lolvision.dataset_io import MINI_STORE, STORE_W
-from lolstream.video_stream import probe_url, probe, have_nvdec, frames
+from lolstream.video_stream import frames, have_nvdec, probe, probe_url, short_stream, write_atomic
 
 LOCATE_MAX = 300   # кадров на поиск миникарты (~40 мс каждый, только до находки)
 
@@ -164,6 +164,10 @@ def main() -> None:
                     print(f"  {done} кадров", flush=True)
         while pend:
             masks.append(pend.popleft().result())
+    # Обрезанный поток — не датасет: манифест не пишется, код выхода ненулевой.
+    short = short_stream(len(masks), dur, args.fps)
+    if short:
+        raise SystemExit(f"{vid}: {short}; манифест не записан")
     if box is None:
         box = mmbox
         print("  миникарта не найдена — по раскладке")
@@ -184,10 +188,13 @@ def main() -> None:
                     "mini": f"{vid}/mini/{i:06d}.jpg"})
 
     man = args.out / f"{vid}.csv"
-    with man.open("w", encoding="utf-8", newline="") as f:
+
+    def write(f) -> None:
         wr = csv.DictWriter(f, fieldnames=list(out[0]))
         wr.writeheader()
         wr.writerows(out)
+
+    write_atomic(man, write)
     q = np.array([r["quality"] for r in out])
     print(f"{len(out)} кадров, качество детекции: медиана {np.median(q):.2f}, "
           f"ниже 0.4 у {int((q < 0.4).sum())} ({(q < 0.4).mean() * 100:.1f}%)")
