@@ -36,7 +36,7 @@ from lolstream.live_client import (
 FIX = Path(__file__).parent / "fixtures" / "live_client"
 OWN = FIX / "own_game.jsonl"
 # Id Data Dragon, нужные фикстурам (в тестах кэша Data Dragon нет)
-IDS = ["Annie", "Zilean", "Amumu", "Yone", "Caitlyn", "Nami", "Darius", "Diana", "Lux",
+IDS = ["Aatrox", "Annie", "Zilean", "Amumu", "Yone", "Caitlyn", "Nami", "Darius", "Diana", "Lux",
        "Twitch", "Yuumi", "Fiddlesticks", "MonkeyKing"]
 
 
@@ -98,8 +98,10 @@ def test_champion_is_ddragon_id_not_localized_name():
     assert champion_id("game_character_displayname_MonkeyKing", index) == ("MonkeyKing", None)
     cid, why = champion_id("game_character_displayname_Locke", index)
     assert cid is None and "Locke" in why
+    # Ключ старого вида у части чемпионов (журнал своей игры: Aatrox).
+    assert champion_id("Character_Aatrox_Name", index) == ("Aatrox", None)
     cid, why = champion_id("Зилеан", index)
-    assert cid is None and "префикс" in why
+    assert cid is None and "формат" in why
     cid, why = champion_id("game_character_displayname_Annie", None)
     assert cid is None and "Data Dragon" in why
 

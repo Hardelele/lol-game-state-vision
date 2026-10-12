@@ -43,6 +43,7 @@ ORDER/CHAOS, уровень, предметы, счёт, `isDead`, `respawnTimer
 from __future__ import annotations
 
 import json
+import re
 import ssl
 import threading
 import time
@@ -61,7 +62,12 @@ from lolvision.match_state import NEW_GAME_BACKSTEP, TEAMS, ApiObs, ApiPlayer
 HOST = "127.0.0.1"
 PORT = 2999
 BASE_URL = f"https://{HOST}:{PORT}/liveclientdata/"
-RAW_CHAMPION_PREFIX = "game_character_displayname_"
+# Форматы rawChampionName, в которых виден внутренний Id чемпиона. Обычный —
+# «game_character_displayname_Xerath»; у части чемпионов клиент отдаёт ключ
+# старого вида «Character_Aatrox_Name» (журнал своей игры 2026-10-12: Aatrox
+# среди девяти обычных). Любой другой формат — отказ с причиной.
+RAW_CHAMPION_FORMATS = (re.compile(r"game_character_displayname_(\w+)"),
+                        re.compile(r"Character_(\w+?)_Name"))
 SOURCE = "api"
 
 
@@ -262,11 +268,12 @@ def champion_index(ids: Iterable[str]) -> dict[str, str]:
 
 def champion_id(raw: str, index: Mapping[str, str] | None) -> tuple[str | None, str | None]:
     """rawChampionName → (Id Data Dragon, None) или (None, причина)."""
-    if not raw.startswith(RAW_CHAMPION_PREFIX):
-        return None, f"rawChampionName без префикса: {raw!r}"
+    hit = next((m for f in RAW_CHAMPION_FORMATS if (m := f.fullmatch(raw))), None)
+    if hit is None:
+        return None, f"rawChampionName в незнакомом формате: {raw!r}"
     if index is None:
         return None, "нет списка чемпионов Data Dragon"
-    internal = raw[len(RAW_CHAMPION_PREFIX):]
+    internal = hit.group(1)
     cid = index.get(norm_name(internal))
     if cid is None:
         return None, f"нет в Data Dragon: {internal}"
