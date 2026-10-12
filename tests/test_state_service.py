@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import http.client
 import importlib.util
+import itertools
 import json
 import urllib.error
 import urllib.request
@@ -26,7 +27,7 @@ from lolstream.state_service import (FrameStatus, StateHub, StateInputs, StateSe
 from lolvision.match_state import API_SLACK, MatchState
 from lolvision.passport import Passport
 from lolvision.records import UNSET, DeathEvent, MinimapChamp, TrackRec, UnitRec
-from lolvision.sides import WHY_SPECTATOR, SideContext, assign
+from lolvision.sides import WHY_SPECTATOR, SideContext, assign, decide
 
 OWN = Path(__file__).parent / "fixtures" / "live_client" / "own_game.jsonl"
 IDS = ["Annie", "Zilean", "Amumu", "Yone", "Caitlyn", "Nami", "Darius", "Diana", "Lux",
@@ -303,6 +304,93 @@ def test_unit_relation_and_side_are_taken_from_the_record():
     assert u[1]["side"]["reason"] == "цвет вне ожидаемого: yellow"
 
 
+def self_inputs(units, alive_me: bool = True) -> tuple[StateInputs, float]:
+    """Вид игрока, свой (Zilean, ORDER) — `alive_me`: журнал до момента, где
+    он жив (`upto=20`), или весь (в конце мёртв); юниты кадра — после
+    sides.assign и в контекст матча, и в кадр."""
+    api = statuses()[19] if alive_me else api_last()
+    ctx = SideContext("player", "ORDER")
+    # цвет полоски уже «пробит» (поле color), как сделал бы assign по кадру
+    units = [replace(u, **{k: getattr(d, k) for k in ("relation", "relation_reason", "side",
+                                                      "side_reason", "side_src")})
+             for u in units for d in [decide(ctx, u.kind, u.team, u.color)]]
+    ms = fed_match(upto=20 if alive_me else None, champs=minimap(dead=()), units=units)
+    if alive_me:
+        assert ms.champs["Zilean"].alive is None or ms.champs["Zilean"].alive.value is True
+    inp = StateInputs("идёт", frames(last_ok=api.t), vision(api.t, units=units),
+                      match_view(ms, api.t), api, passport("player"), list(ms.events))
+    return inp, api.t + 0.2
+
+
+ME_BAR = UnitRec("champion", "ORDER", 0.5, 0.5, 0.8, 0.9, color="green")
+ALLY_BAR = UnitRec("champion", "ORDER", 0.3, 0.5, 0.7, 0.9, color="blue")
+
+
+def test_me_position_is_the_own_champion_record():
+    """#802: место своего в `me` — то же, что у его записи в `champions`."""
+    for inp, now in (full_inputs(), self_inputs([ME_BAR, ALLY_BAR])):
+        snap = build_snapshot(inp, now)
+        assert check_snapshot(snap) == []
+        me = snap["me"]["champion"]["value"]
+        assert snap["me"]["position"] == by_champ(snap)[me]["position"]
+    # на виде наблюдателя Zilean мёртв: места нет, причина записи
+    snap = build_snapshot(*full_inputs())
+    assert snap["me"]["position"]["reason"] == "место не наблюдалось"
+    # без контекста матча — его причина, как у alive / respawn_in
+    inp, now = full_inputs()
+    snap = build_snapshot(replace(inp, match=None), now)
+    assert snap["me"]["position"]["reason"] == ss.WHY_NO_MATCH == snap["me"]["alive"]["reason"]
+
+
+def test_own_champion_on_screen_by_self_bar_on_player_view():
+    """#802: на виде игрока имена не читаются, но своя полоска (relation
+    self) видна — свой на экране; остальным по-прежнему отказ читателя names."""
+    inp, now = self_inputs([ME_BAR, ALLY_BAR])
+    assert [u.relation for u in inp.vision.units] == ["self", "ally"]
+    snap = build_snapshot(inp, now)
+    assert check_snapshot(snap) == []
+    ch = by_champ(snap)
+    assert ch["Zilean"]["relation"]["value"] == "self"
+    assert ch["Zilean"]["on_screen"] == {"value": True, "source": "screen", "age": 0.2,
+                                        "reason": None}
+    why = Passport.verdict(inp.passport, "names").reason
+    assert ch["Amumu"]["on_screen"]["reason"] == why
+    # своей полоски нет — отказ с причиной, false не выдаётся
+    inp, now = self_inputs([ALLY_BAR])
+    zil = by_champ(build_snapshot(inp, now))["Zilean"]["on_screen"]
+    assert zil["value"] is None and "своей полоски (self) на кадре нет" in zil["reason"]
+    assert why in zil["reason"]
+
+
+def test_own_champion_on_screen_refuses_many_self_and_dead():
+    # две своих полоски — какая своя, неизвестно: отказ, как self_many в контексте
+    other = replace(ME_BAR, x=0.7)
+    inp, now = self_inputs([ME_BAR, other])
+    snap = build_snapshot(inp, now)
+    assert check_snapshot(snap) == []
+    zil = by_champ(snap)["Zilean"]["on_screen"]
+    assert zil["value"] is None and "self_many" in zil["reason"]
+    assert snap["conflicts"]["value"]["kinds"].get("self_many") == 1
+    # мёртвый по API свой: полоска self на кадре — не его
+    inp, now = self_inputs([ME_BAR], alive_me=False)
+    snap = build_snapshot(inp, now)
+    zil = by_champ(snap)["Zilean"]
+    assert zil["alive"]["value"] is False
+    assert zil["on_screen"]["value"] is None and "мёртв" in zil["on_screen"]["reason"]
+    # детектор юнитов выключен паспортом — по полоске не решаем
+    inp, now = self_inputs([ME_BAR])
+    no_units = replace(inp, passport=None)
+    assert ss.WHY_NO_PASSPORT in by_champ(build_snapshot(no_units, now))["Zilean"][
+        "on_screen"]["reason"]
+
+
+def test_schema_takes_self_conflict_kinds():
+    inp, now = full_inputs()
+    snap = build_snapshot(inp, now)
+    snap["conflicts"]["value"] = {"total": 3, "kinds": {"self_many": 1, "self_place": 2}}
+    assert check_snapshot(snap) == []
+
+
 def test_without_passport_readers_are_not_trusted():
     inp, now = full_inputs()
     snap = build_snapshot(StateInputs(inp.session, inp.frames, inp.vision, inp.match, inp.api),
@@ -543,6 +631,49 @@ def test_example_client_reads_state_and_stream():
         srv.close()
     # без API фактов о матче нет — отказ не становится утверждением
     assert ex.to_source_facts(build_snapshot(StateInputs(), 1.0)) == []
+
+
+def test_example_client_main_prints_contract_fields(monkeypatch, capsys):
+    """main() примера против живого сервера: снимок в потоке читается по
+    контракту (`conflicts.value.total`), а не по выдуманному полю (#796)."""
+    ex = load_example()
+    inp, _ = full_inputs()
+    srv = StateServer(Feed([inp]), port=0, period=0.05, state_every=0.05, keepalive=0.2).start()
+    real = ex.events
+    streams = []
+
+    def two(url, **kw):                          # hello и первый state — и хватит
+        g = real(url, timeout=5)
+        streams.append(g)
+        return itertools.islice(g, 2)
+    monkeypatch.setattr(ex, "events", two)
+    try:
+        ex.main(["--url", srv.url])
+    finally:
+        for g in streams:
+            g.close()
+        srv.close()
+    lines = capsys.readouterr().out.splitlines()
+    got = [json.loads(s) for s in lines if s.startswith("{")]
+    assert {"match.time", "me.champion"} <= {f["id"] for f in got}
+    stream = [s for s in lines if not s.startswith("{")]
+    assert len(stream) == 2 and stream[0].startswith("hello seq ")
+    assert stream[1].startswith("state seq ")
+    assert all(s.endswith(" conflicts 0") for s in stream)
+
+
+def test_example_client_event_line_follows_contract():
+    ex = load_example()
+    inp, now = full_inputs()
+    snap = build_snapshot(inp, now, seq=3)
+    assert check_snapshot(snap) == []
+    snap["conflicts"]["value"] = {"total": 4, "kinds": {"alive": 3, "self_place": 1}}
+    assert ex.event_line("state", {"data": snap}) == "state seq 3 conflicts 4"
+    # контекста матча нет — conflicts отказ: печатается причина, а не 0
+    bare = build_snapshot(StateInputs(), now, seq=1)
+    assert ex.event_line("hello", {"data": bare}) == \
+        f"hello seq 1 conflicts нет ({ss.WHY_NO_MATCH})"
+    assert ex.event_line("game", {"data": {"event_id": 1}}) == 'game {"event_id": 1}'
 
 
 def test_server_refuses_non_loopback():

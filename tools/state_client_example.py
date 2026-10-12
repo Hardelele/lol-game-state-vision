@@ -111,21 +111,30 @@ def to_source_facts(snap: dict) -> list[dict]:
     return out
 
 
-def main() -> None:
+def event_line(kind: str, msg: dict) -> str:
+    """Строка печати для сообщения потока. У снимка (`hello`, `state`) —
+    номер и число расхождений источников: `conflicts` — факт, его значение
+    `{"total", "kinds"}`; отказ печатается причиной, а не нулём."""
+    if kind not in ("hello", "state"):
+        return f"{kind} {json.dumps(msg['data'], ensure_ascii=False)}"
+    snap = msg["data"]
+    c = snap["conflicts"]
+    conflicts = c["value"]["total"] if _f(c) else f"нет ({c['reason']})"
+    return f"{kind} seq {snap['seq']} conflicts {conflicts}"
+
+
+def main(argv: list[str] | None = None) -> None:
     # Консоль Windows в cp1251: непечатное — «?», а не исключение.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--url", default=URL)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     for fact in to_source_facts(get_state(a.url)):
         print(json.dumps(fact, ensure_ascii=False))
     for kind, msg in events(a.url):
-        if kind in ("hello", "state"):
-            print(kind, "seq", msg["data"]["seq"], "conflicts", msg["data"]["conflicts"]["count"])
-        else:
-            print(kind, json.dumps(msg["data"], ensure_ascii=False))
+        print(event_line(kind, msg))
 
 
 if __name__ == "__main__":

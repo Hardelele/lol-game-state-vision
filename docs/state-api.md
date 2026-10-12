@@ -194,9 +194,13 @@ unix-времени — `t − age`.
 
 `riot_id`, `champion` (Id Data Dragon), `team`, `level`, `gold` (текущее
 золото), `stats` (`championStats` как есть: `abilityPower`, `armor`,
-`currentHealth`, … числами) — из API. `alive` и `respawn_in` — те же факты,
-что у своего чемпиона в `champions` (из контекста матча). Нет API или себя
-не нашли — все отказы с этой причиной.
+`currentHealth`, … числами) — из API. `alive`, `respawn_in` и `position`
+(`{"u", "v"}`, место на карте) — те же факты, что у своего чемпиона в
+`champions` (из контекста матча; место своего на виде игрока — по его
+полоске на кадре или своей иконке миникарты, #802,
+[match-context.md](match-context.md)). Нет API или себя не нашли — все
+отказы с этой причиной; своего нет в контексте матча — `alive`,
+`respawn_in`, `position` отказ с причиной контекста.
 
 ### `champions` — десять чемпионов
 
@@ -214,7 +218,7 @@ unix-времени — `t − age`.
 | `respawn_in` | с | api / hud (`ChampCtx.respawn_src`) | `ChampCtx.respawn_in` у мёртвого; живой — отказ «жив (источник)»; мёртв без таймера — отказ |
 | `position` | `{"u", "v"}` | minimap / screen / inferred | последнее известное место (`ChampCtx`); не наблюдалось — отказ |
 | `map_state` | `visible` / `remembered` / `dead` / `unknown` | inferred | `ChampCtx.state`: виден сейчас / помним место / мёртв / нет данных |
-| `on_screen` | `true` | screen | на кадре чемпион с этим именем над плашкой. **`false` не выдаётся**: «не опознан» ≠ «нет на экране». Читатель `names` выключен паспортом (вид игрока и пр.) — отказ с его причиной |
+| `on_screen` | `true` | screen | на кадре чемпион с этим именем над плашкой; свой чемпион — ещё и по своей полоске: ровно один юнит-чемпион с `relation = self` на кадре (#802; так свой виден и на виде игрока, где имена не читаются). **`false` не выдаётся**: «не опознан» ≠ «нет на экране». Читатель `names` выключен паспортом (вид игрока и пр.) — отказ с его причиной, у своего без полоски — «своей полоски (self) на кадре нет, …»; своих полосок больше одной — отказ (`conflicts` `self_many`); свой мёртв по контексту — отказ: полоска не его; детектор `units` выключен паспортом — своего по полоске не решаем |
 | `hp` | доля 0..1 | screen / inferred | `ChampCtx.hp` с `hp_src` и `hp_age` (`inferred` — 1.0 после возрождения) |
 | `conflicts` | целое (не факт) | — | `ChampCtx.conflicts`: расхождений по этому чемпиону за матч |
 
@@ -272,6 +276,8 @@ unix-времени — `t − age`.
 | `timer` | таймер панели против API дальше 2 с |
 | `minimap_dead` | иконка мёртвого по API на миникарте — назначение не тому |
 | `hud_flicker` | без API: «жив» на панели посреди отсчёта таймера |
+| `self_many` | на виде игрока на кадре больше одной своей полоски (`relation = self`): какая своя, неизвестно — ни места, ни ХП (#802) |
+| `self_place` | место своего с экрана (полоска + проекция) дальше `SELF_PLACE_TOL` = 0,05 карты от своей иконки на миникарте того же кадра; место берётся с миникарты (#802) |
 
 Вида нет в `kinds` — таких расхождений не было. По чемпиону — поле
 `champions[].conflicts`. Растёт — читатели зрения на этой раскладке врут
@@ -324,6 +330,7 @@ unix-времени — `t − age`.
   "gold":       {"value": 443.9, "source": "api", "age": 0.2, "reason": null},
   "alive":      {"value": false, "source": "api", "age": 0.2, "reason": null},
   "respawn_in": {"value": 9.9, "source": "api", "age": 0.2, "reason": null},
+  "position":   {"value": null, "source": null, "age": null, "reason": "место не наблюдалось"},
   "stats":      {"value": {"abilityHaste": 10.0, "abilityPower": 36.0, "armor": 39.45},
                  "source": "api", "age": 0.2, "reason": null}
  },
@@ -477,7 +484,9 @@ srv.url; srv.hub.snapshot(); srv.close()
 ## Клиент coach
 
 `tools/state_client_example.py` — тонкий пример на стандартной библиотеке:
-`get_state()`, `events()` с переподключением и `to_source_facts(snapshot)` —
+`get_state()`, `events()` с переподключением, `event_line(kind, msg)` —
+строка печати сообщения потока (у снимка — `seq` и `conflicts.value.total`,
+отказ — причиной) и `to_source_facts(snapshot)` —
 короткий список фактов `{id, text, source, observed_at}` под
 `coach.analysis_types.SourceFact` (время матча, сторона, свой чемпион и
 таймер, враги: мёртв или место с давностью). Отказы в факты не

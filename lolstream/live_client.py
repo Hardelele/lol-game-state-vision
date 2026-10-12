@@ -229,6 +229,12 @@ class GameSnapshot:
     def ended(self) -> EventRecord | None:
         return next((e for e in self.events if e.name == "GameEnd"), None)
 
+    @property
+    def end_reason(self) -> str | None:
+        """Причина конца игры по событию GameEnd («GameEnd Win») или None."""
+        end = self.ended
+        return None if end is None else f"GameEnd {end.data.get('Result', '')}".strip()
+
     def to_dict(self) -> dict:
         return {"game_time": self.game_time, "game_mode": self.game_mode,
                 "map_number": self.map_number,
@@ -453,11 +459,9 @@ class Tracker:
             self._playing = False
             return self._status(State.LOADING, "нет событий: игра ещё не началась", t,
                                 with_game=True), new
-        end = snap.ended
-        if end is not None:
+        if snap.ended is not None:
             self._playing, self._ended = False, True
-            return self._status(State.ENDED, f"GameEnd {end.data.get('Result', '')}".strip(),
-                                t, with_game=True), new
+            return self._status(State.ENDED, snap.end_reason, t, with_game=True), new
         self._playing, self._ended = True, False
         return self._status(State.IN_GAME, None, t, with_game=True), new
 

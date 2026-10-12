@@ -167,6 +167,32 @@ def test_stops_after_game_end_with_side_and_champion(tmp_path):
     assert rows[-1]["t"] - m["api"]["game_ended_at"] >= 0.25
 
 
+def test_end_reason_is_game_end_even_if_port_closed_before_frame(tmp_path):
+    """Статус API читается раз в кадр, опрос — своим потоком (#796): пока
+    шёл кадр, за ответом с GameEnd порт успел закрыться, и первый увиденный
+    статус ended — «API пропал после конца игры». Причина конца — всё равно
+    GameEnd из последнего снимка игры. Здесь первый кадр ждёт, пока опрос
+    разберёт ответ «порт закрыт», — случай воспроизводится всегда, а не
+    изредка, как бывало в тесте выше."""
+    tr = ScriptTransport([game([START], 500.0), game([START, END], 600.0)])
+
+    class AfterPortClosed(FakeSource):
+        def read(self):
+            # 4-й вызов транспорта начат — значит, 3-й ответ («нет
+            # соединения») уже разобран и стал статусом клиента.
+            end = time.monotonic() + 10
+            while tr.calls < 4 and time.monotonic() < end:
+                time.sleep(0.005)
+            return super().read()
+
+    rec = recorder(tmp_path, AfterPortClosed(["ok"]), tr, end_grace=0.0, max_sec=20)
+    m = rec.run()
+    assert m["api"]["last_state"] == "ended"
+    assert m["api"]["last_reason"].startswith("API пропал после конца игры")
+    assert m["api"]["ended_reason"] == "GameEnd Win"
+    assert m["stop_reason"] == "конец игры по API + 0 с (GameEnd Win)"
+
+
 def test_max_length_and_periodic_manifest(tmp_path):
     src = FakeSource(["ok", "paused"])
     seen = []

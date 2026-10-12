@@ -652,13 +652,26 @@ def test_api_feeds_context_roster_deaths_conflicts_and_sides(rigged):
 @pytest.mark.skipif(not OWN.exists(), reason="нет журнала своей игры")
 def test_state_service_runs_with_session(rigged):
     s = _api_session(rigged, 12, forever=gap(Status.PAUSED, 99.0), state_port=0)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def state() -> dict:
+        with opener.open(st["state_url"] + "/state", timeout=5) as r:
+            return json.loads(r.read())
     try:
         st = _wait(s, lambda st: st["count"] >= 12 and st["state_url"] is not None)
-        with urllib.request.urlopen(st["state_url"] + "/state", timeout=5) as r:
-            snap = json.loads(r.read())
+        # /state — снимок последнего такта хаба (раз в 0,25 с), а 12 кадров
+        # проходят быстрее: снимок мог быть собран до первого кадра
+        # (sources.vision «absent»). Такт seq0 + 1 мог начаться раньше, такт
+        # seq0 + 2 начат уже после 12-го кадра — его и ждём (#796).
+        seq0 = state()["seq"]
+        end = time.time() + 20
+        while (snap := state())["seq"] < seq0 + 2 and time.time() < end:
+            time.sleep(0.05)
+        assert snap["seq"] >= seq0 + 2, "хаб состояния не сделал два такта за 20 с"
         assert check_snapshot(snap) == []
         assert snap["passport"]["value"]["items"]["view"]["value"] == "player"
         assert snap["sources"]["vision"]["state"] == "ok"
+        assert snap["sources"]["vision"]["frame"] == 11          # последний из 12 кадров
         # Снимок хаба — с его такта: последний кадр или уже пауза после него.
         assert snap["sources"]["frames"]["state"] in ("ok", "paused")
         assert snap["match"]["side"]["value"] == "ORDER"

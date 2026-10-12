@@ -161,7 +161,12 @@ class Recorder:
         if st.state is State.ENDED:
             if self.ended_at is None:
                 self.ended_at = now
-                self.api_seen["ended_reason"] = st.reason
+                # Статус API читается раз в кадр, а опрос идёт своим потоком:
+                # ответ с GameEnd мог уже смениться «API пропал после конца
+                # игры». Причина конца — событие GameEnd последнего снимка
+                # игры (он остаётся в статусе), а не последний ответ порта.
+                why = game.end_reason if game is not None else None
+                self.api_seen["ended_reason"] = why or st.reason
                 self.log(f"API: конец игры ({st.reason}); пишу ещё {self.end_grace:.0f} с")
         elif st.state in (State.IN_GAME, State.LOADING) and self.ended_at is not None:
             self.ended_at = None                   # пошла новая игра — отсчёт сначала
