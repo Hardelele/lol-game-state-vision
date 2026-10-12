@@ -12,14 +12,21 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
 from lolstream import live
 from lolstream.frame_source import Frame, Status, gap
 from lolstream.live_client import LiveClient, Response, journal_transport, read_journal
+from lolstream.state_service import check_snapshot
+from lolvision.minimap_locate import STD_BOX
+from lolvision.records import MinimapChamp
+from lolvision.unit_net import Unit
 
 OWN = Path(__file__).parent / "fixtures" / "live_client" / "own_game.jsonl"
 NOWHERE = Path(__file__).parent / "fixtures" / "нет-такого-файла"
@@ -59,9 +66,9 @@ def cpu_models(monkeypatch, tmp_path):
     built: list[tuple[int, int]] = []
     real = live.build_pipeline
 
-    def build(size, run, device, fps):
+    def build(size, run, device, fps, **kw):
         built.append(size)
-        return real(size, run, device, fps)
+        return real(size, run, device, fps, **kw)
     return build, built
 
 
@@ -74,8 +81,9 @@ class _Source:
     конца при `forever`). Запоминает потоки, в которых его открыли и читали."""
 
     def __init__(self, script: list[Frame], kind: str = "youtube", size=(640, 360),
-                 forever: Frame | None = None, fps: float = 2.0):
+                 forever: Frame | None = None, fps: float = 2.0, on_read=None):
         self.script, self.kind, self._size, self.forever = list(script), kind, size, forever
+        self.on_read = on_read                 # перед каждым кадром сценария (опрос API)
         self.fps, self.backend, self.backend_note = fps, "подставной", "задан тестом"
         self.start = 0.0
         self.threads: dict[str, set[int]] = {"open": set(), "read": set()}
@@ -91,6 +99,8 @@ class _Source:
     def read(self) -> Frame:
         self.threads["read"].add(threading.get_ident())
         if self.script:
+            if self.on_read is not None:
+                self.on_read()
             return self.script.pop(0)
         if self.forever is not None:
             time.sleep(0.005)
@@ -275,6 +285,7 @@ def test_start_screen_opens_screen_session_with_api(monkeypatch, cpu_models):
     monkeypatch.setattr(live, "LiveClient", lambda champion_ids=None: _client(
         lambda endpoint: Response(None, None, "нет соединения")))
     monkeypatch.setattr(live, "_sessions", {})
+    monkeypatch.setattr(live, "STATE_PORT", 0)        # сервис состояния — на свободном порту
     with pytest.raises(ValueError):
         live.start_screen("r", 2.0, backend="gdi")
     st = live.start_screen("r", 3.0, backend="mss")
@@ -286,9 +297,12 @@ def test_start_screen_opens_screen_session_with_api(monkeypatch, cpu_models):
         st = _wait(s, lambda st: st["source_state"]["state"] == "no_window")
         assert st["source_state"]["reason"] == "окна нет" and st["count"] == 0
         assert live.listing()[0]["source"] == "screen"
+        # Сервис состояния поднят вместе с сеансом экрана, адрес — в status().
+        assert st["state_url"].startswith("http://127.0.0.1:") and st["state_reason"] is None
     finally:
         live.stop("screen")
-        _finish(live.get("screen"))
+        st = _finish(live.get("screen"))
+    assert st["state_reason"] == "сеанс закрыт"
 
 
 def test_start_youtube_reads_video_source_without_api(monkeypatch, cpu_models):
@@ -311,8 +325,6 @@ def test_start_youtube_reads_video_source_without_api(monkeypatch, cpu_models):
 
 
 def test_serve_start_route_picks_source(monkeypatch):
-    from types import SimpleNamespace
-
     from lolstream import serve_inspect
     calls = []
     monkeypatch.setattr(live, "start_screen", lambda *a: calls.append(("screen", a)) or {})
@@ -327,3 +339,312 @@ def test_serve_start_route_picks_source(monkeypatch):
     h.body = {"source": "twitch"}
     with pytest.raises(ValueError):
         serve_inspect.live_start(h)
+
+
+# ---------- паспорт, API, свои / враги в пути кадра (#799, #798, #790) ----------
+#
+# Подставные части пути кадра: чемпионы (LiveChampions) без моделей, детектор
+# юнитов с заданным ответом, поиск миникарты, который находит её сразу, и
+# рамка без прогрева — строки выходят на каждом кадре.
+
+IDS = ["Zilean", "Amumu", "Yone", "Caitlyn", "Nami", "Darius", "Diana", "Lux", "Twitch",
+       "Yuumi"]
+HUD_ROSTER = ["Irelia", "Evelynn", "TwistedFate", "Jhin", "Zyra",
+              "Volibear", "Hecarim", "Locke", "Jinx", "Lulu"]
+RGB = {"green": (40, 200, 40), "blue": (40, 120, 230), "red": (210, 40, 40)}
+
+
+class _Champs:
+    """LiveChampions без моделей: раскладка по HUD задаётся тестом (`hud_view`,
+    `hud_roster`), состав из API — как у настоящего set_api; миникарта видит
+    всех десятерых в одной точке (и мёртвых — это конфликт с API)."""
+
+    made: list[_Champs] = []
+
+    def __init__(self, device="cpu", hud_view=None, hud_roster=None):
+        _Champs.made.append(self)
+        self.names, self.notes, self.error, self.api_error = None, [], None, None
+        self.hud_view, self.reads = hud_view, [hud_view == "spectator"] * 4
+        self.match = (None if hud_roster is None else
+                      SimpleNamespace(api=False, roster=list(hud_roster), me_team=None,
+                                      sides=("ORDER", "CHAOS")))
+        self.minimap_calls = self.who_calls = 0
+        self.closed = False
+
+    @property
+    def roster(self):
+        return None if self.match is None else self.match.roster
+
+    @property
+    def view(self):
+        if self.match is not None and self.match.api:
+            return "player" if self.match.me_team else "spectator"
+        return self.hud_view
+
+    def set_api(self, obs):
+        if obs is None:
+            if self.match is not None and self.match.api:
+                self.match = None
+            return None
+        first = obs.me_team or "ORDER"
+        sides = (first, "CHAOS" if first == "ORDER" else "ORDER")
+        roster = [p.name for s in sides for p in obs.players if p.team == s]
+        self.match = SimpleNamespace(api=True, roster=roster, me_team=obs.me_team, sides=sides)
+        return None
+
+    def offer(self, frame, t):
+        pass
+
+    def minimap(self, frame, mini):
+        self.minimap_calls += 1
+        m = self.match
+        if m is None:
+            return None
+        out = []
+        for k, n in enumerate(m.roster):
+            team = m.sides[k // 5]
+            slot = f"{'LR'[('ORDER', 'CHAOS').index(team)]}{k % 5 + 1}"
+            out.append(MinimapChamp(n, team, slot, True, 0.5, 0.5, None, None))
+        return out
+
+    def who(self, frame, units):
+        self.who_calls += 1
+        return [None] * len(units)
+
+    def close(self):
+        self.closed = True
+
+
+class _Locator:
+    """Поиск миникарты, который находит стандартную с первой попытки."""
+
+    def __init__(self, size):
+        w, h = size
+        self.size, self.region = size, (int(0.7 * w), int(0.5 * h), w, h)
+        self.box = self.fit = None
+        self.tried = 0
+
+    def offer_region(self, region):
+        self.tried += 1
+        self.fit = SimpleNamespace(box=STD_BOX, scale=1.0, score=0.8)
+        self.box = STD_BOX
+        return True
+
+    def locate(self, region):
+        return self.fit
+
+
+class _Units:
+    """Детектор юнитов с заданным ответом (пиксели кадра); маску запоминает."""
+
+    def __init__(self, units):
+        self.answer, self.calls, self.zones = units, 0, []
+
+    def set_zone(self, keep, valid):
+        self.zones.append(keep.shape)
+
+    def units(self, fr_dev):
+        self.calls += 1
+        return list(self.answer)
+
+
+# Плашки вида игрока при 1080p (как в tests/test_sides.py): свой — зелёная,
+# союзник — синяя, враг — красная; `team` детектора своего — нарочно CHAOS.
+PLAQUES = [(900, 500, "green", "CHAOS"), (500, 500, "blue", "ORDER"), (1400, 500, "red", "CHAOS")]
+
+
+def _player_frame() -> np.ndarray:
+    rgb = np.full((1080, 1920, 3), (110, 120, 105), np.uint8)
+    for x, y, color, _ in PLAQUES:
+        x0, top = x - 60, y - 115
+        cv2.rectangle(rgb, (x0 - 4, top - 4), (x0 + 124, top + 19), (15, 15, 20), -1)
+        cv2.rectangle(rgb, (x0, top), (x0 + 99, top + 9), RGB[color], -1)
+    return rgb
+
+
+@pytest.fixture
+def rigged(monkeypatch, cpu_models, tmp_path):
+    """Путь кадра с подставными чемпионами, детектором и поиском миникарты.
+    Возвращает (build, настройка): настройка — что отдать путям кадра."""
+    real_build, built = cpu_models
+    mini = tmp_path / "mini"
+    mini.mkdir()
+    (mini / "model.pt").write_bytes(b"")
+    cfg = {"hud_view": None, "hud_roster": None, "units": None}
+    _Champs.made = []
+    monkeypatch.setattr(live, "MINI_RUN", mini)
+    monkeypatch.setattr(live, "LiveChampions", lambda device: _Champs(
+        device, cfg["hud_view"], cfg["hud_roster"]))
+    monkeypatch.setattr(live, "Locator", _Locator)
+
+    def build(size, run, device, fps, **kw):
+        p = real_build(size, run, device, fps, **kw)
+        if cfg["units"] is not None:
+            w, h = size
+            p.unit_model = _Units(cfg["units"])
+            p.proj = live.Projection.load(p.crop, size)
+            p.tracker = live.UnitTracker(p.proj, valid=live._unit_zone(w, h)[2])
+        p.bw, p.bh = 70, 40                      # без прогрева рамки: строка на каждый кадр
+        return p
+    return build, cfg, built
+
+
+def _off(row) -> dict:
+    return row["off"]
+
+
+def test_screen_passport_player_view_refuses_spectator_readers(rigged):
+    build, cfg, _ = rigged
+    src = _Source([_ok(0.0), _ok(0.5)], kind="screen")
+    s = live.Session("screen", "r", src, device="cpu", build=build)
+    st = _finish(s)
+    p = st["passport"]
+    view = p["items"]["view"]
+    # Свой экран — вид игрока сразу, а не unknown на прогреве.
+    assert (view["value"], view["source"], view["how"]) == ("player", "source",
+                                                           "свой экран: своя игра")
+    assert st["view"] == "player" and all(r["view"] == "player" for r in st["frames"])
+    dis = {d["reader"]: d["reason"] for d in p["disabled"]}
+    assert dis["names"] == dis["hud_roster"] == "нужен вид наблюдателя, а это вид игрока"
+    assert p["items"]["minimap"]["value"]["found"] is True
+    assert p["items"]["game_rect"]["value"] == [0, 0, 640, 360]
+    row = st["frames"][-1]
+    assert "camera_truth" not in _off(row) and "truth" not in row   # миникарта найдена
+    assert _off(row)["names"] == dis["names"]
+    # Изменения паспорта — в событиях и в note.
+    keys = [e["key"] for e in st["passport_events"]]
+    assert "item:minimap" in keys and "item:view" in keys
+    assert st["passport_events_n"] == len(st["passport_events"])
+    assert "паспорт:" in st["note"]
+    json.dumps(st)
+
+
+def test_youtube_spectator_passport_refuses_sides_and_api(rigged):
+    build, cfg, _ = rigged
+    cfg.update(hud_view="spectator", hud_roster=HUD_ROSTER)
+    s = live.Session("vid", "r", _Source([_ok(0.0), _ok(0.5)]), device="cpu", build=build)
+    st = _finish(s)
+    p = st["passport"]
+    assert p["items"]["view"]["value"] == "spectator" and p["items"]["roster"]["value"] == "hud"
+    dis = {d["reader"]: d["reason"] for d in p["disabled"]}
+    assert dis["sides"] == "нужен вид игрока, а это вид наблюдателя"
+    assert dis["api_facts"] == "Live Client API: не подключён — нет — источник YouTube"
+    row = st["frames"][-1]
+    # Состав по HUD у наблюдателя принят: чемпионы миникарты в строке.
+    assert [c["name"] for c in row["champs"]] == HUD_ROSTER and st["roster"] == HUD_ROSTER
+    assert row["game_time"]["value"] is None and "YouTube" in row["game_time"]["reason"]
+
+
+def test_unknown_view_runs_no_detector_and_refuses_with_reason(rigged):
+    build, cfg, _ = rigged
+    cfg.update(hud_view=None, hud_roster=HUD_ROSTER,
+               units=[Unit("champion", "ORDER", 0.9, 0.1, 1.0, 300.0, 200.0)])
+    s = live.Session("vid", "r", _Source([_ok(0.0), _ok(0.5)]), device="cpu", build=build)
+    st = _finish(s)
+    p = st["passport"]
+    assert p["items"]["view"]["value"] == "unknown"
+    assert p["items"]["view"]["how"].startswith("раскладка не решена")
+    row = st["frames"][-1]
+    # Вид не решён: детектор не запускался, юниты — null с причиной, а не
+    # ответы по маске наблюдателя; состав по HUD не принят.
+    assert s._pipe.unit_model.calls == 0
+    assert row["units"] is None and "вид неизвестен" in _off(row)["units"]
+    assert row["champs"] is None and st["roster"] is None
+    assert p["items"]["roster"]["value"] is None
+    assert "вид неизвестен" in st["note"]
+
+
+def _api_session(rigged, n: int, forever=None, state_port=None):
+    """Сеанс экрана 1920×1080 с плашками и Live Client по журналу своей игры:
+    перед каждым кадром — один опрос журнала (без потока и порта 2999)."""
+    build, cfg, _ = rigged
+    cfg["units"] = [Unit("champion", team, 0.9, 0.1, 1.0, float(x), float(y))
+                    for x, y, _, team in PLAQUES]
+    api = LiveClient(transport=journal_transport(read_journal(OWN)), champion_ids=IDS)
+    api.start = lambda: api                   # опрос — из источника, по кадру
+    api.stop = lambda timeout=2.0: None
+    img = _player_frame()
+    src = _Source([Frame(Status.OK, float(k), img) for k in range(n)], kind="screen",
+                  size=(1920, 1080), forever=forever, on_read=api.poll_once)
+    return live.Session("screen", "r", src, device="cpu", build=build, api=api,
+                        state_port=state_port)
+
+
+@pytest.mark.skipif(not OWN.exists(), reason="нет журнала своей игры")
+def test_api_feeds_context_roster_deaths_conflicts_and_sides(rigged):
+    s = _api_session(rigged, 36)
+    st = _finish(s)
+    rows = st["frames"]
+    assert len(rows) == 36
+    last = rows[-1]
+    # Состав — из API (ORDER, затем CHAOS), паспорт знает источник.
+    assert [c["name"] for c in last["ctx"]] == IDS
+    assert st["passport"]["items"]["roster"]["value"] == "api"
+    assert st["passport"]["items"]["api"]["value"] == {"state": "in_game", "available": True}
+    # Смерти из API — ровно переходы isDead журнала, с источником api.
+    deaths = [(e["name"], e["src"]) for r in rows for e in r.get("ev", ())
+              if e["type"] == "death"]
+    assert deaths == [("Yone", "api"), ("Lux", "api"), ("Yone", "api"), ("Zilean", "api")]
+    zil = next(c for c in last["ctx"] if c["name"] == "Zilean")
+    assert (zil["state"], zil["alive"], zil["alive_src"], zil["respawn_src"]) == \
+        ("dead", False, "api", "api")
+    # Время матча — из API; на загрузке оно стоит на 0.1 с.
+    assert last["game_time"]["src"] == "api" and last["game_time"]["value"] >= 337
+    assert rows[0]["game_time"]["value"] == 0.1
+    # Миникарта «видит» мёртвых по API — расхождение, а не перетирание.
+    assert last["conflicts"]["minimap_dead"] > 0 and last["api_refused"] is None
+    # Свои / враги / сам на виде игрока: по цвету плашки, сторона — из API.
+    by_x = {u["x"]: u for u in last["units"]}
+    me, ally, enemy = (by_x[round(x / 1920, 4)] for x, *_ in PLAQUES)
+    assert (me["relation"], me["side"], me["side_src"]) == ("self", "ORDER", "api")
+    assert (ally["relation"], ally["side"]) == ("ally", "ORDER")
+    assert (enemy["relation"], enemy["side"]) == ("enemy", "CHAOS")
+    assert all(u["relation_reason"] is None for u in last["units"])
+    # На загрузке API ещё не «в игре»: сторона — null с причиной, отношение есть.
+    first = rows[0]["units"][0]
+    assert first["relation"] == "self" and first["side"] is None
+    assert first["side_reason"].startswith("нет команды своего игрока: Live Client API: loading")
+    # Детектор работал с маской вида игрока.
+    assert s._pipe.unit_model.zones
+    json.dumps(st)
+
+
+@pytest.mark.skipif(not OWN.exists(), reason="нет журнала своей игры")
+def test_state_service_runs_with_session(rigged):
+    s = _api_session(rigged, 12, forever=gap(Status.PAUSED, 99.0), state_port=0)
+    try:
+        st = _wait(s, lambda st: st["count"] >= 12 and st["state_url"] is not None)
+        with urllib.request.urlopen(st["state_url"] + "/state", timeout=5) as r:
+            snap = json.loads(r.read())
+        assert check_snapshot(snap) == []
+        assert snap["passport"]["value"]["items"]["view"]["value"] == "player"
+        assert snap["sources"]["vision"]["state"] == "ok"
+        # Снимок хаба — с его такта: последний кадр или уже пауза после него.
+        assert snap["sources"]["frames"]["state"] in ("ok", "paused")
+        assert snap["match"]["side"]["value"] == "ORDER"
+        assert [c["champion"]["value"] for c in snap["champions"]["value"]] == IDS
+        rel = {u["relation"]["value"] for u in snap["units"]["value"]}
+        assert rel == {"self", "ally", "enemy"}
+    finally:
+        s.stop()
+        st = _finish(s)
+    assert st["state_reason"] == "сеанс закрыт"
+
+
+def test_resize_keeps_roster_in_new_pipeline(rigged):
+    build, cfg, built = rigged
+    cfg.update(hud_view="spectator", hud_roster=HUD_ROSTER)
+    src = _Source([_ok(0.0), _ok(0.5), _ok(1.0, 800, 450), _ok(1.5, 800, 450)])
+    s = live.Session("vid", "r", src, device="cpu", build=build)
+    st = _finish(s)
+    assert built == [(640, 360), (800, 450)]
+    # Чемпионы одни на сеанс: состав, прочитанный до пересборки, остался.
+    assert len(_Champs.made) == 1 and s._pipe.champs is _Champs.made[0]
+    assert [c["name"] for c in st["frames"][-1]["champs"]] == HUD_ROSTER
+    assert st["roster"] == HUD_ROSTER and "состав сохранён" in s._pipe.note
+    # Паспорт: новый размер, миникарта найдена заново в новом пути.
+    p = st["passport"]
+    assert p["items"]["resolution"]["value"] == [800, 450]
+    assert any(e["key"] == "item:resolution" and e["old"] == [640, 360]
+               for e in st["passport_events"])
+    assert p["items"]["minimap"]["value"]["found"] is True
