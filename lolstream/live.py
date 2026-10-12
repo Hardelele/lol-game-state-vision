@@ -72,7 +72,7 @@ from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
 from lolvision.patch_infer import PatchInfer
 from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
-from lolvision.unit_net import DEFAULT_NET, UnitNetRunner
+from lolvision.unit_net import DEFAULT_NET, REF_H, REF_W, UnitNetRunner
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolvision.minimap_locate import Locator, box_px
@@ -101,10 +101,13 @@ FULL_STORE_W = 640
 KIND_HZ = 2.0
 # Детектор юнитов без опоры на полоски ХП (#773, docs/unit-detection.md):
 # с полосками миньоны не хуже прежнего, без них — 0.79 против 0.015. Его
-# рабочий порог 0.4 (у прежней сети 0.3). Нет файла — прежняя сеть.
+# рабочий порог 0.4 (у прежней сети 0.3). Нет файла — прежняя сеть. Выбор —
+# при каждом запуске сеанса (unit_net_choice), а не при загрузке модуля:
+# сервер живёт дольше, чем файлы моделей на месте.
 UNIT_NET_NOBARS = RUNS / "units" / "net-nobars2" / "model.pt"
-UNIT_NET, UNIT_THR = ((UNIT_NET_NOBARS, 0.4) if UNIT_NET_NOBARS.is_file() else (DEFAULT_NET, 0.3))
+UNIT_NETS = ((UNIT_NET_NOBARS, 0.4), (DEFAULT_NET, 0.3))
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
+STOP_WAIT = 20.0         # с: сколько ждать остановки прежнего сеанса перед новым
 
 
 # ---------- модели ----------
@@ -292,10 +295,21 @@ class Session:
             tail = self.rows[-TIMING_WINDOW:]
         el = time.time() - self.started
         seen = (self.start + n / self.fps) if n else self.start
+        # Ошибка потока состава (#788): поток жив, но состав мог не читаться.
+        champs_error = self._champs.error if self._champs is not None else None
+        note = self.note
+        # Раскладка может смениться по ходу ролика: в note — текущая, а не
+        # дописанная однажды (прежде «вид игрока» оставался навсегда).
+        if self.view == "player":
+            note += " · вид игрока"
+        if champs_error:
+            ago = round(time.time() - champs_error["time"])
+            note += f" · состав: ошибка {ago} с назад — {champs_error['text']}"
         return {"id": self.vid, "run": self.run, "state": self.state.label,
                 "kind": self.kind, "model": self.model_label,
                 "trained_on": self.trained_on, "timing": timing(tail),
-                "note": self.note, "fps": self.fps, "start": self.start,
+                "note": note, "champs_error": champs_error,
+                "fps": self.fps, "start": self.start,
                 "title": self.title, "duration": round(self.duration),
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
                 "minimap": self.minimap, "view": self.view, "elapsed": round(el, 1),
@@ -304,6 +318,10 @@ class Session:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def join(self, timeout: float) -> None:
+        """Дождаться конца работы сеанса (после stop)."""
+        self._th.join(timeout)
 
     # ---------- работа ----------
 
@@ -368,16 +386,22 @@ class Session:
         # где, чьи, доля ХП. Маска HUD — та же, что при обучении; у краёв HUD
         # ответы отбрасываются (там сеть не училась).
         unit_model = None
-        if UNIT_NET.is_file() and self.device.startswith("cuda"):
-            keep = unit_keep(w, h)
-            unit_model = UnitNetRunner(UNIT_NET, self.device, keep=keep, thr=UNIT_THR,
-                                       valid=1 - ignore_map(keep), size=(h, w))
+        unit_net, unit_thr = unit_net_choice()
+        if not self.device.startswith("cuda"):
+            self.note += " · без юнитов (нет видеокарты)"
+        elif unit_net is None:
+            self.note += f" · без юнитов (нет {_rel(UNIT_NETS[0][0])})"
+        else:
+            keep, valid, valid_src = _unit_zone(w, h)
+            unit_model = UnitNetRunner(unit_net, self.device, keep=keep, thr=unit_thr,
+                                       valid=valid, size=(h, w))
             # Трекер юнитов (#782): сопоставление на карте через проекцию
             # экрана и центр камеры; «должен быть виден» — та же зона ответов.
             hp_, scene_size = load_projection()
             self.tracker = UnitTracker(Projection(hp_, scene_size, (cx0, cy0, cx1, cy1)),
-                                       frame_size=(w, h), valid=1 - ignore_map(keep))
-            self.note += " · юниты"
+                                       frame_size=(w, h), valid=valid_src)
+            self.note += (" · юниты" if unit_net == UNIT_NETS[0][0] else
+                          f" · юниты (прежняя сеть: нет {_rel(UNIT_NETS[0][0])})")
         # Зона детектора юнитов — под раскладку ролика (#786): пока раскладка
         # не решена — наблюдатель, у вида игрока своя маска от миникарты.
         zone = ("spectator", None)
@@ -387,7 +411,9 @@ class Session:
         champs = None
         if (MINI_RUN / "model.pt").is_file():
             champs = self._champs = LiveChampions(self.device)
-            self.note += " · чемпионы"
+            self.note += " · чемпионы" + (f" ({'; '.join(champs.notes)})" if champs.notes else "")
+        else:
+            self.note += f" · без чемпионов (нет {_rel(MINI_RUN / 'model.pt')})"
 
         kind_model, kind_every = None, 1
         if KIND_NET.is_file():
@@ -397,6 +423,8 @@ class Session:
             kind_model = SceneKind(KIND_HEAD, self.device)
             kind_every = max(1, round(self.fps / KIND_HZ))
             self.note += " · тип сцены (DINO)"
+        else:
+            self.note += f" · без типа сцены (нет {_rel(KIND_NET)})"
         kind_p = None
         n_frame = 0
 
@@ -490,11 +518,10 @@ class Session:
                 want = (view, locator.box if view == "player" else None)
                 if want != zone:
                     zone = want
-                    keep = unit_keep(w, h, view, locator.box)
-                    unit_model.set_zone(keep, 1 - ignore_map(keep))
-                    self.tracker.valid = 1 - ignore_map(keep)
+                    keep, valid, valid_src = _unit_zone(w, h, view, locator.box)
+                    unit_model.set_zone(keep, valid)
+                    self.tracker.valid = valid_src
                     self.view = view
-                    self.note += " · вид игрока" if view == "player" else ""
             ms["full_img"] = _full_small(fr, fr_dev)
             n_frame += 1
 
@@ -539,9 +566,16 @@ class Session:
         модели — маска, обрезка, масштаб, вид сверху); сюда добавляются сеть,
         сведение голосов и «ответ» — сжатие картинок и запись в сеанс.
         Метка с миникарты в путь модели не входит и не считается.
+
+        Истины нет, если миникарта в кадре не найдена, а вид не наблюдателя:
+        тогда она вырезана по раскладке наблюдателя мимо настоящей, и рамка
+        по ней — мусор. В строке cx, cy, q, err = None и truth = "no_minimap";
+        ответ модели остаётся.
         """
-        x, y, q, _ = find_box_clipped(mask, bw, bh)
-        cx, cy = (x + bw / 2) / MM, (y + bh / 2) / MM
+        truth = self.minimap is None or self.minimap["found"] or self.view == "spectator"
+        if truth:
+            x, y, q, _ = find_box_clipped(mask, bw, bh)
+            cx, cy = (x + bw / 2) / MM, (y + bh / 2) / MM
 
         out, hm, mt = model.predict(prep)
         ms.update(mt)
@@ -552,10 +586,14 @@ class Session:
         i = self._n_emit
         self._n_emit += 1
         row = {"i": i, "t": round(self.start + i / self.fps, 2),
-               "cx": round(cx, 4), "cy": round(cy, 4),
+               "cx": None, "cy": None,
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
-               "err": _r(np.hypot(cx - out["px"], cy - out["py"]), 4),
-               "spread": _r(out["spread"], 3), "q": round(q, 3)}
+               "err": None, "spread": _r(out["spread"], 3), "q": None}
+        if truth:
+            row.update(cx=round(cx, 4), cy=round(cy, 4), q=round(q, 3),
+                       err=_r(np.hypot(cx - out["px"], cy - out["py"]), 4))
+        else:
+            row["truth"] = "no_minimap"
         for k in ("agree", "scene", "game"):
             if k in out:
                 row[k] = _r(out[k], 3)
@@ -620,6 +658,32 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+def unit_net_choice() -> tuple[Path | None, float | None]:
+    """Сеть детектора юнитов и её порог — первая из UNIT_NETS, что есть на диске."""
+    for path, thr in UNIT_NETS:
+        if path.is_file():
+            return path, thr
+    return None, None
+
+
+def _rel(path: Path) -> str:
+    try:
+        return path.relative_to(RUNS.parent).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _unit_zone(w: int, h: int, view: str = "spectator",
+               box=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Маски детектора юнитов: keep и valid в сетке 1080p (в ней сеть училась
+    и в ней заданы полосы ignore_map) и valid в размере кадра — для трекера."""
+    keep = unit_keep(REF_W, REF_H, view, box)
+    valid = 1 - ignore_map(keep)
+    if (w, h) == (REF_W, REF_H):
+        return keep, valid, valid
+    return keep, valid, cv2.resize(valid, (w, h), interpolation=cv2.INTER_NEAREST)
 
 
 def _mini(region: np.ndarray, mmbox, rx0: int, ry0: int) -> Image.Image:
@@ -696,9 +760,11 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
     run = run or DEFAULT_RUN
     run_checkpoint(run)                  # путь вне runs/ отвергается сразу
     with _reg:
+        stopped = []
         for other in list(_sessions.values()):
-            if other.vid != vid:
+            if other.vid != vid and other.state.active:
                 other.stop()
+                stopped.append(other)
         # Кадры закрытого сеанса ещё можно листать, но держать их все вечно
         # нельзя: две тысячи кадров — это около 120 МБ. Оставляем последние
         # два ролика, остальные забываем.
@@ -712,6 +778,12 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
             if old.run == run:
                 return old.status()
             old.stop()                   # тот же ролик, но другой моделью
+            stopped.append(old)
+        # Новый сеанс захватывает CUDA graph; если старый в это время ещё
+        # гоняет свои, захват падает (два сеанса подряд оба кончались
+        # «сбоем»). Ждём, пока остановленные отпустят видеокарту.
+        for other in stopped:
+            other.join(STOP_WAIT)
         s = Session(vid, run, fps, start_sec)
         _sessions[vid] = s
     return s.status()

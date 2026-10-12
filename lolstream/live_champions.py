@@ -42,6 +42,7 @@ Brand был «Ivern» в 100% кадров (ANXVB571YkE).
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from pathlib import Path
 
@@ -72,8 +73,12 @@ ROSTER_FRAMES = 8         # по скольким последним кадра�
 ROSTER_MIN = 2
 # Раскладка ролика (#786) — по последним чтениям портретов на игровых кадрах:
 # у наблюдателя таблица портретов есть почти всегда, у вида игрока её нет.
-# Решение — когда чтений не меньше VIEW_MIN, по большинству из VIEW_READS.
-VIEW_READS, VIEW_MIN = 8, 4
+# Решение — когда чтений не меньше VIEW_MIN, по большинству из VIEW_READS;
+# принятое решение меняется, только если против него не меньше VIEW_FLIP
+# чтений: кадры со скрытым HUD (затемнение, заставка, клавиша H) у
+# наблюдателя иначе дёргают раскладку туда-обратно (j8_-kWWh5qM: 15 из 54
+# кадров без таблицы).
+VIEW_READS, VIEW_MIN, VIEW_FLIP = 8, 4, 6
 # Полосы боковых панелей в кадре 1080p — всё, что читает hud_panels.
 PANEL_COLS = ((0, 80), (1840, 1920))
 PANEL_ROWS = (140, 680)
@@ -89,6 +94,11 @@ NAME_MARGIN = 0.03        # и отрыв от второго кандидата
 TRACK_PX = 260            # px 1080p: имя переносится с прошлого кадра не дальше
 TRACK_SCORE = 0.35        # «вес» перенесённого имени против прочитанного
 MAX_ICONS = 20            # детекций миникарты на кадр не больше (minimap_icons.decode)
+
+
+def _few(names: list[str], n: int = 5) -> str:
+    more = f" и ещё {len(names) - n}" if len(names) > n else ""
+    return ", ".join(names[:n]) + more
 
 
 def as_1080(frame: np.ndarray) -> np.ndarray:
@@ -171,6 +181,21 @@ class LiveChampions:
         self.icons = ddragon.load_icons()
         self.bank = IconBank(self.icons)
         self.names = NameReader.load(names) if names.is_file() else None
+        # Чего сеанс не умеет и почему — в note сеанса (#788): без банка имён
+        # who() молчит, и об этом надо сказать, а не писать «чемпионы».
+        self.notes: list[str] = []
+        if self.names is None:
+            self.notes.append("без имён: нет банка имён")
+        # Списки чемпионов модели миникарты и Data Dragon должны совпадать:
+        # чемпион состава, которого нет у модели, роняет Match (KeyError).
+        no_dd = sorted(set(self.model.champions) - set(self.icons))
+        no_model = sorted(set(self.icons) - set(self.model.champions))
+        if no_dd:
+            self.notes.append(f"нет в Data Dragon: {_few(no_dd)}")
+        if no_model:
+            self.notes.append(f"модель миникарты не знает: {_few(no_model)}")
+        # Последняя ошибка потока состава: {"text", "time"} или None.
+        self.error: dict | None = None
         # Образцы имён окнами (WIN_H, WIN_W) для cv2.matchTemplate.
         self.name_tm = (None if self.names is None else
                         np.ascontiguousarray(self.names.bank.T.reshape(-1, WIN_H, WIN_W)))
@@ -178,6 +203,7 @@ class LiveChampions:
         self.match: Match | None = None
         self.hud: deque = deque(maxlen=ROSTER_FRAMES)
         self.reads: deque = deque(maxlen=VIEW_READS)        # был ли HUD наблюдателя
+        self._view: str | None = None                       # принятая раскладка
         self.next_roster = 0.0
         self.prev: list[tuple[str, str, float, float]] = []   # имя, команда, x, y (px)
         self.bgr = np.zeros((1080, 1920, 3), np.uint8)       # только полосы панелей
@@ -196,9 +222,16 @@ class LiveChampions:
     @property
     def view(self) -> str | None:
         """«spectator», «player» или None — чтений пока мало."""
-        if len(self.reads) < VIEW_MIN:
+        n, spec = len(self.reads), sum(self.reads)
+        if n < VIEW_MIN:
             return None
-        return "spectator" if sum(self.reads) * 2 >= len(self.reads) else "player"
+        prev = self._view
+        if prev == "spectator" and n - spec < VIEW_FLIP:
+            return prev
+        if prev == "player" and spec < VIEW_FLIP:
+            return prev
+        self._view = "spectator" if spec * 2 >= n else "player"
+        return self._view
 
     def close(self) -> None:
         self._closed = True
@@ -226,6 +259,13 @@ class LiveChampions:
             try:
                 if frame is not None:
                     self.read_roster(frame)
+            except Exception as exc:                          # noqa: BLE001
+                # Поток не умирает: состав неизвестен до следующего окна,
+                # ошибка видна в статусе сеанса (champs_error).
+                self.match = None
+                self.hud.clear()
+                self.error = {"text": f"{type(exc).__name__}: {exc}",
+                              "time": round(time.time(), 1)}
             finally:
                 self._busy = False
 

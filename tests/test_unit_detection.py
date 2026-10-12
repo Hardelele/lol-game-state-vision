@@ -150,3 +150,49 @@ def test_gold_rows_skips_drafts_and_other_classes(tmp_path):
     got = gold_rows(p)
     assert len(got) == 1 and len(got[0]["units"]) == 2 and got[0]["duplicates"] == 1
     assert [u["kind"] for u in got[0]["other"]] == ["structure"]
+
+
+class _BlobNet(torch.nn.Module):
+    """Подставная сеть: тепловая карта миньонов — яркость входа с шагом 4."""
+
+    def forward(self, x01):
+        g = torch.nn.functional.avg_pool2d(x01[:, :1], 4)
+        heat = torch.cat([torch.full_like(g, -10.0), g * 8 - 4, torch.full_like(g, -10.0)], 1)
+        z = torch.zeros_like(g)
+        return heat, z, torch.cat([z, z], 1), z
+
+
+def _blob(w, h, fx, fy, sigma=0.012):
+    """Кадр w×h с гауссовым пятном в доле кадра (fx, fy); sigma — доля ширины."""
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    s = sigma * w
+    dx, dy = xx + 0.5 - fx * w, yy + 0.5 - fy * h
+    g = np.exp(-(dx * dx + dy * dy) / (2 * s * s))
+    return np.repeat((g * 255).astype(np.uint8)[..., None], 3, 2)
+
+
+def test_runner_720p_matches_1080p_in_frame_fractions():
+    """Кадр 720p приводится к 1080p: юнит в тех же долях кадра, что и на 1080p
+    (до 1 px сетки 1080p), а не съезжает в 1.5 раза (#788)."""
+    from lolvision.unit_net import UnitNetRunner
+    spots = [(803.5 / 1920, 403.5 / 1080), (1203.5 / 1920, 731.5 / 1080)]
+    found = {}
+    for w, h in ((1920, 1080), (1280, 720)):
+        run = UnitNetRunner(_BlobNet(), "cpu", thr=0.5, graph=False, size=(h, w))
+        frame = np.maximum(*[_blob(w, h, fx, fy) for fx, fy in spots])
+        units = sorted(run.units(frame), key=lambda u: u.x)
+        assert [u.kind for u in units] == ["minion", "minion"]
+        found[w] = [(u.x / w * 1920, u.y / h * 1080) for u in units]
+    for (x0, y0), (x1, y1) in zip(found[1920], found[1280]):
+        assert abs(x0 - x1) <= 1 and abs(y0 - y1) <= 1
+    for (x, y), (fx, fy) in zip(found[1920], spots):
+        assert abs(x - fx * 1920) <= 8 and abs(y - fy * 1080) <= 8
+
+
+def test_runner_mask_must_be_1080p_grid():
+    import pytest
+
+    from lolvision.unit_net import UnitNetRunner
+    with pytest.raises(ValueError):
+        UnitNetRunner(_BlobNet(), "cpu", keep=np.ones((720, 1280), np.uint8), graph=False,
+                      size=(720, 1280))

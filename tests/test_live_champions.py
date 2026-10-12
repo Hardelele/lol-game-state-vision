@@ -24,6 +24,7 @@ def reader() -> lc.LiveChampions:
     obj.names = names
     obj.name_tm = np.ascontiguousarray(names.bank.T.reshape(-1, WIN_H, WIN_W))
     obj.reads = deque(maxlen=lc.VIEW_READS)
+    obj._view = None
     return obj
 
 
@@ -68,6 +69,18 @@ def test_view_from_portrait_reads():
     assert r.view == "player"
     r.reads.extend([True] * lc.VIEW_READS)
     assert r.view == "spectator"
+
+
+def test_view_ignores_a_few_frames_without_hud():
+    # У наблюдателя HUD бывает скрыт на части кадров (затемнение, заставка):
+    # принятая раскладка от этого не дёргается, сменяется только устойчиво.
+    r = reader()
+    r.reads.extend([True] * lc.VIEW_READS)
+    assert r.view == "spectator"
+    r.reads.extend([False] * (lc.VIEW_FLIP - 1))
+    assert r.view == "spectator"
+    r.reads.append(False)
+    assert r.view == "player"
 
 
 def test_who_silent_in_player_view():

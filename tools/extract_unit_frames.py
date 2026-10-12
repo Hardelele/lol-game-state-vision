@@ -19,7 +19,7 @@ import argparse
 from PIL import Image
 
 import _bootstrap  # noqa: F401
-from lolstream.video_stream import frames, probe, probe_url
+from lolstream.video_stream import frames, probe, probe_url, short_stream
 from lolvision.paths import DATA, VIDEOS
 
 OUT = DATA / "units" / "frames"
@@ -52,6 +52,10 @@ def main() -> None:
                                  quality=args.quality)
         n += 1
     print(f"{args.video}: {n} кадров за {dur:.0f} с -> {out}")
+    # Оборванный поток выглядел бы готовым роликом с дырой в конце.
+    short = short_stream(n, dur, 1.0 / args.every, args.start)
+    if short:
+        raise SystemExit(f"{args.video}: {short}")
 
 
 if __name__ == "__main__":
