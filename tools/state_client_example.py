@@ -9,7 +9,8 @@
   снимком, пропущенные события не досылаются;
 * `to_source_facts(snapshot)` — короткий список фактов для модели в духе
   `coach.analysis_types.SourceFact` (id, text, source, observed_at): только
-  значения с источником, отказы не превращаются в утверждения.
+  значения с источником, отказы не превращаются в утверждения; последние
+  события матча (`events`, #803) — одной строкой `events.recent`.
 
 Запуск: `python tools/state_client_example.py [--url http://127.0.0.1:8733]`
 печатает факты снимка и затем события потока.
@@ -108,7 +109,37 @@ def to_source_facts(snap: dict) -> list[dict]:
                 add(f"enemy.{name}.pos",
                     f"враг {name} на карте u={p['u']:.2f} v={p['v']:.2f}, {age:.0f} с назад",
                     e["position"])
+    ev = snap.get("events")                      # поле с #803; старый сервис его не шлёт
+    if _f(ev) and ev["value"]:
+        add("events.recent", "недавние события: " +
+            "; ".join(event_text(e) for e in ev["value"][-RECENT:]), ev)
     return out
+
+
+RECENT = 5                                       # сколько последних событий в строке
+_REL = {"self": "вы", "ally": "союзник", "enemy": "враг"}
+_OTHER = {"turret": "башня", "minion": "миньоны", "monster": "монстр", "unknown": "неизвестно"}
+
+
+def _who(w: dict | None) -> str:
+    """Участник события: чемпион или метка объекта и отношение к игроку."""
+    if w is None:
+        return "—"
+    name = w["champion"] or _OTHER.get(w["other"], "неизвестно")
+    rel = _REL.get(w["relation"])
+    return f"{name} ({rel})" if rel else name
+
+
+def event_text(e: dict) -> str:
+    """Элемент `events` → «ChampionKill Darius (враг) → Zilean (вы), 4 с назад»."""
+    s = f"{e['kind']} {_who(e['killer'])}"
+    if e["victim"] is not None:
+        s += f" → {_who(e['victim'])}"
+    if e["detail"]:
+        s += f" [{e['detail']}]"
+    if e["ago"] is not None:
+        s += f", {e['ago']:.0f} с назад"
+    return s
 
 
 def event_line(kind: str, msg: dict) -> str:

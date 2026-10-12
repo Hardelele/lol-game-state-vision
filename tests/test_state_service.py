@@ -21,7 +21,8 @@ from pathlib import Path
 import pytest
 
 from lolstream import state_service as ss
-from lolstream.live_client import LiveStatus, State, read_journal, replay, status_observation
+from lolstream.live_client import (EventRecord, LiveStatus, State, read_journal, replay,
+                                   status_observation)
 from lolstream.state_service import (FrameStatus, StateHub, StateInputs, StateServer,
                                      VisionFrame, build_snapshot, check_snapshot, match_view)
 from lolvision.match_state import API_SLACK, MatchState
@@ -703,3 +704,192 @@ def test_refused_api_snapshot_is_the_reason():
     plain = build_snapshot(StateInputs(api=solo, match=match_view(MatchState(), solo.t)),
                            solo.t)
     assert "ещё не знает состава" in plain["champions"]["reason"]
+
+
+# ---------------------------------------------------------------- события API (#803)
+
+OWN_END = OWN.parent / "own_game_end.jsonl"
+# Выдуманные ники: свой — «Лис#EUW» (Zilean), остальные по составу журнала.
+NICKS = ["Лис#EUW", "Бобр#RU1", "Ёж#RU1", "Сова#RU2", "Волк#RU1",
+         "Кабан#RU1", "Рысь#RU1", "Сом#RU1", "Ёж#RU2", "Барсук#RU1"]
+
+
+def ev(i: int, name: str, t: float, **data) -> EventRecord:
+    return EventRecord(i, name, t, data)
+
+
+def nick_game(*events: EventRecord, game_time: float = 600.0):
+    """Снимок API своей игры с выдуманными никами и своими событиями."""
+    st = api_last()
+    g = st.game
+    players = tuple(replace(p, riot_id=n) for p, n in zip(g.players, NICKS))
+    active = replace(g.active, riot_id=NICKS[0])
+    game = replace(g, players=players, active=active, game_time=game_time,
+                   events=(ev(0, "GameStart", 0.07), ev(1, "MinionsSpawning", 30.0), *events))
+    return replace(st, game=game)
+
+
+def events_of(st: LiveStatus, clock: float | None = 600.0) -> dict:
+    """Поле `events` снимка из одного API; `clock` — время матча в контексте
+    (None — контекст без времени)."""
+    mv = match_view(MatchState(), st.t)
+    if clock is not None:
+        mv = replace(mv, clock=ss.Observed(clock, "api", mv.t))
+    snap = build_snapshot(StateInputs(api=st, match=mv), st.t)
+    assert check_snapshot(snap) == []
+    return snap["events"]
+
+
+def who(champion, relation, other=None) -> dict:
+    return {"champion": champion, "relation": relation, "other": other}
+
+
+def test_events_in_full_snapshot_are_champions_not_nicknames():
+    """Журнал своей игры, 5:37: три убийства за последние 180 с (первое
+    убийство и FirstBlood на 1:43 — старше окна), ники → чемпионы."""
+    inp, now = full_inputs()
+    snap = build_snapshot(inp, now)
+    assert check_snapshot(snap) == []
+    e = snap["events"]
+    assert e["source"] == "api" and e["age"] == 0.2
+    assert [x["kind"] for x in e["value"]] == ["ChampionKill"] * 3
+    last = e["value"][-1]
+    assert last["killer"] == who("Darius", "enemy") and last["victim"] == who("Zilean", "self")
+    assert last["assisters"] == [] and last["detail"] is None
+    assert last["time"] == pytest.approx(333.2, abs=0.05)
+    assert last["ago"] == pytest.approx(337.35 - 333.2, abs=0.1)
+    first = e["value"][0]
+    assert first["killer"] == who("Amumu", "ally") and first["victim"] == who("Lux", "enemy")
+    assert first["assisters"] == [who("Yone", "ally")]
+    assert "Player" not in json.dumps(e)                     # ники обезличенного журнала
+
+
+def test_event_names_match_by_full_id_or_name_before_tag():
+    st = nick_game(
+        ev(2, "ChampionKill", 500.0, KillerName="Кабан#RU1", VictimName="Лис",
+           Assisters=["Рысь", "Сом#RU1"]),
+        ev(3, "ChampionKill", 510.0, KillerName="Незнакомец", VictimName="Ёж",
+           Assisters=["Бобр"]),
+        ev(4, "FirstBlood", 500.0, Recipient="Кабан"),
+        ev(5, "Ace", 520.0, Acer="Сова", AcingTeam="ORDER"),
+    )
+    got = events_of(st)["value"]
+    assert [x["kind"] for x in got] == ["ChampionKill", "FirstBlood", "ChampionKill", "Ace"]
+    kill = got[0]
+    assert kill["killer"] == who("Darius", "enemy") and kill["victim"] == who("Zilean", "self")
+    assert kill["assisters"] == [who("Diana", "enemy"), who("Lux", "enemy")]
+    assert got[1]["killer"] == who("Darius", "enemy") and got[1]["victim"] is None
+    # ник не нашёлся — unknown; «Ёж» без тега у двух игроков — не угадываем
+    assert got[2]["killer"] == who(None, None, "unknown")
+    assert got[2]["victim"] == who(None, None, "unknown")
+    assert got[2]["assisters"] == [who("Amumu", "ally")]
+    assert got[3]["killer"] == who("Caitlyn", "ally") and got[3]["detail"] == "ORDER"
+    assert [x["ago"] for x in got] == [100.0, 100.0, 90.0, 80.0]
+    text = json.dumps(got, ensure_ascii=False)
+    assert not any(n.split("#")[0] in text for n in NICKS + ["Незнакомец"])
+
+
+def test_event_objects_are_labels_with_team_relation():
+    st = nick_game(
+        ev(2, "ChampionKill", 500.0, KillerName="Turret_T2_C_05_A", VictimName="Бобр",
+           Assisters=[]),
+        ev(3, "ChampionKill", 501.0, KillerName="Minion_T100L0S37N0230", VictimName="Рысь"),
+        ev(4, "ChampionKill", 502.0, KillerName="SRU_Baron12.1.1", VictimName="Сом"),
+        ev(5, "TurretKilled", 503.0, TurretKilled="Turret_TOrder_L1_P3_1242677625_0",
+           KillerName="Minion_T200L2S29N0180", Assisters=["Кабан"]),
+        ev(6, "InhibKilled", 504.0, InhibKilled="Inhib_TChaos_L1_P1_1931666598_0",
+           KillerName="Лис", Assisters=[]),
+        ev(7, "DragonKill", 505.0, DragonType="Fire", Stolen="True", KillerName="Рысь",
+           Assisters=["Сом"]),
+        ev(8, "BaronKill", 506.0, Stolen="False", KillerName="Бобр", Assisters=[]),
+        ev(9, "Multikill", 507.0, KillerName="Лис", KillStreak=2),
+        ev(10, "HordeKill", 508.0, Stolen="False", KillerName="Сова"),
+    )
+    got = {x["kind"] + str(n): x for n, x in enumerate(events_of(st)["value"])}
+    assert got["ChampionKill0"]["killer"] == who(None, "enemy", "turret")
+    assert got["ChampionKill0"]["victim"] == who("Amumu", "ally")
+    assert got["ChampionKill1"]["killer"] == who(None, "ally", "minion")
+    assert got["ChampionKill2"]["killer"] == who(None, None, "monster")
+    tk = got["TurretKilled3"]
+    assert tk["killer"] == who(None, "enemy", "minion")
+    assert tk["victim"] == who(None, "ally", "turret")     # своя башня
+    assert tk["assisters"] == [who("Darius", "enemy")]
+    assert tk["detail"] == "Turret_TOrder_L1_P3_1242677625_0"
+    inhib = got["InhibKilled4"]
+    assert inhib["killer"] == who("Zilean", "self") and inhib["victim"] is None
+    assert inhib["detail"] == "Inhib_TChaos_L1_P1_1931666598_0"
+    drag = got["DragonKill5"]
+    assert drag["detail"] == "Fire, Stolen" and drag["victim"] == who(None, None, "monster")
+    assert drag["killer"] == who("Diana", "enemy") and drag["assisters"] == [who("Lux", "enemy")]
+    assert got["BaronKill6"]["detail"] is None
+    assert got["Multikill7"]["detail"] == "2" and got["Multikill7"]["victim"] is None
+    assert got["HordeKill8"]["killer"] == who("Caitlyn", "ally")
+    out = json.dumps(got)
+    assert "Turret_T2" not in out and "SRU_" not in out and "Minion_" not in out
+
+
+def test_events_window_limit_and_unknown_clock():
+    many = [ev(10 + k, "ChampionKill", 300.0 + 10 * k, KillerName="Лис", VictimName="Кабан")
+            for k in range(30)]                                # 300 … 590
+    st = nick_game(*many)
+    got = events_of(st)["value"]
+    # окно 180 с от 600: события с 420 — их 18, все влезают в 20
+    assert [x["time"] for x in got] == [420.0 + 10 * k for k in range(18)]
+    assert got[0]["ago"] == 180.0 and got[-1]["ago"] == 10.0
+    burst = [ev(100 + k, "ChampionKill", 590.0, KillerName="Лис", VictimName="Кабан")
+             for k in range(25)]
+    got = events_of(nick_game(*burst))["value"]
+    assert len(got) == ss.EVENTS_MAX == 20                     # последние 20 по EventID
+    # время матча неизвестно: окно — от времени снимка API, ago — null
+    got = events_of(st, clock=None)["value"]
+    assert len(got) == 18 and all(x["ago"] is None for x in got)
+
+
+def test_events_refused_without_api_or_game():
+    snap = build_snapshot(StateInputs(), 1.0)
+    assert snap["events"] == ss.refuse(ss.WHY_NO_API)
+    now = 50.0
+    st = LiveStatus(State.NO_GAME, "нет соединения: refused", now)
+    snap = build_snapshot(StateInputs(api=st), now)
+    assert snap["events"]["value"] is None and "no_game" in snap["events"]["reason"]
+    loading = statuses()[0]
+    assert loading.state is State.LOADING and loading.game is not None
+    snap = build_snapshot(StateInputs(api=loading), loading.t)
+    assert snap["events"]["reason"].startswith("не в игре: Live Client loading")
+
+
+def test_events_after_game_end_are_kept():
+    st = [s for s, _ in replay(read_journal(OWN_END), IDS)][-1]
+    assert st.state is State.ENDED
+    e = events_of(st, clock=None)
+    assert e["source"] == "api" and 0 < len(e["value"]) <= ss.EVENTS_MAX
+    assert e["value"][-1]["kind"] == "GameEnd" and e["value"][-1]["detail"] in ("Win", "Lose")
+    kills = [x for x in e["value"] if x["kind"] == "ChampionKill"]
+    assert kills and all(x["killer"]["champion"] and x["victim"]["champion"] for x in kills)
+
+
+def test_schema_closes_event_items():
+    """Лишнее поле (сырой ник) и метка не из списка — ошибки схемы."""
+    inp, now = full_inputs()
+    for spoil in (lambda v: v[0].update(killer_name="Лис"),
+                  lambda v: v[1]["killer"].update(other="tower"),
+                  lambda v: v[2].update(assisters=["Лис"])):
+        snap = build_snapshot(inp, now)
+        spoil(snap["events"]["value"])
+        assert check_snapshot(snap) == ["$.events.value: не подходит ни под один вариант anyOf"]
+
+
+def test_example_client_prints_recent_events():
+    ex = load_example()
+    inp, now = full_inputs()
+    got = {f["id"]: f for f in ex.to_source_facts(build_snapshot(inp, now))}
+    line = got["events.recent"]
+    assert line["source"] == "api"
+    assert line["text"].endswith("ChampionKill Darius (враг) → Zilean (вы), 4 с назад")
+    assert ex.event_text({"kind": "TurretKilled", "killer": who(None, "enemy", "minion"),
+                          "victim": who(None, "ally", "turret"), "assisters": [],
+                          "detail": "Turret_TOrder_L1_P3", "ago": None}) == \
+        "TurretKilled миньоны (враг) → башня (союзник) [Turret_TOrder_L1_P3]"
+    # без API строки нет: отказ не становится утверждением
+    assert "events.recent" not in {f["id"] for f in
+                                   ex.to_source_facts(build_snapshot(StateInputs(), 1.0))}

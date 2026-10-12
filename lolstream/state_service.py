@@ -26,6 +26,9 @@
   `MatchView` (`match_view` — под замком сеанса);
 * статические поля API без конкуренции со зрением (ник, уровень, предметы,
   счёт, статы и золото своего игрока, режим, карта) — прямо из `LiveStatus`;
+* недавние события матча (`events`, #803) — события API за последние
+  `EVENTS_WINDOW` с, где ники игроков заменены чемпионами и отношением к
+  своему игроку (`recent_events`); ники наружу не выходят;
 * можно ли читателю зрения отвечать — решает паспорт трансляции
   (lolvision.passport: `Passport.verdict`); без паспорта условия не
   проверены — отказ;
@@ -46,6 +49,7 @@ import argparse
 import ipaddress
 import json
 import queue
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -53,7 +57,8 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from lolstream.live_client import LiveStatus, PlayerRecord, status_observation
+from lolstream.live_client import (EventRecord, GameSnapshot, LiveStatus, PlayerRecord, State,
+                                   status_observation)
 from lolvision.match_state import NEW_GAME_BACKSTEP, MatchState
 from lolvision.passport import READERS, Passport
 from lolvision.records import ChampCtx, Event, TrackRec, UnitRec
@@ -212,6 +217,142 @@ def relation_to_me(team: str, champion: str, me: PlayerRecord) -> str:
     return "ally" if team == me.team else "enemy"
 
 
+# ---------------------------------------------------------------- события API
+
+# Окно и длина списка `events` (#803): последние EVENTS_MAX событий за
+# EVENTS_WINDOW секунд игрового времени — хватает на «что сейчас произошло».
+EVENTS_WINDOW = 180.0
+EVENTS_MAX = 20
+# Служебные события начала матча — не «что произошло».
+EVENTS_SKIP = frozenset({"GameStart", "MinionsSpawning"})
+# Обобщённые метки не-чемпионов (`who.other`): сырые имена объектов API наружу
+# не выходят.
+OTHERS = ("turret", "minion", "monster", "unknown")
+# Поля события, которые становятся `detail`, по порядку. Только не-ники:
+# KillerName / VictimName / Assisters / Acer / Recipient — ники, они
+# переводятся в чемпионов (`who`), а сами не выводятся никогда.
+EVENT_DETAIL = ("DragonType", "KillStreak", "TurretKilled", "InhibKilled", "InhibRespawned",
+                "InhibRespawningSoon", "AcingTeam", "Result", "Stolen")
+# Кто убил / кто убит по видам событий: поле API → роль. Нет в таблице —
+# KillerName / VictimName, если они есть.
+EVENT_KILLER = {"FirstBlood": "Recipient", "Ace": "Acer"}
+EVENT_MONSTER = frozenset({"DragonKill", "HeraldKill", "BaronKill", "HordeKill",
+                           "AtakhanKill"})
+# Команда в имени объекта: Turret_TOrder_L0_P3_…, Turret_T1_C_05_A,
+# Minion_T100L0S37N0230, Inhib_TChaos_L1_P1_… (журналы своей игры 2026-10-12).
+_OBJ_TEAM = re.compile(r"_T(order|chaos|100|200|1|2)(?=_|l|$)", re.IGNORECASE)
+_TEAM_OF = {"order": "ORDER", "100": "ORDER", "1": "ORDER",
+            "chaos": "CHAOS", "200": "CHAOS", "2": "CHAOS"}
+
+
+def object_team(name: str) -> str | None:
+    """Команда башни / миньона / ингибитора по имени объекта API или None."""
+    m = _OBJ_TEAM.search(name)
+    if m is not None:
+        return _TEAM_OF[m.group(1).lower()]
+    low = name.lower()                     # старые имена: SRU_OrderMinionMelee
+    hits = [t for t in TEAMS if t.lower() in low]
+    return hits[0] if len(hits) == 1 else None
+
+
+def object_kind(name: str) -> str:
+    """Обобщённая метка не-чемпиона по имени объекта API (`OTHERS`)."""
+    low = name.lower()
+    if low.startswith("turret_"):
+        return "turret"
+    if "minion" in low:
+        return "minion"
+    if low.startswith("sru_"):             # SRU_Baron, SRU_Dragon_…, SRU_Horde, лагеря
+        return "monster"
+    return "unknown"
+
+
+class Names:
+    """Ник из события → игрок API. В событиях ник бывает полным riotId
+    («Имя#тег»), только именем без тега или summonerName (`PlayerRecord.riot_id`
+    уже он, если riotId нет): точное совпадение, иначе — единственный игрок с
+    этой частью до '#'. Ники наружу не выходят: только чемпион и отношение."""
+
+    def __init__(self, players: Sequence[PlayerRecord], me: PlayerRecord | None):
+        self.me = me
+        self.exact = {p.riot_id: p for p in players}
+        self.short: dict[str, list[PlayerRecord]] = {}
+        for p in players:
+            self.short.setdefault(p.riot_id.split("#", 1)[0], []).append(p)
+
+    def player(self, name: str) -> PlayerRecord | None:
+        if name in self.exact:
+            return self.exact[name]
+        hits = self.short.get(name.split("#", 1)[0], [])
+        return hits[0] if len(hits) == 1 else None
+
+    def _rel_team(self, team: str | None) -> str | None:
+        if self.me is None or team is None:
+            return None
+        return "ally" if team == self.me.team else "enemy"
+
+    def who(self, name: Any) -> dict | None:
+        """`{"champion", "relation", "other"}` или None — имени нет."""
+        if not isinstance(name, str) or not name:
+            return None
+        p = self.player(name)
+        if p is not None and p.champion is not None:
+            rel = None if self.me is None else relation_to_me(p.team, p.champion, self.me)
+            return {"champion": p.champion, "relation": rel, "other": None}
+        if p is not None:                  # игрок есть, чемпион не опознан
+            rel = "self" if p is self.me else self._rel_team(p.team)
+            return {"champion": None, "relation": rel, "other": "unknown"}
+        kind = object_kind(name)
+        rel = self._rel_team(object_team(name)) if kind in ("turret", "minion") else None
+        return {"champion": None, "relation": rel, "other": kind}
+
+
+def _detail(e: EventRecord) -> str | None:
+    parts = []
+    for k in EVENT_DETAIL:
+        v = e.data.get(k)
+        if k == "Stolen":                  # API отдаёт строкой "True" / "False"
+            if str(v).lower() == "true":
+                parts.append("Stolen")
+        elif v is not None and v != "":
+            parts.append(str(v))
+    return ", ".join(parts) or None
+
+
+def api_event(e: EventRecord, names: Names, clock: float | None) -> dict:
+    """Событие Live Client → элемент `events` (без ников)."""
+    d = e.data
+    killer = names.who(d.get(EVENT_KILLER.get(e.name, "KillerName")))
+    if e.name in EVENT_MONSTER:
+        victim = {"champion": None, "relation": None, "other": "monster"}
+    elif e.name == "TurretKilled" and isinstance(d.get("TurretKilled"), str):
+        victim = names.who(d["TurretKilled"])
+    else:
+        victim = names.who(d.get("VictimName"))
+    raw = d.get("Assisters")
+    assisters = [w for a in (raw if isinstance(raw, list) else ())
+                 if (w := names.who(a)) is not None]
+    return {"time": round(e.time, 1),
+            "ago": None if clock is None else round(max(0.0, clock - e.time), 1),
+            "kind": e.name, "killer": killer, "victim": victim, "assisters": assisters,
+            "detail": _detail(e)}
+
+
+def recent_events(game: GameSnapshot, clock: float | None, window: float = EVENTS_WINDOW,
+                  limit: int | None = EVENTS_MAX) -> list[dict]:
+    """Недавние события снимка API (старые → новые): за `window` с игрового
+    времени до `clock` (время матча; неизвестно — время снимка API), не
+    больше `limit`. Служебные `EVENTS_SKIP` не входят."""
+    ref = game.game_time if clock is None else clock
+    names = Names(game.players, game.my_player)
+    evs = sorted((e for e in game.events
+                  if e.name not in EVENTS_SKIP and e.time >= ref - window),
+                 key=lambda e: (e.time, e.event_id))
+    if limit is not None:
+        evs = evs[-limit:] if limit > 0 else []
+    return [api_event(e, names, clock) for e in evs]
+
+
 def record_sides(rec: UnitRec | TrackRec, age: float | None) -> dict:
     """Свой / враг / сам и сторона у юнита или трека — поля записи
     (lolvision/sides.py, #790) как есть: значение или null с причиной записи.
@@ -368,6 +509,15 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
              "state": refuse(api_why) if st is None else
              fact(st.state.value, "api", now - st.t)}
 
+    # --- недавние события API (#803): ники → чемпионы ---
+    if game is None:
+        events = refuse(api_why)
+    elif st.state not in (State.IN_GAME, State.ENDED):
+        events = refuse(f"не в игре: Live Client {st.state.value}"
+                        + (f" ({st.reason})" if st.reason else ""))
+    else:
+        events = fact(recent_events(game, clock["value"]), "api", api_age)
+
     # --- десять чемпионов ---
     entries: list[dict] = []
     if mv is None:
@@ -458,8 +608,9 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                 else fact(inp.passport.to_dict(), "inferred"))
     return {"schema": SCHEMA, "seq": seq, "t": round(now, 3), "error": inp.error,
             "sources": _sources(inp, now, miss), "passport": passport, "match": match,
-            "me": me_out, "champions": champions, "enemies": enemies, "camera": camera,
-            "scene": scene, "units": units, "tracks": tracks, "conflicts": conflicts}
+            "events": events, "me": me_out, "champions": champions, "enemies": enemies,
+            "camera": camera, "scene": scene, "units": units, "tracks": tracks,
+            "conflicts": conflicts}
 
 
 def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float], float],
@@ -583,6 +734,12 @@ def snapshot_schema() -> dict:
                                   "items": _obj({"reader": s, "title": s, "reason": s})},
                      "enabled": {"type": "array", "items": s}})
     conflicts = _obj({"total": i, "kinds": {"type": "object", "additionalProperties": i}})
+    who = _obj({"champion": ns, "relation": {"enum": [*RELATIONS, None]},
+                "other": {"enum": [*OTHERS, None]}})
+    event = _obj({"time": num, "ago": nnum, "kind": s,
+                  "killer": {"anyOf": [who, {"type": "null"}]},
+                  "victim": {"anyOf": [who, {"type": "null"}]},
+                  "assisters": {"type": "array", "items": who}, "detail": ns})
     fact_def = {
         "type": "object", "required": ["value", "source", "age", "reason"],
         "properties": {"value": {}, "source": {"enum": [*SOURCES, None]},
@@ -610,6 +767,7 @@ def snapshot_schema() -> dict:
                            "side": _fact_of(team),
                            "state": _fact_of({"enum": ["no_game", "loading", "in_game",
                                                        "ended", "error"]})}),
+            "events": _fact_of({"type": "array", "items": event, "maxItems": EVENTS_MAX}),
             "me": _obj({"riot_id": _fact_of(s), "champion": _fact_of(s), "team": _fact_of(team),
                         "level": _fact_of(i), "gold": _fact_of(num), "alive": _fact_of(b),
                         "respawn_in": _fact_of(num), "position": _fact_of(uv),
