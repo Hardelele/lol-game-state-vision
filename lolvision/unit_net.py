@@ -43,6 +43,14 @@ REF_W, REF_H = 1920, 1080
 STRIDE = 4
 OUT_W, OUT_H = IN_W // STRIDE, IN_H // STRIDE
 DEFAULT_NET = RUNS / "units" / "net" / "model.pt"
+# Боевой детектор (live) — выбирается только здесь (`live_net`). Сеть без
+# опоры на полоски ХП (#773, docs/unit-detection.md): с полосками миньоны не
+# хуже прежнего, без них — 0.79 против 0.015; её рабочий порог 0.4. Нет
+# файла — прежняя сеть с порогом 0.3, и сеанс говорит это в note. Выбор — при
+# каждом запуске сеанса, а не при загрузке модуля: сервер живёт дольше, чем
+# файлы моделей на месте.
+LIVE_NET = RUNS / "units" / "net-nobars2" / "model.pt"
+LIVE_NETS = ((LIVE_NET, 0.4), (DEFAULT_NET, 0.3))
 
 
 def conv_bn(cin: int, cout: int, k: int = 3, stride: int = 1, groups: int = 1) -> nn.Sequential:
@@ -159,6 +167,15 @@ def to_units(rows: np.ndarray, scale: float = 2.0) -> list[Unit]:
         out.append(Unit(CLASSES[int(c)], TEAMS[int(tp > 0.5)], float(s), float(tp), float(hv),
                         float(x * scale), float(y * scale)))
     return out
+
+
+def live_net() -> tuple[Path | None, float | None]:
+    """Боевой детектор и его порог — первый из LIVE_NETS, что есть на диске;
+    (None, None) — нет ни одного."""
+    for path, thr in LIVE_NETS:
+        if path.is_file():
+            return path, thr
+    return None, None
 
 
 def load_net(path: Path = DEFAULT_NET, device: str = "cuda") -> UnitNet:

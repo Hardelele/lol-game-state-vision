@@ -72,7 +72,7 @@ from lolvision.minimap_camera import (MM, BOX_W, BOX_H, white_mask, find_box,
 from lolvision.patch_infer import PatchInfer
 from lolvision.scene_kind import CLASSES as KIND_CLASSES, DEFAULT_HEAD as KIND_HEAD, SceneKind
 from lolvision.scene_net import DEFAULT_NET as KIND_NET, SceneNetRunner
-from lolvision.unit_net import DEFAULT_NET, REF_H, REF_W, UnitNetRunner
+from lolvision.unit_net import LIVE_NET, REF_H, REF_W, UnitNetRunner, live_net
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolvision.minimap_locate import Locator, box_px
@@ -100,13 +100,6 @@ FULL_STORE_W = 640
 # ~14 мс) — тогда примерно KIND_HZ раз в секунду потока, между этим берём
 # прошлый ответ.
 KIND_HZ = 2.0
-# Детектор юнитов без опоры на полоски ХП (#773, docs/unit-detection.md):
-# с полосками миньоны не хуже прежнего, без них — 0.79 против 0.015. Его
-# рабочий порог 0.4 (у прежней сети 0.3). Нет файла — прежняя сеть. Выбор —
-# при каждом запуске сеанса (unit_net_choice), а не при загрузке модуля:
-# сервер живёт дольше, чем файлы моделей на месте.
-UNIT_NET_NOBARS = RUNS / "units" / "net-nobars2" / "model.pt"
-UNIT_NETS = ((UNIT_NET_NOBARS, 0.4), (DEFAULT_NET, 0.3))
 TIMING_WINDOW = 200      # по скольким последним кадрам медиана времени
 STOP_WAIT = 20.0         # с: сколько ждать остановки прежнего сеанса перед новым
 
@@ -388,11 +381,12 @@ class Session:
         # где, чьи, доля ХП. Маска HUD — та же, что при обучении; у краёв HUD
         # ответы отбрасываются (там сеть не училась).
         unit_model = None
-        unit_net, unit_thr = unit_net_choice()
+        # Боевой детектор и его порог выбираются в одном месте — unit_net.live_net.
+        unit_net, unit_thr = live_net()
         if not self.device.startswith("cuda"):
             self.note += " · без юнитов (нет видеокарты)"
         elif unit_net is None:
-            self.note += f" · без юнитов (нет {_rel(UNIT_NETS[0][0])})"
+            self.note += f" · без юнитов (нет {_rel(LIVE_NET)})"
         else:
             keep, valid, valid_src = _unit_zone(w, h)
             unit_model = UnitNetRunner(unit_net, self.device, keep=keep, thr=unit_thr,
@@ -401,8 +395,8 @@ class Session:
             # экрана и центр камеры; «должен быть виден» — та же зона ответов.
             self.proj = Projection.load((cx0, cy0, cx1, cy1), (w, h))
             self.tracker = UnitTracker(self.proj, valid=valid_src)
-            self.note += (" · юниты" if unit_net == UNIT_NETS[0][0] else
-                          f" · юниты (прежняя сеть: нет {_rel(UNIT_NETS[0][0])})")
+            self.note += (" · юниты" if unit_net == LIVE_NET else
+                          f" · юниты (прежняя сеть: нет {_rel(LIVE_NET)})")
         # Зона детектора юнитов — под раскладку ролика (#786): пока раскладка
         # не решена — наблюдатель, у вида игрока своя маска от миникарты.
         zone = ("spectator", None)
@@ -663,14 +657,6 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
-
-
-def unit_net_choice() -> tuple[Path | None, float | None]:
-    """Сеть детектора юнитов и её порог — первая из UNIT_NETS, что есть на диске."""
-    for path, thr in UNIT_NETS:
-        if path.is_file():
-            return path, thr
-    return None, None
 
 
 def _rel(path: Path) -> str:
