@@ -69,8 +69,35 @@ from lolvision.records import (ChampCtx, DeathEvent, Event, MinimapChamp, Respaw
                                RosterEvent, UnitRec)
 
 TEAMS = ("ORDER", "CHAOS")
+# Карты по mapNumber Live Client API.
+RIFT, ABYSS = 11, 12                   # Ущелье призывателей, Воющая бездна (ARAM)
 # Фонтаны в долях миникарты (u вправо, v вниз), как у рамки камеры.
 FOUNTAIN = {"ORDER": (0.035, 0.965), "CHAOS": (0.965, 0.035)}
+# Воющая бездна (#803): миникарта — диагональ от ORDER слева снизу к CHAOS
+# справа сверху. CHAOS — замер по кадрам своего экрана (×1.2): возродившийся
+# Sylas стоит в (0.941, 0.147) четыре кадра подряд (6 с), камера своего
+# возродившегося — (0.90–0.93, 0.12–0.17). ORDER — отражение через центр
+# симметрии карты на миникарте (0.526, 0.538): середина нексусов и середина
+# пары ингибиторов совпали в пределах 0.01. Сам ORDER на кадрах не проверен.
+FOUNTAIN_ABYSS = {"ORDER": (0.111, 0.929), "CHAOS": (0.941, 0.147)}
+FOUNTAINS = {RIFT: FOUNTAIN, ABYSS: FOUNTAIN_ABYSS}
+
+
+def fountain(team: str, map_number: int | None) -> tuple[float, float] | None:
+    """Фонтан команды в долях миникарты на карте `map_number` (mapNumber API).
+    None — карта неизвестна API (ролик, наблюдатель): это Ущелье, как в
+    обучающих роликах. Другая карта без замера — None: места не выдумываем."""
+    if map_number is None:
+        return FOUNTAIN[team]
+    f = FOUNTAINS.get(map_number)
+    return None if f is None else f[team]
+
+
+def rift(map_number: int | None) -> bool:
+    """Ущелье (или карта неизвестна — ролики и наблюдатель только с Ущелья):
+    годится всё, что в единицах Ущелья — модель камеры, проекция экрана на
+    карту (geometry.MAP_UNITS)."""
+    return map_number is None or map_number == RIFT
 ROSTER_SWITCH = 3          # кадров с другим составом подряд — новый матч
 RESPAWN_SLACK = 2.0        # с: видим «мёртвого» раньше срока — верим глазам
 # Время матча по API, на которое оно может «откатиться» без новой игры:
@@ -110,6 +137,7 @@ class ApiObs:
     players: tuple[ApiPlayer, ...]
     me_team: str | None = None
     me: str | None = None
+    map_number: int | None = None   # mapNumber: 11 — Ущелье, 12 — Воющая бездна
 
     @property
     def roster(self) -> tuple[str, ...]:
@@ -194,6 +222,11 @@ class MatchState:
     _other_n: int = 0
 
     # ---------- наблюдения ----------
+
+    @property
+    def map_number(self) -> int | None:
+        """Карта по последнему принятому снимку API; None — API не было."""
+        return self.api.map_number if self.api is not None else None
 
     def api_live(self, t: float | None = None) -> bool:
         """Есть ли свежее наблюдение API (не старше API_STALE)."""
@@ -383,7 +416,10 @@ class MatchState:
         карте — через проекцию кадра при этом центре камеры. Нет проекции или
         ответа камеры — место остаётся прежним: выдумывать его не из чего."""
         px, py = cam if cam is not None else (None, None)
-        placeable = self.proj is not None and px is not None and py is not None
+        # Проекция экрана — в единицах Ущелья (MAP_UNITS): на другой карте
+        # место с экрана вышло бы в чужом масштабе — его не берём.
+        placeable = (self.proj is not None and px is not None and py is not None
+                     and rift(self.map_number))
         where = (px, py) if placeable else None
         mine = [u for u in units if u.kind == "champion" and u.relation == "self"]
         for u in units:
@@ -431,7 +467,9 @@ class MatchState:
         c.alive, c.respawn_at, c.respawn_src = Fact(True, t, src), None, None
         if src != "minimap":
             # Возрождение — у своего фонтана; место выведено, а не увидено.
-            c.pos = Fact(FOUNTAIN[c.team], t, "inferred")
+            # Фонтан неизвестной карты — места нет: прежнее (где умер) неверно.
+            f = fountain(c.team, self.map_number)
+            c.pos = Fact(f, t, "inferred") if f is not None else None
         c.hp = Fact(1.0, t, "inferred")
         new.append(RespawnEvent(t, c.name, c.team, src))
 

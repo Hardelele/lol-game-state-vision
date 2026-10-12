@@ -239,3 +239,54 @@ def test_refused_readers_are_null_with_reason_in_row():
     assert row["champs"] is None and row["off"]["minimap_icons"].startswith("миникарта не найдена")
     assert row["off"]["names"].startswith("нужен вид наблюдателя, а вид неизвестен")
     json.dumps(row)
+
+
+# ---------- другая карта по API (#803) ----------
+
+class _NotRift(_Model):
+    """Патчевая модель: «это не места Ущелья»."""
+    def predict(self, prep):
+        out, hm, mt = super().predict(prep)
+        return {**out, "is_game": False}, hm, mt
+
+
+def _arena_rows(map_number):
+    s = _session(found=True, view="player")
+    s.map_number = map_number
+    s.proj, s.tracker = PROJ, UnitTracker(PROJ)
+    mask = np.zeros((live.MM, live.MM), np.float32)
+    mask[100:140, 60:130] = 1                    # рамка вьюпорта на миникарте
+    units = [UnitRec("champion", "CHAOS", 0.6, 0.5, 0.7, 0.95, "Volibear")]
+    s._emit(mask, None, None, None, 70, 40, _NotRift(),
+            _game_ms(units, _minimap(Jinx=dict(visible=True, u=0.9, v=0.15))), 0.0)
+    return s, s._out.rows[-1]
+
+
+def test_off_rift_camera_from_minimap_and_no_rift_only_readers():
+    s, row = _arena_rows(12)
+    # «не Ущелье» патчевой модели на ARAM — не довод против «игры».
+    assert row["kind"] == "game"
+    vis = s.vision
+    assert vis.camera_src == "minimap" and vis.camera == (row["cx"], row["cy"])
+    assert vis.spread is None and vis.tracks is None and "не Ущелье" in vis.tracks_why
+    assert "tracks" not in row
+    # Чемпионы миникарты приняты, место — с миникарты (доли годятся для любой карты).
+    ctx = {c["name"]: c for c in row["ctx"]}
+    assert (ctx["Jinx"]["u"], ctx["Jinx"]["v"], ctx["Jinx"]["src"]) == (0.9, 0.15, "minimap")
+    assert ctx["Volibear"]["u"] is None                  # с экрана — нет: проекция Ущелья
+
+
+def test_off_rift_without_visible_viewport_refuses_camera():
+    """Рамки вьюпорта не видно (окно аугментов ARAM) — камеры нет, с причиной."""
+    s = _session(found=True, view="player")
+    s.map_number = 12
+    s._emit(np.zeros((live.MM, live.MM), np.float32), None, None, None, 70, 40, _NotRift(),
+            _game_ms([], None), 0.0)
+    assert s.vision.camera is None and "не видна" in s.vision.camera_why
+
+
+def test_rift_keeps_model_camera_and_not_game_veto():
+    for map_number in (None, 11):
+        s, row = _arena_rows(map_number)
+        assert row["kind"] == "other"                   # как раньше: не места Ущелья
+        assert s.vision.camera_src == "screen" and s.vision.camera == (0.4, 0.6)

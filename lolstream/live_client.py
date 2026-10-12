@@ -499,7 +499,8 @@ def api_observation(snap: GameSnapshot, age: float = 0.0) -> tuple[ApiObs | None
                                  max(0.0, p.respawn_timer - age) if p.is_dead else 0.0)
                        for p in players),
                  me.team if me is not None else None,
-                 me.champion if me is not None else None)
+                 me.champion if me is not None else None,
+                 snap.map_number)
     why = obs.problem()
     return (None, why) if why is not None else (obs, None)
 

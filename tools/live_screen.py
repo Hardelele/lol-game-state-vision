@@ -11,9 +11,15 @@
 Смотрелка с открытым «своим экраном» держит порт сервиса состояния
 (127.0.0.1:8733): тогда второй сеанс не запускается — сказано, что делать.
 
+Миникарта ищется по эталону Ущелья, на другой карте (ARAM) — по рамке и по
+прямоугольнику, запомненному в прошлой игре на Ущелье (%LOCALAPPDATA%/
+lolstream/minimap_fit.json). `--minimap-scale` — масштаб миникарты из
+настроек клиента (1.0 — стандартный): тогда без поиска (#803).
+
 Запуск:
     python tools/live_screen.py
     python tools/live_screen.py --fps 2 --backend dxcam --run patches/cnn
+    python tools/live_screen.py --minimap-scale 1.2
 """
 
 from __future__ import annotations
@@ -92,15 +98,18 @@ def shutdown(sess, wait: float = STOP_WAIT) -> None:
 
 def run(fps: float, backend: str, run_id: str, period: float = PERIOD,
         sleep: Callable[[float], None] = time.sleep,
-        busy: Callable[[], bool] = port_busy) -> int:
+        busy: Callable[[], bool] = port_busy, minimap_scale: float | None = None) -> int:
     """Сеанс до Ctrl+C или до его конца. → код выхода."""
     have = live.get(live.SCREEN_ID)
     if (have is not None and have.status(10**9).get("active")) or busy():
         print(BUSY_HINT.format(host=HOST, port=PORT), file=sys.stderr)
         return 2
     try:
-        live.start_screen(run_id, fps, backend)
-    except (ValueError, FileNotFoundError) as exc:        # fps, бэкенд, прогон
+        if minimap_scale is None:
+            live.start_screen(run_id, fps, backend)
+        else:
+            live.start_screen(run_id, fps, backend, minimap_scale=minimap_scale)
+    except (ValueError, FileNotFoundError) as exc:        # fps, бэкенд, прогон, масштаб
         print(f"сеанс не открыт: {exc}", file=sys.stderr)
         return 2
     sess = live.get(live.SCREEN_ID)
@@ -135,8 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--backend", default="auto", help="захват: auto / dxcam / mss")
     ap.add_argument("--run", default=live.DEFAULT_RUN,
                     help="прогон под runs/ (модель камеры; тип — из чекпоинта)")
+    ap.add_argument("--minimap-scale", type=float, default=None,
+                    help="масштаб миникарты из настроек клиента (1.0 — стандартный); "
+                         "без него миникарта ищется в кадре")
     args = ap.parse_args(argv)
-    return run(args.fps, args.backend, args.run)
+    return run(args.fps, args.backend, args.run, minimap_scale=args.minimap_scale)
 
 
 if __name__ == "__main__":

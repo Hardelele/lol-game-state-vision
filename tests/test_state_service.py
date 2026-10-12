@@ -254,6 +254,23 @@ def test_no_frame_refuses_vision_fields():
     assert ch["Lux"]["alive"]["source"] == "api"           # контекст матча на месте
 
 
+def test_off_rift_camera_is_from_minimap_and_says_why_when_absent():
+    """Не Ущелье (#803): центр камеры — рамка на миникарте, источник minimap;
+    нет её — отказ со своей причиной, треки — тоже с причиной."""
+    inp, now = full_inputs()
+    vis = vision(inp.vision.at, camera=(0.55, 0.45), spread=None, tracks=None,
+                 camera_src="minimap", tracks_why="карта 12 — не Ущелье: треки в единицах Ущелья")
+    snap = build_snapshot(replace(inp, vision=vis), now)
+    assert check_snapshot(snap) == []
+    assert snap["camera"]["center"]["value"] == {"u": 0.55, "v": 0.45}
+    assert snap["camera"]["center"]["source"] == "minimap"
+    assert "только у модели камеры" in snap["camera"]["spread"]["reason"]
+    assert snap["tracks"]["reason"].startswith("карта 12")
+    vis = replace(vis, camera=None, camera_why="карта 12 — не Ущелье: рамки нет")
+    snap = build_snapshot(replace(inp, vision=vis), now)
+    assert snap["camera"]["center"]["reason"] == "карта 12 — не Ущелье: рамки нет"
+
+
 def test_nothing_connected_is_all_refusals():
     snap = build_snapshot(StateInputs(), 10.0)
     assert check_snapshot(snap) == []

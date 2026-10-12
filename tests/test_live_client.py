@@ -326,6 +326,7 @@ def test_api_observation_of_own_game():
               if s.game is not None and any(p.is_dead for p in s.game.players))
     obs, why = api_observation(st.game)
     assert why is None and obs.me_team == "ORDER" and obs.game_time == st.game.game_time
+    assert obs.map_number == st.game.map_number          # карта — в контекст матча (#803)
     assert [(p.name, p.team) for p in obs.players] == \
         [(p.champion, p.team) for p in st.game.players]
     dead = {p.champion: p.respawn_timer for p in st.game.players if p.is_dead}

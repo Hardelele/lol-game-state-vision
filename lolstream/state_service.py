@@ -105,7 +105,12 @@ class VisionFrame:
     `at` — unix-время, когда кадр обработан (от него считается давность);
     `t` — время кадра по шкале потока. `camera` — центр камеры (доли карты)
     или None — модель камеры не ответила. Списки None — читатель не работал
-    (нет модели, кадр не «игра»), пустой список — работал и ничего не нашёл."""
+    (нет модели, кадр не «игра»), пустой список — работал и ничего не нашёл.
+
+    `camera_src` — откуда центр: screen — модель камеры по сцене (только
+    Ущелье), minimap — рамка вьюпорта на миникарте (другая карта, #803);
+    `camera_why` / `tracks_why` — почему значения нет, если причина не
+    обычная."""
     i: int
     t: float
     at: float
@@ -114,6 +119,9 @@ class VisionFrame:
     spread: float | None = None
     units: Sequence[UnitRec] | None = None
     tracks: Sequence[TrackRec] | None = None
+    camera_src: str = "screen"
+    camera_why: str | None = None
+    tracks_why: str | None = None
 
 
 @dataclass(frozen=True)
@@ -573,10 +581,12 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     else:
         cam = vis.camera
         ok = cam is not None and cam[0] is not None and cam[1] is not None
-        camera = {"center": fact(_uv(*cam), "screen", lag) if ok
-                  else refuse("модель камеры не ответила"),
+        camera = {"center": fact(_uv(*cam), vis.camera_src, lag) if ok
+                  else refuse(vis.camera_why or "модель камеры не ответила"),
                   "spread": maybe(None if vis.spread is None else round(vis.spread, 4),
-                                  "screen", lag, "разброс камеры не считается")}
+                                  "screen", lag,
+                                  "разброс камеры не считается" if vis.camera_src == "screen"
+                                  else "разброс есть только у модели камеры (Ущелье)")}
         scene = maybe(vis.scene, "screen", lag, "тип сцены не считается (нет модели)")
         if not units_ok:
             units = tracks = refuse(units_why)
@@ -592,7 +602,7 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                     out.append(d)
                 units = fact(out, "screen", lag)
             if vis.tracks is None:
-                tracks = refuse("треки юнитов не ведутся")
+                tracks = refuse(vis.tracks_why or "треки юнитов не ведутся")
             else:
                 out = []
                 for tr in vis.tracks:
