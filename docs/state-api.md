@@ -37,6 +37,28 @@ loopback, несколько раз в секунду:
 | свои / враги / сам и сторона у юнитов и треков | `lolvision.sides` (поля `relation`, `side` записей `UnitRec` / `TrackRec`) | поля записи как есть |
 | камера, тип сцены, юниты, треки | кадр сеанса live | `VisionFrame` |
 
+## Как запустить для coach
+
+Одной командой, без смотрелки (#801):
+
+```bash
+python tools/live_screen.py                       # 2 кадра/с, захват auto — как в смотрелке
+python tools/live_screen.py --fps 2 --backend dxcam --run <прогон под runs/>
+```
+
+Скрипт открывает сеанс «свой экран» (`live.start_screen`: окно игры, Live
+Client API своей игры, этот сервис), печатает адрес — `http://127.0.0.1:8733/state`
+(события — `/events`) — или причину, почему сервис не поднят, и раз в 10 с
+строку: состояние сеанса, источника (кадр есть / пауза / окна нет), API,
+вид, сколько кадров. Ctrl+C — сеанс останавливается, скрипт ждёт, пока он
+отпустит захват, API и порт.
+
+Порт 8733 один: если смотрелка уже держит сеанс «свой экран», скрипт не
+запускается и говорит об этом (код выхода 2) — остановите сеанс в смотрелке
+или берите состояние у неё по тому же адресу. Coach читает `/state` и
+`/events` (пример клиента — `tools/state_client_example.py`, см. «Клиент
+coach» ниже).
+
 ## Версия схемы
 
 Каждый снимок и каждое сообщение потока несут `"schema": 1`. Смена имени,
@@ -134,7 +156,7 @@ unix-времени — `t − age`.
 | `match.stream_t`, `match.age` | с / `null` | момент контекста (время потока) и задержка до снимка |
 | `match.roster` | `api` / `hud` / `null` | откуда состав в контексте |
 | `match.api_live` | bool / `null` | `MatchState.api_live()`: свежее ли наблюдение API (иначе жив/мёртв снова по HUD) |
-| `match.api_refused` | строка / `null` | `MatchState.api_refused`: почему последний снимок API не принят (не 10, не 5/5, повторы) |
+| `match.api_refused` | строка / `null` | почему последний снимок API не принят (не 10, не 5/5, повторы): отказ `status_observation` в сеансе (снимок до `MatchState` не дошёл, `match_view(ms, at, refused)`) или `MatchState.api_refused` |
 | `api.state` | `absent` / `no_game` / `loading` / `in_game` / `ended` / `error` | состояние Live Client (`live_client.State`); `absent` — не подключён |
 | `api.reason` | строка / `null` | причина состояния |
 | `api.age`, `api.game_age` | с / `null` | давность последнего опроса и последнего снимка игры |
@@ -162,7 +184,7 @@ unix-времени — `t − age`.
 
 | Поле | Тип `value` | Источник | Смысл, отказ |
 | --- | --- | --- | --- |
-| `time` | число, с | api | время матча на момент кадра — `MatchState.game_clock()`; API нет, пропал (`api_live` = false) или снимок не принят — отказ с причиной |
+| `time` | число, с | api | время матча на момент кадра — `MatchState.game_clock()`; API нет, пропал (`api_live` = false) или снимок не принят — отказ с причиной; снимок не принят (`sources.match.api_refused`, например «игроков 1, а не 10» в Practice Tool) — причина «снимок API не принят: …», она же у `champions`, `enemies`, `me.alive`, `me.respawn_in` |
 | `mode` | строка | api | режим (`CLASSIC`, `ARAM`…) |
 | `map` | целое | api | номер карты (11 — Ущелье) |
 | `side` | `ORDER` / `CHAOS` | api | сторона своего игрока (activePlayer среди allPlayers) |
@@ -438,7 +460,7 @@ srv.url; srv.hub.snapshot(); srv.close()
 | `session` | `str \| None` | подпись состояния сеанса («идёт») |
 | `frames` | `FrameStatus(kind, state, reason, backend, backend_note, fps, size, last_ok)` | последний `Frame` источника (`Status.key`, причина) и `describe()`; `last_ok` — unix-время последнего кадра |
 | `vision` | `VisionFrame(i, t, at, scene, camera, spread, units, tracks)` | последняя строка кадра: номер, время потока, unix-время обработки, тип сцены, `(px, py)`, `spread`, записи `UnitRec` / `TrackRec` (после `sides.assign`) |
-| `match` | `MatchView` = `match_view(session.match, at)` | **под замком сеанса**: `at` — unix-время кадра `match.t` |
+| `match` | `MatchView` = `match_view(session.match, at, refused)` | **под замком сеанса**: `at` — unix-время кадра `match.t`; `refused` — отказ снимка API на последнем кадре |
 | `api` | `LiveStatus` | `LiveClient.status()` |
 | `passport` | `Passport` | паспорт сеанса (объект; `to_dict` и `verdict` зовёт сервис) |
 | `vision_events` | `Sequence[Event]` | `MatchState.events` (можно накопительно: хаб отсеет повторы) |

@@ -194,6 +194,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `eval_coords.py` | Per-video errors, predictions and heatmaps for the viewer, sanity controls |
 | `calibrate_view.py`, `calibrate_projection.py` | Measure the screen → map scale; fit the homography in `dataset/layouts/projection.json` |
 | `serve_inspect.py` | Starts the local web viewer (`lolstream/serve_inspect.py`) |
+| `live_screen.py` | Own-screen live session in one command, without the viewer: game window, Live Client API and the state service for the coach; prints the state service address (`http://127.0.0.1:8733/state`) or why it is down, a status line every 10 s (session, frame source, API, view, frames) and stops cleanly on Ctrl+C; refuses to start when the viewer already holds the screen session. `--fps` (2), `--backend` (auto / dxcam / mss), `--run` ([docs/state-api.md](docs/state-api.md)) |
 | `state_client_example.py` | Sample thin client of the state service (standard library only): `/state`, the `/events` SSE stream with reconnect, a short fact list for the coach ([docs/state-api.md](docs/state-api.md)) |
 | `explain_miss.py` | The report on a single miss as an HTML page (the viewer serves the same report) |
 | `patch_infer.py` | Patch model on stored dataset scenes: median error and per-stage timing |
