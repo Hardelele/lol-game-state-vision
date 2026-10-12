@@ -131,9 +131,9 @@ CHAOS (17). То есть детектор различает синий и кр
 
 ## Как проверить на записях своей игры
 
-Готовность 2A — на записанных кадрах своей игры за обе стороны. Записей ещё
-нет (2D). Когда будут — кадры `data/own/<запись>/full/*.jpg` и журнал Live
-Client API (команда своего игрока — `allPlayers[me].team`):
+Готовность 2A — на записанных кадрах своей игры за обе стороны. Записи
+делает `tools/record_own_game.py` (docs/own-recordings.md, 2D): кадры
+`data/own/<запись>/full/*.jpg` и журнал Live Client API (команда своего игрока — `allPlayers[me].team`):
 
 ```bash
 python tools/eval_units.py --frames "data/own/<запись>/full/*.jpg" --no-mask --name own-<сторона>   # видеокарта

@@ -200,6 +200,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `video_side.py` | Player role and side from the video descriptions |
 | `inspect_coords.py`, `inspect_patches.py` | Self-contained HTML pages: predictions of one video; which patch size identifies a place |
 | `extract_frames.py` | Full reference frames every N seconds into `dataset/videos/` |
+| `record_own_game.py` | Recording of your own game for the stage 2 check set (#800): game window frames (`ScreenSource`, 2 fps, JPEG q90) into `data/own/<id>/full/`, one `frames.jsonl` row per source answer (frame or refusal with reason, unix time), the Live Client API journal `api.jsonl` (~1 Hz, the `read_journal` format) and an atomic `manifest.json` (side and champion from the API); stops on Ctrl+C, `--max-min` or 120 s after the game end. See [docs/own-recordings.md](docs/own-recordings.md) |
 | `eval_sides.py` | Ally / enemy / self and side on detector answers over frames (`preds.jsonl` of `eval_units.py`) with your team from the Live Client API: refusals by reason, several "self" in a frame, confident errors against a hand-labelled set, a sheet of champion plates for an eye check; no GPU ([docs/sides.md](docs/sides.md)) |
 | `runlog.py`, `_bootstrap.py` | `train.log` next to the checkpoint; the repository root on `sys.path` for the scripts |
 
@@ -245,7 +246,8 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 - `data/` (ignored): local inputs. `data/videos/<id>.info.json` (video
   metadata, plus the video itself when processed from a file),
   `data/coords/` (the dense dataset), `data/channels/` (custom channels and
-  the cached video lists).
+  the cached video lists), `data/own/` (recordings of your own game,
+  `tools/record_own_game.py`).
 - `runs/` (ignored): everything the tools produce.
 - `lolvision/`, `lolstream/`, `tools/`, `tests/`: code, see [Tools](#tools).
 - Directory layout is defined once in `lolvision/paths.py`; tool defaults
