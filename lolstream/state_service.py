@@ -230,6 +230,35 @@ def _record(rec: UnitRec | TrackRec, age: float | None) -> dict:
     return d
 
 
+@dataclass(frozen=True)
+class SelfSeen:
+    """Свой чемпион на кадре по цвету полоски (#802): сколько чемпионов с
+    relation self на кадре и можно ли верить детектору юнитов (паспорт)."""
+    n: int
+    units_ok: bool
+    units_why: str | None
+
+
+def self_on_screen(seen: SelfSeen, alive: bool | None, lag: float | None, names_ok: bool,
+                   names_why: str | None) -> dict | None:
+    """`on_screen` своего чемпиона по полоске self или None — решать, как у
+    всех, по имени над плашкой (детектор выключен паспортом или полоски нет,
+    а имена читаются). Правила — как у места своего в контексте матча
+    (MatchState._from_units): несколько self — отказ, а не догадка; мёртвого
+    на экране нет — полоска не его."""
+    if not seen.units_ok:
+        return None
+    if seen.n == 0:
+        return None if names_ok else refuse(
+            f"своей полоски (self) на кадре нет, имя над плашкой не читается: {names_why}")
+    if seen.n > 1:
+        return refuse(f"своих полосок на кадре {seen.n}, а не одна: который свой — "
+                      "неизвестно (conflicts self_many)")
+    if alive is False:
+        return refuse("свой мёртв по контексту матча, а полоска self на кадре — не его")
+    return fact(True, "screen", lag)
+
+
 def reader_ok(passport: Passport | None, reader: str,
               miss: Callable[[str], str]) -> tuple[bool, str | None]:
     """Можно ли читателю отвечать — по паспорту; без паспорта — нельзя."""
@@ -310,6 +339,11 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     units_ok, units_why = reader_ok(inp.passport, "units", miss)
     named = {} if vis is None or vis.units is None else \
         {u.name: u for u in vis.units if u.kind == "champion" and u.name}
+    # Свой чемпион на кадре — по цвету полоски (relation self, #802): на виде
+    # игрока имена не читаются, а свою зелёную полоску видно.
+    selves = 0 if vis is None or vis.units is None else \
+        sum(u.kind == "champion" and u.relation == "self" for u in vis.units)
+    seen_self = SelfSeen(selves, units_ok, units_why)
 
     # Снимок API отклонён контекстом матча — причина для времени, состава и
     # всего, что от них зависит (свой чемпион в контексте, враги).
@@ -344,11 +378,13 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     else:
         for c in mv.champs:
             entries.append(_champion(c, mv.roster_src, mlag, mage, me, me_why, players, api_age,
-                                     api_why, vis, why_vis, lag, named, names_ok, names_why))
+                                     api_why, vis, why_vis, lag, named, names_ok, names_why,
+                                     seen_self))
         champions = fact(entries, mv.roster_src, mlag)
 
     # --- свой игрок: статика из API, жив / мёртв — из контекста матча ---
-    me_fields = ("riot_id", "champion", "team", "level", "gold", "alive", "respawn_in", "stats")
+    me_fields = ("riot_id", "champion", "team", "level", "gold", "alive", "respawn_in",
+                 "position", "stats")
     if me is None:
         me_out = {k: refuse(me_why) for k in me_fields}
     else:
@@ -365,6 +401,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                            else refuse("нет activePlayer")),
                   "alive": mine["alive"] if mine else refuse(why_mine),
                   "respawn_in": mine["respawn_in"] if mine else refuse(why_mine),
+                  # место своего — то же, что у его записи в champions (#802)
+                  "position": mine["position"] if mine else refuse(why_mine),
                   "stats": (fact(dict(act.stats), "api", api_age) if act is not None
                             else refuse("нет activePlayer"))}
 
@@ -428,8 +466,9 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
               me: PlayerRecord | None, me_why: str, players: Mapping[str, PlayerRecord],
               api_age: float | None, api_why: str, vis: VisionFrame | None, why_vis: str,
               lag: float | None, named: Mapping[str, UnitRec], names_ok: bool,
-              names_why: str | None) -> dict:
-    """Один из десяти: состояние — из записи контекста матча, статика — из API."""
+              names_why: str | None, seen_self: SelfSeen) -> dict:
+    """Один из десяти: состояние — из записи контекста матча, статика — из API.
+    Свой чемпион на кадре — ещё и по полоске self (`seen_self`, #802)."""
     p = players.get(c.name)
     why_p = api_why or "нет в составе API"
     if me is None:
@@ -455,8 +494,13 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
     hp = (refuse("ХП не наблюдалось") if c.hp is None or c.hp_src is None
           else fact(round(float(c.hp), 2), c.hp_src, mlag + (c.hp_age or 0.0)))
 
+    is_me = me is not None and c.name == me.champion
+    by_bar = (None if vis is None or vis.units is None or not is_me
+              else self_on_screen(seen_self, c.alive, lag, names_ok, names_why))
     if vis is None:
         on_screen = refuse(why_vis)
+    elif by_bar is not None:
+        on_screen = by_bar
     elif not names_ok:
         on_screen = refuse(names_why)
     elif vis.units is None:
@@ -568,7 +612,8 @@ def snapshot_schema() -> dict:
                                                        "ended", "error"]})}),
             "me": _obj({"riot_id": _fact_of(s), "champion": _fact_of(s), "team": _fact_of(team),
                         "level": _fact_of(i), "gold": _fact_of(num), "alive": _fact_of(b),
-                        "respawn_in": _fact_of(num), "stats": _fact_of({"type": "object"})}),
+                        "respawn_in": _fact_of(num), "position": _fact_of(uv),
+                        "stats": _fact_of({"type": "object"})}),
             "champions": _fact_of({"type": "array", "items": champ, "maxItems": 10}),
             "enemies": _fact_of({"type": "array", "items": enemy, "maxItems": 5}),
             "camera": _obj({"center": _fact_of(uv), "spread": _fact_of(num)}),
