@@ -329,11 +329,28 @@ def live_status(h, vid: str) -> None:
     h._json(ses.status(int((h.query.get("since") or ["0"])[0])))
 
 
+@route("GET", r"/api/live/([\w-]+)/api")
+def live_api(h, sid: str) -> None:
+    """Live Client сеанса целиком: снимок игры и все события (в status() —
+    только краткая сводка, чтобы опрос смотрелки не тянул десятки КБ)."""
+    ses = live.get(sid)
+    if ses is None:
+        return h.fail(404, "сеанс не открыт")
+    h._json(ses.api_full())
+
+
 @route("POST", r"/api/live/start")
 def live_start(h) -> None:
+    """Сеанс по ролику (`id`) или по своему экрану (`source: "screen"`,
+    id сеанса — live.SCREEN_ID, `backend` — auto / dxcam / mss)."""
     b = h.body
-    h._json(live.start(b.get("id", ""), b.get("run") or h.server.live_run,
-                       b.get("fps") or 1.0, float(b.get("start") or 0.0)))
+    run = b.get("run") or h.server.live_run
+    source = b.get("source") or "youtube"
+    if source == "screen":
+        return h._json(live.start_screen(run, b.get("fps") or 2.0, b.get("backend") or "auto"))
+    if source != "youtube":
+        raise ValueError(f"неизвестный источник {source!r}: youtube или screen")
+    h._json(live.start(b.get("id", ""), run, b.get("fps") or 1.0, float(b.get("start") or 0.0)))
 
 
 @route("POST", r"/api/live/stop")

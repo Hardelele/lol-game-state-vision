@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from lolstream import channels
 from lolstream import live
 
 
 def test_live_labels_unchanged():
+    # Источник — ролик или свой экран (#794): подписи не про YouTube.
     assert {s.name: s.label for s in live.State} == {
-        "PREPARING": "готовлюсь", "PROBING": "спрашиваю YouTube", "RUNNING": "идёт",
-        "STOPPED": "остановлено", "ENDED": "ролик кончился", "FAILED": "сбой"}
-    # app.js: going = ["готовлюсь", "спрашиваю YouTube", "идёт"].includes(state)
+        "PREPARING": "готовлюсь", "PROBING": "открываю источник", "RUNNING": "идёт",
+        "STOPPED": "остановлено", "ENDED": "кончился", "FAILED": "сбой"}
+    # app.js опрашивает дальше по полю active status(), а не по подписям.
     assert {s.label for s in live.State if s.active} == {
-        "готовлюсь", "спрашиваю YouTube", "идёт"}
+        "готовлюсь", "открываю источник", "идёт"}
+    js = (Path(live.__file__).parent / "webapp" / "app.js").read_text(encoding="utf-8")
+    assert "if (d.active) S.liveTimer" in js
 
 
 def test_job_state_from_return_code():

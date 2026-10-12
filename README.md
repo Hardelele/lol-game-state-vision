@@ -73,6 +73,14 @@ dataset notes are in Russian; the README is in English.
   frame is prepared on the GPU and the network plus vote aggregation run
   as CUDA graphs: about 6 ms per frame from the decoded frame to the answer
   (≈165 frames/s on an RTX 5060 Ti; network 0.9 ms, votes 0.35 ms).
+  The session does not know where frames come from: it reads a
+  `FrameSource` — a YouTube video or the game window on your own screen
+  ("own screen" in the viewer). A missing frame (game window unfocused,
+  minimized or closed) is shown as the source state with a reason, not as a
+  crash, and writes no frame row; a resized window rebuilds the frame path
+  and says so. With the own-screen source the session also runs the Live
+  Client Data API reader of your own game and reports its state (a YouTube
+  session says explicitly that it has no API).
 - **Labels without people.** The target is read from the camera box on the
   minimap of the same frame (`lolvision/minimap_camera.py`). The minimap is
   masked out of the model input, so it is the source of the target, not a
@@ -87,7 +95,8 @@ dataset notes are in Russian; the README is in English.
 - **Inspection.** A local web app (`lolstream/serve_inspect.py` +
   `lolstream/webapp/`, started by `tools/serve_inspect.py`) shows frames, predictions and heatmaps of evaluated runs,
   steps through the network layer by layer, explains single misses, browses
-  channels, collects new videos and runs the model live on a stream.
+  channels, collects new videos and runs the model live on a stream or on
+  your own screen.
 
 ## Pipeline
 
@@ -204,10 +213,10 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | --- | --- |
 | `video_stream.py` | A local file or a YouTube video as a stream of frames (yt-dlp, ffmpeg, NVDEC) |
 | `frame_source.py` | Frame source interface for the live mode: a YouTube video or file, or the game window on screen (dxcam with an announced mss fallback, pause when unfocused or minimized, fps limit); "no frame" is a state with a reason ([docs/screen-source.md](docs/screen-source.md)) |
-| `live.py` | Live mode: frames from a stream → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk |
+| `live.py` | Live mode: frames from a `FrameSource` (YouTube or own screen) → patch model or `CoordNet` (by checkpoint type) → viewer, per-stage timing, nothing written to disk. `build_pipeline` assembles the models for a frame size, `Session` runs the frame path, reports the source state (`source_state`, `source_gaps`) and, for the own screen, the Live Client state (`api`; full snapshot and events at `/api/live/<id>/api`) |
 | `live_client.py` | Riot Live Client Data API of your own game (`https://127.0.0.1:2999/liveclientdata/allgamedata`, ~2 Hz, in its own thread): explicit states `no_game` / `loading` / `in_game` / `ended` / `error` with a reason instead of exceptions; typed records (game time, ten players with Data Dragon champion Id, team, riot ID, death and respawn timer, level, items, score; own player stats; events deduplicated by `EventID`), source `api`; replay of a `{"t", "code", "body"}` JSONL journal. See [docs/live-client.md](docs/live-client.md) |
 | `channels.py`, `video_side.py` | Channel catalog, video lists, ingest jobs; player role and side from the video description |
-| `serve_inspect.py`, `webapp/` | Local web viewer (standard library HTTP server, plain HTML/JS) |
+| `serve_inspect.py`, `webapp/` | Local web viewer (standard library HTTP server, plain HTML/JS); `POST /api/live/start` with `{"source": "screen"}` opens the own-screen session (id `screen`) |
 | `activations.py`, `explain_miss.py` | Layer-by-layer activations and the report on a single miss, served by the viewer |
 | `inspect_pages.py` | Shared frame of the static HTML pages in `runs/inspect/`, heatmap palette |
 
