@@ -726,3 +726,30 @@ def test_resize_keeps_roster_in_new_pipeline(rigged):
     assert any(e["key"] == "item:resolution" and e["old"] == [640, 360]
                for e in st["passport_events"])
     assert p["items"]["minimap"]["value"]["found"] is True
+
+
+class _BlindLocator(_Locator):
+    """Первый поиск не находит ничего; каждый следующий — как _Locator."""
+
+    def offer_region(self, region):
+        if _Locator.made[0] is self:
+            self.tried += 1
+            return False
+        return super().offer_region(region)
+
+
+def test_minimap_search_gives_up_then_retries_after_pause(rigged, monkeypatch):
+    """Сеанс «свой экран» переживает смену игры (ARAM → Ущелье): сдавшийся
+    поиск миникарты через LOCATE_PAUSE начинает новый круг и находит её."""
+    build, _, _ = rigged
+    _Locator.made = []
+    monkeypatch.setattr(live, "Locator", _BlindLocator)
+    monkeypatch.setattr(live, "LOCATE_MAX", 2)
+    monkeypatch.setattr(live, "LOCATE_PAUSE", 1.0)
+    frames = [_ok(0.5 * k) for k in range(8)]
+    st = _finish(live.Session("screen", "r", _Source(frames, kind="screen"),
+                              device="cpu", build=build))
+    assert len(_Locator.made) == 2                    # первый круг сдался, второй нашёл
+    found = [e for e in st["passport_events"] if e["key"] == "item:minimap"]
+    assert [e["new"]["found"] for e in found] == [True]   # отказ значение не менял
+    assert st["passport"]["items"]["minimap"]["value"]["found"] is True
