@@ -3,7 +3,8 @@
 Сети нет: ответы подаются подставным транспортом, порт 2999 не трогается.
 Фикстуры — tests/fixtures/live_client/: образцы из документации Riot
 (liveclientdata_sample.json, liveclientdata_events.json) и обезличенный
-журнал своей игры (own_game.jsonl, ники заменены на Player1…Player10).
+журнал своей игры (own_game.jsonl — начало и смерти, own_game_end.jsonl —
+конец, разрыв и таймауты; ники заменены на Player1…Player10).
 """
 
 from __future__ import annotations
@@ -370,3 +371,31 @@ def test_status_observation_states():
     assert obs is None and why == "API: ended (GameEnd Win)"
     obs, why = status_observation(LiveStatus(State.NO_GAME, "нет соединения", 0.0), 0.0)
     assert obs is None and why.startswith("API: no_game")
+
+
+OWN_END = FIX / "own_game_end.jsonl"
+
+
+def test_own_game_end_stays_ended_on_timeouts():
+    # хвост своей игры: последние снимки, GameEnd (Lose), разрыв соединения и
+    # таймауты — после GameEnd API не отказывает в соединении, а молчит
+    rows = read_journal(OWN_END)
+    out = list(replay(rows, IDS))
+    states = [st.state for st, _ in out]
+    n_game = states.index(State.ENDED)
+    assert n_game > 0 and set(states[:n_game]) == {State.IN_GAME}
+    assert set(states[n_game:]) == {State.ENDED}            # и на таймаутах тоже
+    end, new = out[n_game]
+    assert "GameEnd" in end.reason and "Lose" in end.reason
+    assert [e.name for e in new] == ["GameEnd"]
+    errs = [(row, st) for row, (st, _) in zip(rows, out) if row.response.code is None]
+    assert len(errs) >= 5
+    assert "RemoteDisconnected" in errs[0][0].response.error
+    assert all("timed out" in row.response.error for row, _ in errs[1:])
+    last_snap_t = max(row.t for row in rows if row.response.code == 200)
+    for _, st in errs:
+        assert st.game is not None and st.game_t == last_snap_t
+        assert "после конца игры" in st.reason
+        assert status_observation(st, st.t)[0] is None     # конец — не «сейчас»
+    ids = [e.event_id for _, new in out for e in new]
+    assert ids == sorted(set(ids)) and ids[0] == 0          # первый снимок — все события
