@@ -79,6 +79,15 @@ match.api_refused         # почему последний снимок не п
 
 Без API всё как раньше (тесты этапа 1 не менялись).
 
+В сеансе live (волна 3) наблюдение API идёт на каждом кадре — снятое в
+момент получения кадра (`status_observation(status, unix-время кадра)`), в
+строку кадра — `game_time`, `conflicts`, `api_refused`. Сеанс обновляет
+контекст под своим замком: сервис состояния снимает `match_view` из своего
+потока. Проверка на сеансе — `tests/test_live_session.py`
+(`test_api_feeds_context_roster_deaths_conflicts_and_sides`: журнал
+`own_game.jsonl` через подставной транспорт, по опросу на кадр — состав из
+API, 4 смерти с `src: "api"`, `minimap_dead` от подставной миникарты).
+
 В потоке (`lolstream/live_champions.py`): `LiveChampions.set_api(obs)` —
 состав из API вместо портретов HUD; портреты и боковые панели тогда не
 читаются (у вида игрока их нет, а порядок слотов HUD с API не связан —

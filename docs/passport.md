@@ -94,24 +94,42 @@
 `gate(reader, value)` → `{"value": …, "reason": null}` или
 `{"value": null, "reason": "…"}` — выход читателя в снимке.
 
-## Подключение (следующая волна, live.py)
+## В сеансе live (`lolstream/live.py`)
 
-Не сделано в #799; что вызвать в `lolstream/live.py`:
+Подключено в волне 3 (#799). Все сигналы идут из потока кадра под замком
+сеанса (`Session._sig`): `status()` и сервис состояния читают паспорт из
+своих потоков.
 
-* начало сеанса (после `source.open()`): `Passport.build(source.describe(), t,
-  assets={"unit_net": unit_model is not None, "names_bank": champs.names is not None,
-  "minimap_model": champs is not None})`;
-* кадр с новым `Frame.size` — `set_frame_size`; по `pending` пересоздать
-  `Locator` под новый размер;
-* `locator.offer_region` вернул True — `set_minimap(locator.box,
-  locator.fit.scale, locator.fit.score, t)`; `locator.tried >= LOCATE_MAX` —
-  `minimap_missing`;
-* `"minimap" in pending` и игровой кадр — `locator.locate(region)` в том же
-  прямоугольнике и `check_minimap(fit.score, t)` (~40 мс, только по сигналу);
-* смена `champs.view` — `set_view(champs.view, t, how=…)`;
-* смена `LiveStatus.state` — `set_api(st.state.value, st.state is State.IN_GAME, t,
-  st.reason)`;
-* смена `kind` — `set_scene(kind, t, game)`; состав — `set_roster`;
-* `_emit`: `truth` = `passport.verdict("camera_truth").ok`; имена, состав по HUD,
-  иконки, стороны — через `gate`; `status()` — `passport.to_dict()`, а `Change.text`
-  — в note и поток событий.
+| Когда | Сигнал |
+| --- | --- |
+| после `source.open()` | `Passport.build(source.describe())`; у ролика — `set_api(None, …, reason="нет — источник YouTube")`; у своего экрана — сразу `set_view("player", how="свой экран: своя игра", source="source")` |
+| собран путь кадра | `set_asset` для `unit_net`, `names_bank`, `minimap_model` — что есть у пути |
+| кадр с новым `Frame.size` | `set_frame_size`; у экрана ещё `set_game_rect` (кадр — окно игры); путь кадра пересобирается с новым `Locator` |
+| `Locator.offer_region` нашёл | `set_minimap(box, scale, score, t)` |
+| `Locator.tried >= LOCATE_MAX` (`minimap_locate.LOCATE_MAX`, общий с `tools/build_coords.py`) | `minimap_missing` |
+| `"minimap" in pending` и игровой кадр | `Locator.locate(region)`; ответ в другом прямоугольнике (дальше `AGREE_PX`) — совпадение 0; `check_minimap`; потеряна — снова раскладка и новый поиск |
+| вид | свой экран — игрок (наблюдатель, только если API сказал, что своего игрока нет); ролик — `LiveChampions.view`, `None` → `unknown` с причиной «раскладка не решена: чтений HUD N, нужно 4» |
+| смена `LiveStatus.state` | `set_api(state, state is IN_GAME, t, reason)` |
+| тип сцены | `set_scene(kind, t, game)` на каждом кадре (событие — только смена) |
+| состав | `set_roster("api")` — из API; `"hud"` — только если `hud_roster` разрешён (вид наблюдателя), иначе `None` с причиной «состав по HUD не принят: …» |
+
+Выход:
+
+* `passport.disabled()` снимается на каждом кадре в пути кадра; читатели с
+  отказом не запускаются (детектор юнитов, иконки миникарты, имена), их
+  выход в строке кадра — `null`, причина — `row["off"][читатель]`;
+* истина камеры — `verdict("camera_truth")` на момент выдачи строки (кадры
+  прогрева перерезаны по найденной миникарте): нет — `truth: "no_minimap"`
+  и `truth_reason`;
+* стороны — `sides.assign` с видом паспорта (`unknown` → `None`) и командой
+  своего игрока, только если `api_facts` разрешён;
+* `status()`: `passport` (`to_dict()`), `passport_events` (последние 50
+  `Change.to_dict()`), `passport_events_n`; в `note` — последние три
+  `Change.text` (без смены типа сцены);
+* сервис состояния получает копию паспорта (`copy.deepcopy` под замком).
+
+**Детектор юнитов при неизвестном виде не запускается.** По маске
+наблюдателя на виде игрока он видит HUD игрока как сцену (#786), трекер
+заводит из этого треки, и пометка «вид неизвестен» на строке их уже не
+отменит; цена — на ролике юнитов нет первые ~20 с потока, пока чтения HUD
+не решат вид (у своего экрана вид известен сразу).
