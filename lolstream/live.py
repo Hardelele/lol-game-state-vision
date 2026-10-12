@@ -78,6 +78,7 @@ from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolvision.minimap_locate import Locator, box_px
 from lolstream.live_champions import LiveChampions
 from lolvision.match_state import MatchState
+from lolvision.records import SCHEMA, UnitRec, dicts
 
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
@@ -496,10 +497,8 @@ class Session:
             if unit_model is not None:
                 t4 = time.perf_counter()
                 units = unit_model.units(fr_dev)
-                ms["units_list"] = [
-                    [u.kind, u.team, round(u.x / w, 4), round(u.y / h, 4), round(u.hp, 2),
-                     round(u.score, 2)] for u in units]
                 ms["units"] = (time.perf_counter() - t4) * 1000
+            names = None
             if champs is not None and (game or overlay):
                 t5 = time.perf_counter()
                 if game:
@@ -509,10 +508,12 @@ class Session:
                 t6 = time.perf_counter()
                 ms["mini"] = (t6 - t5) * 1000
                 if units and game:
-                    # Имя — седьмым полем юнита: старые поля на месте.
-                    for row_u, name in zip(ms["units_list"], champs.who(fr, units)):
-                        row_u.append(name)
+                    names = champs.who(fr, units)
                     ms["who"] = (time.perf_counter() - t6) * 1000
+            if units is not None:
+                # Юниты детектора — записи records.UnitRec (доли кадра, имя).
+                ms["unit_recs"] = [UnitRec.from_unit(u, (w, h), names[k] if names else None)
+                                   for k, u in enumerate(units)]
             if unit_model is not None and champs is not None:
                 view = champs.view or "spectator"
                 want = (view, locator.box if view == "player" else None)
@@ -585,7 +586,7 @@ class Session:
         # потока сжатия.
         i = self._n_emit
         self._n_emit += 1
-        row = {"i": i, "t": round(self.start + i / self.fps, 2),
+        row = {"schema": SCHEMA, "i": i, "t": round(self.start + i / self.fps, 2),
                "cx": None, "cy": None,
                **{k: _r(out[k], 4) for k in ("px", "py", "qx", "qy")},
                "err": None, "spread": _r(out["spread"], 3), "q": None}
@@ -600,13 +601,15 @@ class Session:
         for k in ("votes", "is_game"):
             if k in out:
                 row[k] = out[k]
-        units = ms.pop("units_list", None)
+        # Записи кадра (records.py) идут в контекст и трекер как есть, в
+        # строку — словарями: строка уходит в JSON.
+        units = ms.pop("unit_recs", None)
         full_img = ms.pop("full_img", None)
         if units is not None:
-            row["units"] = units
+            row["units"] = dicts(units)
         mini_champs = ms.pop("champs", None)
         if mini_champs is not None:
-            row["champs"] = mini_champs
+            row["champs"] = dicts(mini_champs)
         kp = ms.pop("kind_p", None)
         if kp is not None:
             # DINO узнаёт интерфейс, патчевая модель — места Ущелья: «игра»
@@ -620,20 +623,21 @@ class Session:
         # возрождения. В строку — снимок на этот кадр и новые события.
         if self.match is None:
             self.match = MatchState(view=(bw / MM, bh / MM))
-        ev = self.match.update(row["t"], row)
+        ev = self.match.update(row["t"], row.get("kind", "game"), mini_champs, units,
+                               (row["px"], row["py"]))
         if self.match.order:
-            row["ctx"] = self.match.frame_view()
+            row["ctx"] = dicts(self.match.frame_view())
         if ev:
-            row["ev"] = ev
+            row["ev"] = dicts(ev)
         # Треки юнитов: id, состояние (seen / unseen / lost), место на карте.
         # События юнитов — отдельно от событий чемпионов: смертей крипов
         # десятки в минуту.
-        if self.tracker is not None and row.get("kind", "game") == "game" and "units" in row:
-            cam = (row.get("px"), row.get("py"))
-            uev = self.tracker.update(row["t"], None if cam[0] is None else cam, row["units"])
-            row["tracks"] = self.tracker.frame_view(row["t"])
+        if self.tracker is not None and row.get("kind", "game") == "game" and units is not None:
+            cam = (row["px"], row["py"])
+            uev = self.tracker.update(row["t"], None if cam[0] is None else cam, units)
+            row["tracks"] = dicts(self.tracker.frame_view(row["t"]))
             if uev:
-                row["uev"] = uev
+                row["uev"] = dicts(uev)
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         self._out.submit(self._store, row, scene, full_img, mini, hm)

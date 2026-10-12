@@ -42,6 +42,11 @@ const S = {
   live: null, follow: true, screen: true, names: true, champs: true,
 };
 
+// Версия строки кадра потока (lolvision/records.py, SCHEMA), которую смотрелка
+// умеет читать. Строки другой версии не рисуются: поля записей могли сменить
+// имя или смысл, и рисовать их наугад — выдумка.
+const FRAME_SCHEMA = 1;
+
 // Пояснение к этапу: что именно здесь происходит и на что смотреть.
 const WHY = {
   input: "Кадр после маски и обрезки, сжатый до входного размера. Это всё, " +
@@ -254,7 +259,7 @@ function render() {
   }
   $("fUnits").classList.toggle("hidden", f.units === undefined);
   if (f.units !== undefined) {
-    const n = (k, t) => f.units.filter((u) => u[0] === k && (!t || u[1] === t)).length;
+    const n = (k, t) => f.units.filter((u) => u.kind === k && (!t || u.team === t)).length;
     $("vUnitsN").innerHTML = ["champion", "minion", "ward"].map((k) =>
       `<span class="uo">${n(k, "ORDER")}</span>/<span class="uc">${n(k, "CHAOS")}</span>`)
       .join(" · ");
@@ -312,14 +317,15 @@ function render() {
 
 // Юниты на кадре целиком (координаты — доли кадра, холст 640×360):
 // чемпион — кольцо с полосой ХП и именем, миньон — точка с короткой полосой,
-// вард — ромб. Имя — седьмое поле юнита (live_champions.py), его может не быть.
+// вард — ромб. Записи строки кадра — lolvision/records.py (schema 1); имя
+// чемпиона (live_champions.py) может быть null.
 function drawUnits(f) {
   const W = 640, H = 360;
   let s = "";
   // id трека (unit_tracker.py, #782) — у видимых треков место в кадре то же,
   // что у юнита детектора.
-  const ids = new Map((f.tracks || []).filter((t) => t[3] === "seen").map((t) => [`${t[6]},${t[7]}`, t[0]]));
-  for (const [k, team, ux, uy, hp, sc, name] of f.units || []) {
+  const ids = new Map((f.tracks || []).filter((t) => t.state === "seen").map((t) => [`${t.x},${t.y}`, t.id]));
+  for (const { kind: k, team, x: ux, y: uy, hp, score: sc, name } of f.units || []) {
     const x = ux * W, y = uy * H, c = team === "ORDER" ? "uo" : "uc";
     const who = name ? `${name} · ` : "";
     const id = ids.get(`${ux},${uy}`);
@@ -343,13 +349,13 @@ function drawUnits(f) {
   $("unitSvg").innerHTML = s;
 }
 
-// Чемпионы на миникарте (live_champions.py): запись кадра —
-// [чемпион, команда, слот, видим, u, v, жив, таймер], u и v — доли миникарты.
+// Чемпионы на миникарте (live_champions.py): запись records.MinimapChamp —
+// name, team, slot, visible, u, v, alive, timer; u и v — доли миникарты.
 // Холст 256×256 совпадает с картинкой миникарты, как у mapSvg.
 function drawChamps(f) {
   let s = `<defs><clipPath id="chClip" clipPathUnits="objectBoundingBox">` +
     `<circle cx=".5" cy=".5" r=".5"/></clipPath></defs>`;
-  for (const [name, team, slot, vis, u, v] of f.champs) {
+  for (const { name, team, slot, visible: vis, u, v } of f.champs) {
     if (!vis) continue;
     const x = u * 256, y = v * 256, r = 9, c = team === "ORDER" ? "uo" : "uc";
     s += `<g class="champ ${c}"><title>${esc(name)} · ${team} · ${slot}</title>` +
@@ -362,7 +368,7 @@ function drawChamps(f) {
   // Память контекста (match_state.py): кого сейчас не видно — там, где видели
   // последний раз, тусклее с возрастом; «вывод» — место выведено (фонтан
   // после возрождения), а не увидено.
-  for (const [name, team, st, u, v, age, src] of f.ctx || []) {
+  for (const { name, team, state: st, u, v, age, src } of f.ctx || []) {
     if (st !== "remembered" || u == null) continue;
     const x = u * 256, y = v * 256, r = 8, c = team === "ORDER" ? "uo" : "uc";
     const op = Math.max(0.25, 1 - age / 90).toFixed(2);
@@ -376,7 +382,7 @@ function drawChamps(f) {
   // Треки миньонов и вардов на миникарте — поверх иконок: волна часто стоит
   // прямо под чемпионом. Видимые — ярко, ушедшие из кадра (трекер помнит,
   // где они должны быть) — тускло.
-  for (const [id, k, team, st, u, v, , , hp, age] of f.tracks || []) {
+  for (const { id, kind: k, team, state: st, u, v, hp, age } of f.tracks || []) {
     if (k === "champion") continue;
     const c = team === "ORDER" ? "uo" : "uc";
     s += `<circle class="trk ${c} ${st}" cx="${u * 256}" cy="${v * 256}" r="${k === "ward" ? 2.6 : 2}">` +
@@ -409,12 +415,15 @@ function eventHtml(e) {
 function rosterHtml(champs, ctx) {
   // Контекст (если есть) знает больше кадра: «не виден N с» и мёртв ли,
   // даже когда панель HUD закрыта.
-  const mem = Object.fromEntries((ctx || []).map((c) => [c[0], c]));
-  const team = (t) => champs.filter((c) => c[1] === t).map(([name, , slot, vis, , , alive, timer]) => {
+  const mem = Object.fromEntries((ctx || []).map((c) => [c.name, c]));
+  const team = (t) => champs.filter((c) => c.team === t).map(({ name, slot, visible: vis, alive, timer }) => {
     const m = mem[name];
-    if (m && alive === null && m[2] === "dead") { alive = false; timer = Math.round(m[8]); }
+    if (m && alive === null && m.state === "dead") {
+      alive = false;
+      timer = m.respawn_in != null ? Math.round(m.respawn_in) : null;
+    }
     const st = alive === false ? "dead" : (vis ? "" : "fog");
-    const seen = m && m[2] === "remembered" ? ` · не виден ${Math.round(m[5])} с` : "";
+    const seen = m && m.state === "remembered" ? ` · не виден ${Math.round(m.age)} с` : "";
     const tip = `${name} · ${slot} · ` + (alive === false ? `мёртв${timer != null ? `, ${timer} с` : ""}`
       : alive === null ? "панель HUD не видна" : (vis ? "на миникарте" : "не виден на миникарте")) + seen;
     return `<span class="rc ${st}" title="${esc(tip)}"><img src="/img/champ/${encodeURIComponent(name)}.png" alt="">` +
@@ -1277,6 +1286,12 @@ async function pollLive() {
     S.live.kind = d.kind;
     S.live.model = d.model;
     S.live.trained_on = d.trained_on || [];
+  }
+  const alien = d.frames.find((f) => f.schema !== FRAME_SCHEMA);
+  if (alien) {
+    S.live.state = `формат кадра ${alien.schema ?? "без версии"}, смотрелка знает ${FRAME_SCHEMA}`;
+    liveMeta();
+    return;
   }
   if (d.frames.length) {
     // Кадр без ответа (ни одного голоса) считаем крупным промахом: так он

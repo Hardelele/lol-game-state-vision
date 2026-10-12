@@ -192,6 +192,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `checkpoints.py` | The one place checkpoints are read; the model type comes from the checkpoint |
 | `geometry.py` | Map units, the screen → ground homography and `Projection`, the one frame ↔ map conversion (unit tracker, match context) |
 | `mask_frames.py` | HUD/minimap mask and the crop of the unmasked area by layout |
+| `records.py` | Typed records of a live frame row (unit, track, minimap champion, match-context champion, events) with `to_dict`; the row carries `schema` |
 | `minimap_camera.py` | Camera box on the minimap → map coordinates (the label source) |
 | `dataset_io.py`, `augment.py` | Reading the built datasets; training augmentations and synthetic UI |
 | `paths.py` | Directory layout of the repository; defaults for the scripts and `lolstream` |

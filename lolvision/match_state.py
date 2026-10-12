@@ -7,8 +7,9 @@
 выводится, хотя на экране её нет: «мёртв, таймер 18 с» → в такой-то момент
 возродится у своего фонтана.
 
-Как. MatchState принимает наблюдения кадра (строку live: поля kind, champs,
-units, px/py) и ведёт по каждому из десяти чемпионов последнее известное:
+Как. MatchState принимает наблюдения кадра (тип сцены, чемпионов миникарты,
+юнитов детектора — записи records.py — и центр камеры) и ведёт по каждому из
+десяти чемпионов последнее известное:
 
 * где — с миникарты (точно) или с основного вида (имя над плашкой + камера,
   грубо: без учёта перспективы); у каждого значения время наблюдения и
@@ -35,6 +36,9 @@ units, px/py) и ведёт по каждому из десяти чемпион
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from lolvision.records import (ChampCtx, DeathEvent, Event, MinimapChamp, RespawnEvent,
+                               RosterEvent, UnitRec)
 
 TEAMS = ("ORDER", "CHAOS")
 # Фонтаны в долях миникарты (u вправо, v вниз), как у рамки камеры.
@@ -80,32 +84,33 @@ class MatchState:
     view: tuple[float, float] = (0.27, 0.15)   # размер вида камеры, доли миникарты
     champs: dict[str, Champ] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
-    events: list[dict] = field(default_factory=list)
+    events: list[Event] = field(default_factory=list)
     t: float = 0.0
     _other: tuple | None = None
     _other_n: int = 0
 
     # ---------- наблюдения ----------
 
-    def update(self, t: float, row: dict) -> list[dict]:
-        """Наблюдения одного кадра → новые события этого кадра."""
+    def update(self, t: float, kind: str = "game", champs: list[MinimapChamp] | None = None,
+               units: list[UnitRec] | None = None,
+               cam: tuple[float | None, float | None] | None = None) -> list[Event]:
+        """Наблюдения одного кадра → новые события этого кадра. `kind` — тип
+        сцены, `cam` — центр камеры (доли карты) или None — нет ответа."""
         self.t = t
-        new: list[dict] = []
-        kind = row.get("kind", "game")
-        champs = row.get("champs")
+        new: list[Event] = []
         # Магазин и Tab — игра под оверлеем (#786): миникарта видна, а юниты
         # сцены — нет (окно закрывает их, это не «ушли из вида»).
         if kind in ("game", "shop", "tab") and champs:
             self._roster(t, champs, new)
             self._from_champs(t, champs, new)
             if kind == "game":
-                self._from_units(t, row)
+                self._from_units(t, units or [], cam)
         self._infer(t, new)
         self.events += new
         return new
 
-    def _roster(self, t: float, champs: list, new: list) -> None:
-        roster = tuple(c[0] for c in champs)
+    def _roster(self, t: float, champs: list[MinimapChamp], new: list[Event]) -> None:
+        roster = tuple(c.name for c in champs)
         if roster == tuple(self.order):
             self._other, self._other_n = None, 0
             return
@@ -118,20 +123,20 @@ class MatchState:
         self._other = roster
         if self._other_n >= ROSTER_SWITCH:
             self._reset(champs)
-            new.append({"t": t, "type": "roster", "roster": list(roster)})
+            new.append(RosterEvent(t, roster))
 
-    def _reset(self, champs: list) -> None:
-        self.order = [c[0] for c in champs]
-        self.champs = {c[0]: Champ(c[0], c[1], c[2]) for c in champs}
+    def _reset(self, champs: list[MinimapChamp]) -> None:
+        self.order = [c.name for c in champs]
+        self.champs = {c.name: Champ(c.name, c.team, c.slot) for c in champs}
         self._other, self._other_n = None, 0
 
-    def _from_champs(self, t: float, champs: list, new: list) -> None:
-        if tuple(c[0] for c in champs) != tuple(self.order):
+    def _from_champs(self, t: float, champs: list[MinimapChamp], new: list[Event]) -> None:
+        if tuple(m.name for m in champs) != tuple(self.order):
             return                      # кадр с чужим составом не наблюдение
-        for name, team, slot, vis, u, v, alive, timer in champs:
-            c = self.champs[name]
-            if vis and u is not None:
-                c.pos, c.seen = Fact((u, v), t, "minimap"), t
+        for m in champs:
+            c, alive, timer = self.champs[m.name], m.alive, m.timer
+            if m.visible and m.u is not None:
+                c.pos, c.seen = Fact((m.u, m.v), t, "minimap"), t
                 if c.alive is not None and c.alive.value is False and \
                         (c.respawn_at is None or t >= c.respawn_at - RESPAWN_SLACK):
                     self._respawn(c, t, "minimap", new)
@@ -144,9 +149,9 @@ class MatchState:
                 if timer is not None:
                     c.respawn_at = t + float(timer)
                 if not was_dead:
-                    new.append({"t": t, "type": "death", "name": name, "team": team,
-                                "at": list(c.pos.value) if c.pos else None,
-                                "respawn_in": timer})
+                    new.append(DeathEvent(t, c.name, c.team,
+                                          c.pos.value[0] if c.pos else None,
+                                          c.pos.value[1] if c.pos else None, timer))
             elif alive is True:
                 c.dead_n = 0
                 if c.alive is not None and c.alive.value is False:
@@ -157,52 +162,49 @@ class MatchState:
                 else:
                     c.alive = Fact(True, t, "hud")
 
-    def _from_units(self, t: float, row: dict) -> None:
+    def _from_units(self, t: float, units: list[UnitRec],
+                    cam: tuple[float | None, float | None] | None) -> None:
         """Чемпионы на основном виде с именем: виден сейчас, ХП, грубое место
         (центр камеры + сдвиг от центра экрана в размерах вида)."""
-        px, py = row.get("px"), row.get("py")
-        for u in row.get("units") or []:
-            if u[0] != "champion" or len(u) < 7 or u[6] not in self.champs:
+        px, py = cam if cam is not None else (None, None)
+        for u in units:
+            if u.kind != "champion" or u.name not in self.champs:
                 continue
-            c = self.champs[u[6]]
+            c = self.champs[u.name]
             if c.alive is not None and c.alive.value is False:
                 continue                # мёртвого на экране нет: имя спутано
-            c.seen, c.hp = t, Fact(u[4], t, "screen")
+            c.seen, c.hp = t, Fact(u.hp, t, "screen")
             minimap_now = c.pos is not None and c.pos.src == "minimap" and c.pos.t >= t
             if px is not None and py is not None and not minimap_now:
-                c.pos = Fact((px + (u[2] - 0.5) * self.view[0],
-                              py + (u[3] - 0.5) * self.view[1]), t, "screen")
+                c.pos = Fact((px + (u.x - 0.5) * self.view[0],
+                              py + (u.y - 0.5) * self.view[1]), t, "screen")
 
-    def _infer(self, t: float, new: list) -> None:
+    def _infer(self, t: float, new: list[Event]) -> None:
         for c in self.champs.values():
             dead = c.alive is not None and c.alive.value is False
             if dead and c.respawn_at is not None and t >= c.respawn_at:
                 self._respawn(c, t, "inferred", new)
 
-    def _respawn(self, c: Champ, t: float, src: str, new: list) -> None:
+    def _respawn(self, c: Champ, t: float, src: str, new: list[Event]) -> None:
         c.alive, c.respawn_at = Fact(True, t, src), None
         if src != "minimap":
             # Возрождение — у своего фонтана; место выведено, а не увидено.
             c.pos = Fact(FOUNTAIN[c.team], t, "inferred")
         c.hp = Fact(1.0, t, "inferred")
-        new.append({"t": t, "type": "respawn", "name": c.name, "team": c.team, "src": src})
+        new.append(RespawnEvent(t, c.name, c.team, src))
 
     # ---------- выход ----------
 
-    def frame_view(self) -> list[list]:
-        """Снимок для строки кадра, по составу: [чемпион, команда, состояние,
-        u, v, возраст места (с), источник места, ХП, до возрождения (с)].
-        Состояние — visible / remembered / dead / unknown."""
+    def frame_view(self) -> list[ChampCtx]:
+        """Снимок для строки кадра, по составу."""
         t = self.t
         out = []
         for name in self.order:
             c = self.champs[name]
             p = c.pos
-            out.append([name, c.team, c.status(t),
-                        round(p.value[0], 4) if p else None,
-                        round(p.value[1], 4) if p else None,
-                        round(t - p.t, 1) if p else None,
-                        p.src if p else None,
-                        round(float(c.hp.value), 2) if c.hp else None,
-                        round(c.respawn_at - t, 1) if c.respawn_at is not None else None])
+            out.append(ChampCtx(name, c.team, c.status(t),
+                                p.value[0] if p else None, p.value[1] if p else None,
+                                t - p.t if p else None, p.src if p else None,
+                                float(c.hp.value) if c.hp else None,
+                                c.respawn_at - t if c.respawn_at is not None else None))
         return out

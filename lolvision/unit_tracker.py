@@ -43,6 +43,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from lolvision.geometry import MAP_UNITS, Projection
+from lolvision.records import Event, TrackRec, UnitDeathEvent, UnitNewEvent, UnitRec
 
 # Скорость с запасом, ед./с (миньон 325, чемпион до ~500 с бонусами), и
 # базовый строб — ошибка проекции и детектора (~60–100 ед.).
@@ -128,29 +129,30 @@ class UnitTracker:
             ok &= self.valid[iy, ix] > 0
         return ok
 
-    def update(self, t: float, cam: tuple[float, float] | None, units: list) -> list[dict]:
-        """Кадр: время (с), центр камеры (доли карты) и юниты строки live
-        [класс, команда, x, y (доли кадра), ХП, оценка, имя?] → события.
-        Без камеры (нет ответа модели) кадр пропускается: на карту его не
-        перевести."""
-        ev: list[dict] = []
+    def update(self, t: float, cam: tuple[float, float] | None,
+               units: list[UnitRec]) -> list[Event]:
+        """Кадр: время (с), центр камеры (доли карты) и юниты детектора →
+        события. Без камеры (нет ответа модели) кадр пропускается: на карту
+        его не перевести."""
+        ev: list[Event] = []
         if cam is None or not np.all(np.isfinite(cam)):
             return ev
-        dets = [u for u in units if u[0] in SPEED]
-        uv = (self.proj.frac_to_map([[u[2], u[3]] for u in dets], cam) if dets
+        dets = [u for u in units if u.kind in SPEED]
+        uv = (self.proj.frac_to_map([[u.x, u.y] for u in dets], cam) if dets
               else np.zeros((0, 2)))
         used = set()
         matched_tracks = set()
         live = [k for k, tr in enumerate(self.tracks) if tr.state not in ("dead",)]
         for kind in SPEED:
             for team in ("ORDER", "CHAOS"):
-                di = [i for i, u in enumerate(dets) if u[0] == kind and u[1] == team]
-                ti = [k for k in live if self.tracks[k].kind == kind and self.tracks[k].team == team]
+                di = [i for i, u in enumerate(dets) if u.kind == kind and u.team == team]
+                ti = [k for k in live
+                      if self.tracks[k].kind == kind and self.tracks[k].team == team]
                 if not di or not ti:
                     continue
                 cost = np.full((len(di), len(ti)), 1e9)
                 for a, i in enumerate(di):
-                    name = dets[i][6] if len(dets[i]) > 6 else None
+                    name = dets[i].name
                     for b, k in enumerate(ti):
                         tr = self.tracks[k]
                         if name and tr.name:
@@ -162,8 +164,8 @@ class UnitTracker:
                         if d > gate:
                             continue
                         c = d
-                        if kind == "minion" and dets[i][4] > tr.hp + 0.1:
-                            c += HP_RISE_COST * (dets[i][4] - tr.hp)
+                        if kind == "minion" and dets[i].hp > tr.hp + 0.1:
+                            c += HP_RISE_COST * (dets[i].hp - tr.hp)
                         cost[a, b] = c
                 rows, cols = linear_sum_assignment(cost)
                 for a, b in zip(rows, cols):
@@ -182,8 +184,8 @@ class UnitTracker:
                 tr.miss += 1
                 if tr.kind == "minion" and tr.hp <= DEATH_HP and tr.state != "new":
                     tr.state = "dead"
-                    ev.append({"t": t, "type": "unit_death", "id": tr.id, "kind": tr.kind,
-                               "team": tr.team, "at": [round(float(x), 4) for x in tr.uv]})
+                    ev.append(UnitDeathEvent(t, tr.id, tr.kind, tr.team,
+                                             float(tr.uv[0]), float(tr.uv[1])))
                 elif tr.miss >= MISS_IN_VIEW:
                     tr.state = "lost"
             else:
@@ -192,12 +194,11 @@ class UnitTracker:
         for i, u in enumerate(dets):
             if i in used:
                 continue
-            name = u[6] if len(u) > 6 else None
-            if name and any(tr.name == name for tr in self.tracks):
+            if u.name and any(tr.name == u.name for tr in self.tracks):
                 continue                    # чемпион с этим именем уже есть
-            self.tracks.append(Track(new_id(u[0], u[1], *uv[i], name), u[0], u[1], uv[i].copy(),
-                                     np.zeros(2), t, t, float(u[4]), name,
-                                     xy=(float(u[2]), float(u[3]))))
+            self.tracks.append(Track(new_id(u.kind, u.team, *uv[i], u.name), u.kind, u.team,
+                                     uv[i].copy(), np.zeros(2), t, t, float(u.hp), u.name,
+                                     xy=(float(u.x), float(u.y))))
         # Сроки: умершие и давно не виденные уходят из активных.
         keep = []
         for tr in self.tracks:
@@ -210,7 +211,8 @@ class UnitTracker:
         self.tracks = keep
         return ev
 
-    def _observe(self, tr: Track, t: float, uv: np.ndarray, det: list, ev: list) -> None:
+    def _observe(self, tr: Track, t: float, uv: np.ndarray, det: UnitRec,
+                 ev: list[Event]) -> None:
         dt = t - tr.t
         if dt > 0:
             v = (uv - tr.uv) / dt
@@ -219,32 +221,30 @@ class UnitTracker:
             tr.vel = v if tr.hits == 1 else 0.5 * tr.vel + 0.5 * v
             if np.hypot(*tr.vel) * MAP_UNITS > SPEED[tr.kind] * 1.5:
                 tr.vel = np.zeros(2)
-        tr.uv, tr.t, tr.hp = uv.copy(), t, float(det[4])
-        tr.xy = (float(det[2]), float(det[3]))
+        tr.uv, tr.t, tr.hp = uv.copy(), t, float(det.hp)
+        tr.xy = (float(det.x), float(det.y))
         tr.hits += 1
         tr.miss = 0
-        if len(det) > 6 and det[6] and not tr.name:
+        if det.name and not tr.name:
             # Имя прочиталось позже рождения трека: id становится именным —
             # один раз, дальше он не меняется.
-            tr.name = det[6]
+            tr.name = det.name
             tr.id = new_id(tr.kind, tr.team, *tr.uv, tr.name)
         if tr.state == "new" and tr.hits >= CONFIRM:
             tr.state = "seen"
-            ev.append({"t": t, "type": "unit_new", "id": tr.id, "kind": tr.kind, "team": tr.team})
+            ev.append(UnitNewEvent(t, tr.id, tr.kind, tr.team))
         elif tr.state != "new":
             tr.state = "seen"
 
-    def frame_view(self, t: float) -> list[list]:
-        """Активные треки для строки кадра: [id, класс, команда, состояние,
-        u, v, x, y (доли кадра или None), ХП, возраст (с)]. Неподтверждённые
-        («new») не выдаются: это может быть мусор детектора."""
+    def frame_view(self, t: float) -> list[TrackRec]:
+        """Активные треки для строки кадра. Неподтверждённые («new») не
+        выдаются: это может быть мусор детектора."""
         out = []
         for tr in self.tracks:
             if tr.state == "new":
                 continue
             p = tr.predict(t) if tr.state != "seen" else tr.uv
             xy = tr.xy if tr.state == "seen" else None
-            out.append([tr.id, tr.kind, tr.team, tr.state, round(float(p[0]), 4), round(float(p[1]), 4),
-                        xy[0] if xy else None, xy[1] if xy else None, round(tr.hp, 2),
-                        round(t - tr.t, 1)])
+            out.append(TrackRec(tr.id, tr.kind, tr.team, tr.state, float(p[0]), float(p[1]),
+                                xy[0] if xy else None, xy[1] if xy else None, tr.hp, t - tr.t))
         return out

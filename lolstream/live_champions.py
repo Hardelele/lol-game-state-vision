@@ -60,6 +60,7 @@ from lolvision.minimap_icons import (CROP, DEFAULT_RUN as MINI_RUN, MM, TEAMS, I
                                      crops, decode)
 from lolvision.name_reader import NONE, STATUS, WIN_H, WIN_W, NameReader, whiteness
 from lolvision.paths import RUNS
+from lolvision.records import MinimapChamp
 from lolvision.roster import IconBank, decide, read_frame
 from lolvision.unit_bars import BODY
 
@@ -299,11 +300,12 @@ class LiveChampions:
 
     # ---------- миникарта и панели ----------
 
-    def minimap(self, frame: np.ndarray, mini: np.ndarray) -> list[list] | None:
-        """10 записей [чемпион, команда, слот, видим, u, v, жив, таймер]:
-        u, v — доли миникарты (0..1, как у рамки камеры), None — не видим;
-        жив — True / False / None (панель не видна). `mini` — миникарта
-        256×256 RGB, нарезанная так же, как в minimap_camera (LANCZOS)."""
+    def minimap(self, frame: np.ndarray, mini: np.ndarray) -> list[MinimapChamp] | None:
+        """10 записей по составу (records.MinimapChamp): u, v — доли миникарты
+        (0..1, как у рамки камеры), None — не видим; жив — True / False /
+        None (панель не видна). None вместо списка — состав не решён.
+        `mini` — миникарта 256×256 RGB, нарезанная так же, как в
+        minimap_camera (LANCZOS)."""
         m = self.match
         if m is None:
             return None
@@ -319,11 +321,11 @@ class LiveChampions:
         for s, (name, cid) in enumerate(zip(m.roster, m.ids)):
             d, sl = seen.get(cid), slots[s]
             hud_ok = sl.dead or m.own[s] >= PORTRAIT_MIN
-            out.append([name, TEAMS[s // 5], f"{'LR'[s // 5]}{s % 5 + 1}", d is not None,
-                        round(d["x"] / MM, 4) if d else None,
-                        round(d["y"] / MM, 4) if d else None,
-                        (not sl.dead) if hud_ok else None,
-                        sl.timer if sl.dead else None])
+            out.append(MinimapChamp(name, TEAMS[s // 5], f"{'LR'[s // 5]}{s % 5 + 1}",
+                                    d is not None,
+                                    d["x"] / MM if d else None, d["y"] / MM if d else None,
+                                    (not sl.dead) if hud_ok else None,
+                                    sl.timer if sl.dead else None))
         return out
 
     # ---------- кто есть кто на основном виде ----------
