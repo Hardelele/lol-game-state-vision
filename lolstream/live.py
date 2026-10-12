@@ -93,7 +93,9 @@ from lolvision.unit_net import LIVE_NET, REF_H, REF_W, UnitNetRunner, live_net
 from lolvision.unit_targets import ignore_map, unit_keep
 from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 # Поиск миникарты (#785): ~40 мс на кадр «игра», только пока не найдена; не
-# нашлась за LOCATE_MAX попыток — остаётся раскладка.
+# нашлась за LOCATE_MAX попыток — остаётся раскладка, а через LOCATE_PAUSE с
+# поиск идёт новым кругом: сеанс «свой экран» переживает смену игры (ARAM →
+# Ущелье), и сдавшийся навсегда поиск оставлял без миникарты всю следующую игру.
 from lolvision.minimap_locate import (AGREE_PX, LOCATE_MAX, Locator, corner_px, box_px,
                                       SCALES, fit_file, load_fit, save_fit)
 from lolstream.live_champions import LiveChampions
@@ -102,6 +104,7 @@ from lolvision.passport import UNKNOWN, Change, Passport
 from lolvision.records import SCHEMA, UnitRec, dicts
 from lolvision.sides import SideContext, assign as assign_sides
 
+LOCATE_PAUSE = 60.0      # с потока между кругами поиска миникарты после сдачи
 WARMUP = 12              # кадров с видимой рамкой на оценку её размера
 WARMUP_MAX = 120         # дольше не ждём: оцениваем по тому, что есть
 WARM_Q = 0.4             # «рамка видна»: качество при размере по умолчанию
@@ -266,6 +269,7 @@ class Pipeline:
         self.gpu_prep: Callable | None = None
         self.locator: Locator | None = None
         self.locate_done = False                     # поиск сдался — паспорту сказано
+        self.locate_idle: float | None = None        # t конца круга поиска без находки
         self.region0: tuple[int, int] = (0, 0)       # левый верх угла поиска миникарты
         self.layout_mm: list[float] = []             # миникарта по раскладке, доли кадра
         self.mmbox: tuple[int, int, int, int] = (0, 0, 0, 0)
@@ -936,10 +940,16 @@ class Session:
             if game and locator.tried < LOCATE_MAX:
                 if locator.offer_region(region):
                     self._found(pl, t)
-            elif locator.tried >= LOCATE_MAX and not pl.locate_done:
-                pl.locate_done = True
-                self._sig(lambda p: p.minimap_missing(
-                    t, f"не найдена за {LOCATE_MAX} попыток — прямоугольник раскладки"))
+            elif locator.tried >= LOCATE_MAX:
+                if pl.locate_idle is None:           # круг только что кончился
+                    pl.locate_idle = t
+                    if not pl.locate_done:
+                        pl.locate_done = True
+                        self._sig(lambda p: p.minimap_missing(
+                            t, f"не найдена за {LOCATE_MAX} попыток — прямоугольник раскладки"))
+                elif t - pl.locate_idle >= LOCATE_PAUSE:
+                    # Новый круг: паспорт уже знает об отказе и узнает о находке.
+                    pl.locator, pl.locate_idle = self._new_locator(pl.size), None
             return
         if not (game and "minimap" in self.passport.pending):
             return
@@ -977,7 +987,7 @@ class Session:
     def _lost(self, pl: Pipeline) -> None:
         """Паспорт снял находку миникарты: снова раскладка и новый поиск."""
         scale = pl.locator.fit.scale if pl.locator.fit is not None else 1.0
-        pl.locator, pl.locate_done = self._new_locator(pl.size), False
+        pl.locator, pl.locate_done, pl.locate_idle = self._new_locator(pl.size), False, None
         pl.mmbox = box_px(pl.layout_mm, pl.size)
         pl.minimap = {"box": list(pl.layout_mm), "scale": None, "found": False}
         self.minimap = dict(pl.minimap)
