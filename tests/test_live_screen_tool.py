@@ -122,3 +122,18 @@ def test_defaults_match_viewer(monkeypatch):
         fps=fps, backend=backend, run=run) or 0)
     assert ls.main([]) == 0
     assert seen == {"fps": 2.0, "backend": "auto", "run": live.DEFAULT_RUN}
+
+
+def test_pending_service_is_waited_for_not_taken_for_busy(fake, capsys):
+    """Сразу после старта причина «ещё не поднят» — ждать, а не считать порт занятым."""
+    class Late(FakeSession):
+        def status(self, since=0):
+            st = super().status(since)
+            if self.count < 3:
+                st.update(state_url=None, state_reason=live.STATE_PENDING)
+            return st
+    fake["make"] = Late
+    sleep, _ = interrupt_after(5)
+    assert ls.run(2.0, "auto", "r", sleep=sleep, busy=lambda: False) == 0
+    assert "http://127.0.0.1:8733/state" in capsys.readouterr().out
+    assert fake["sess"].stopped

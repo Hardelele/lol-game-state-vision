@@ -75,8 +75,10 @@ def wait_url(sess, wait: float, sleep: Callable[[float], None]) -> dict:
     end = time.monotonic() + wait
     while True:
         st = sess.status(10**9)
-        if st.get("state_url") or st.get("state_reason") or not st.get("active", True) \
-                or time.monotonic() >= end:
+        # «ещё не поднят» — временная причина: ждём дальше, это не отказ.
+        pending = st.get("state_reason") == live.STATE_PENDING
+        if st.get("state_url") or (st.get("state_reason") and not pending) \
+                or not st.get("active", True) or time.monotonic() >= end:
             return st
         sleep(0.2)
 
@@ -109,7 +111,7 @@ def run(fps: float, backend: str, run_id: str, period: float = PERIOD,
         else:
             why = st.get("state_reason") or "сеанс ещё не поднял его"
             print(f"сервис состояния не поднят: {why}")
-            if "не поднят" in why:
+            if why.startswith("не поднят:"):               # порт занят чужим процессом
                 print(BUSY_HINT.format(host=HOST, port=PORT), file=sys.stderr)
                 shutdown(sess)
                 return 2
