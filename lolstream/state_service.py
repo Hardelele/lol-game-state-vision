@@ -123,6 +123,10 @@ class VisionFrame:
     camera_src: str = "screen"
     camera_why: str | None = None
     tracks_why: str | None = None
+    # Готовность своих D/F по HUD (#806): `hud_spells.SlotRead.to_dict()` по
+    # слотам или None — тогда `spells_why`, почему чтения нет.
+    spells: Sequence[dict] | None = None
+    spells_why: str | None = None
 
 
 @dataclass(frozen=True)
@@ -388,6 +392,43 @@ def player_spells(p: PlayerRecord | None, why: str,
             fact([x.variant for x in p.spells], "api", age))
 
 
+def hud_spells(spells: dict, vis: VisionFrame | None, why_vis: str, lag: float | None,
+               ok: bool, why: str | None) -> tuple[dict, dict]:
+    """Готовность своих заклинаний по HUD (#806) → (`spells_ready`, `spells_hud`).
+
+    `spells` — факт `me.spells` (семьи по слотам D, F из API): ключи
+    готовности — семьи, без них слоты не назвать. `spells_ready` —
+    {семья: true / false / null}; null — по HUD нельзя определить (мёртв,
+    крестик запрета, панели нет, иконка не похожа ни на что), причина — в
+    `spells_hud`. Оба слота null — отказ с причинами слотов. `spells_hud` —
+    чтения по слотам: slot, spell, state (ready / cooldown / blocked / dead /
+    hidden / unsure), ready, reason."""
+    if spells["value"] is None:
+        why_s = f"заклинания из API неизвестны: {spells['reason']}"
+        return refuse(why_s), refuse(why_s)
+    if not ok:
+        return refuse(why), refuse(why)
+    if vis is None:
+        return refuse(why_vis), refuse(why_vis)
+    if vis.spells is None:
+        why_v = vis.spells_why or "заклинания по HUD на этом кадре не читались"
+        return refuse(why_v), refuse(why_v)
+    by_slot = {r["slot"]: r for r in vis.spells}
+    slots = []
+    for slot, fam in zip(("D", "F"), spells["value"]):
+        r = by_slot.get(slot)
+        if r is None:
+            slots.append({"slot": slot, "spell": fam, "state": "hidden", "ready": None,
+                          "reason": "слот не прочитан"})
+        else:
+            slots.append({"slot": slot, "spell": fam, "state": r["state"],
+                          "ready": r["value"], "reason": r["reason"]})
+    hud = fact(slots, "hud", lag)
+    if all(x["ready"] is None for x in slots):
+        return refuse("; ".join(f"{x['spell']} ({x['slot']}): {x['reason']}" for x in slots)), hud
+    return fact({x["spell"]: x["ready"] for x in slots}, "hud", lag), hud
+
+
 def _record(rec: UnitRec | TrackRec, age: float | None) -> dict:
     """Запись records.py в выход: поля как есть, отношение и сторона — фактами."""
     d = {k: v for k, v in rec.to_dict().items() if k not in ("relation_reason", "side_reason")}
@@ -558,13 +599,15 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
 
     # --- свой игрок: статика из API, жив / мёртв — из контекста матча ---
     me_fields = ("riot_id", "champion", "team", "level", "gold", "alive", "respawn_in",
-                 "position", "stats", "spells", "spell_variants")
+                 "position", "stats", "spells", "spell_variants", "spells_ready", "spells_hud")
     if me is None:
         me_out = {k: refuse(me_why) for k in me_fields}
     else:
         act = game.active
         mine = next((e for e in entries if e["champion"]["value"] == me.champion), None)
         spells, variants = player_spells(me, me_why, api_age)
+        sp_ok, sp_why = reader_ok(inp.passport, "hud_spells", miss)
+        ready, hud = hud_spells(spells, vis, why_vis, lag, sp_ok, sp_why)
         why_mine = (why_match if mv is None else
                     refused_why if refused_why and not entries else
                     "своего чемпиона нет в контексте матча")
@@ -580,7 +623,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                   "position": mine["position"] if mine else refuse(why_mine),
                   "stats": (fact(dict(act.stats), "api", api_age) if act is not None
                             else refuse("нет activePlayer")),
-                  "spells": spells, "spell_variants": variants}
+                  "spells": spells, "spell_variants": variants,
+                  "spells_ready": ready, "spells_hud": hud}
 
     # --- враги с давностью места ---
     if champions["value"] is None:
@@ -728,6 +772,10 @@ def snapshot_schema() -> dict:
     team = {"enum": list(TEAMS)}
     rel = {"enum": list(RELATIONS)}
     spells = {"type": "array", "items": s, "minItems": 2, "maxItems": 2}
+    spell_hud = _obj({"slot": {"enum": ["D", "F"]}, "spell": s,
+                      "state": {"enum": ["ready", "cooldown", "blocked", "dead", "hidden",
+                                         "unsure"]},
+                      "ready": nb, "reason": ns})
     champ = _obj({"champion": _fact_of(s), "riot_id": _fact_of(s), "team": _fact_of(team),
                   "relation": _fact_of(rel), "level": _fact_of(i), "alive": _fact_of(b),
                   "respawn_in": _fact_of(num), "position": _fact_of(uv),
@@ -804,7 +852,10 @@ def snapshot_schema() -> dict:
                         "level": _fact_of(i), "gold": _fact_of(num), "alive": _fact_of(b),
                         "respawn_in": _fact_of(num), "position": _fact_of(uv),
                         "stats": _fact_of({"type": "object"}), "spells": _fact_of(spells),
-                        "spell_variants": _fact_of(spells)}),
+                        "spell_variants": _fact_of(spells),
+                        "spells_ready": _fact_of({"type": "object", "additionalProperties": nb}),
+                        "spells_hud": _fact_of({"type": "array", "items": spell_hud,
+                                                "minItems": 2, "maxItems": 2})}),
             "champions": _fact_of({"type": "array", "items": champ, "maxItems": 10}),
             "enemies": _fact_of({"type": "array", "items": enemy, "maxItems": 5}),
             "camera": _obj({"center": _fact_of(uv), "spread": _fact_of(num)}),

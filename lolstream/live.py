@@ -99,6 +99,7 @@ from lolvision.minimap_icons import DEFAULT_RUN as MINI_RUN
 from lolvision.minimap_locate import (AGREE_PX, LOCATE_MAX, Locator, corner_px, box_px,
                                       SCALES, fit_file, load_fit, save_fit)
 from lolstream.live_champions import LiveChampions
+from lolvision.hud_spells import SpellHud
 from lolvision.match_state import API_STALE, ApiObs, MatchState, rift
 from lolvision.passport import UNKNOWN, Change, Passport
 from lolvision.records import SCHEMA, UnitRec, dicts
@@ -134,6 +135,11 @@ STOP_WAIT = 20.0         # с: сколько ждать остановки пр
 # Паспорт трансляции (#799): сколько последних изменений показывать в note и
 # сколько держать в status() (`passport_events`) и в памяти сеанса.
 PASSPORT_NOTE = 3
+# Готовность заклинаний D/F по HUD (#806): поиск панели умений — ~0.2 с на
+# кадр 1080p, пока не найдена, не чаще раза в SPELL_LOCATE_EVERY с потока;
+# после SPELL_LOCATE_SAY попыток без находки паспорт узнаёт причину.
+SPELL_LOCATE_EVERY = 2.0
+SPELL_LOCATE_SAY = 10
 PASSPORT_STATUS = 50
 PASSPORT_KEEP = 1000
 
@@ -294,6 +300,10 @@ class Pipeline:
         self.bw: int | None = None
         self.bh: int | None = None
         self.n_good = 0
+        # Заклинания D/F по панели умений (#806): своя на каждый размер кадра.
+        self.spells = SpellHud()
+        self.spell_try_t: float | None = None
+        self.spell_said = False
 
     def cpu_scene(self, fr: np.ndarray) -> np.ndarray:
         """Сцена на процессоре: обрезка видом, маска на малом, cv2 INTER_AREA
@@ -880,6 +890,46 @@ class Session:
         content = st.game is not None and st.state in (ApiState.LOADING, ApiState.IN_GAME)
         return None, why if content else None
 
+    def _spells_step(self, pl: Pipeline, fr: np.ndarray, t: float, game: bool,
+                     view: str) -> list[dict] | None:
+        """Готовность своих заклинаний D/F по HUD (#806, lolvision.hud_spells).
+
+        Только на игровом кадре вида игрока. Пока панель умений не найдена —
+        поиск раз в SPELL_LOCATE_EVERY с; находка (AGREE подряд в одном
+        месте) — паспорту `set_spell_panel`. Читатель `hud_spells` паспорта
+        разрешён — состояния слотов (`SlotRead.to_dict()`), иначе None.
+        Заклинания слотов из API (`spell_variants`) сменились — эталон
+        готовой иконки слота набирается заново."""
+        hud = pl.spells
+        if not game or view != "player":
+            return None
+        if hud.panel is None:
+            if pl.spell_try_t is not None and t - pl.spell_try_t < SPELL_LOCATE_EVERY:
+                return None
+            pl.spell_try_t = t
+            panel = hud.offer(fr)
+            h, w = fr.shape[:2]
+            if panel is not None:
+                x0, y0, x1, y1 = panel.box("Q")[0], panel.box("Q")[1], *panel.box("F")[2:]
+                box = (x0 / w, y0 / h, x1 / w, y1 / h)
+                how = (f"найдена по кадру: масштаб {panel.scale:.2f} к своему HUD, иконка "
+                       f"{panel.slot_px():.0f} px, совпадение {panel.score:.2f}")
+                self._sig(lambda p: p.set_spell_panel(True, t, how, box, panel.scale,
+                                                      panel.score))
+            elif hud.tried >= SPELL_LOCATE_SAY and not pl.spell_said:
+                pl.spell_said = True
+                self._sig(lambda p: p.set_spell_panel(
+                    False, t, f"не найдена за {hud.tried} попыток, поиск продолжается"))
+            return None
+        if "hud_spells" in self.passport.disabled():
+            return None
+        if self.api is not None:
+            g = self.api.status().game
+            me = None if g is None else g.my_player
+            if me is not None and me.spells is not None:
+                hud.set_spells(tuple(x.variant for x in me.spells))
+        return [r.to_dict() for r in hud.read(fr, t).values()]
+
     def _my_team(self) -> tuple[str | None, str | None]:
         """Команда своего игрока по API для sides.assign или (None, причина)."""
         ok, why = self.passport.verdict("api_facts")
@@ -1077,6 +1127,7 @@ class Session:
             ctx = SideContext(view=None if view == UNKNOWN else view, my_team=my_team,
                               my_team_reason=my_why)
             ms["unit_recs"] = assign_sides(recs, ctx, fr)
+        ms["spells"] = self._spells_step(pl, fr, t, game, view)
         ms.update(full_img=_full_small(fr, pl.fr_dev), off=off, view=view, api_obs=obs,
                   api_refused=refused, wall=wall)
         pl.n_frame += 1
@@ -1185,6 +1236,11 @@ class Session:
         # строку — словарями: строка уходит в JSON. Отказ паспорта — null.
         units = ms.pop("unit_recs", None)
         full_img = ms.pop("full_img", None)
+        spells = ms.pop("spells", None)
+        if spells is not None:
+            row["spells"] = spells
+        elif "hud_spells" in off:
+            row["spells"] = None
         if units is not None:
             row["units"] = dicts(units)
         elif "units" in off:
@@ -1252,7 +1308,8 @@ class Session:
         if on_rift:
             cam = None if row["px"] is None or row["py"] is None else (row["px"], row["py"])
             vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, row["spread"],
-                                 units, tracks)
+                                 units, tracks, spells=spells,
+                                 spells_why=off.get("hud_spells") or _spells_why(row))
         else:
             # Не Ущелье: центр камеры — рамка вьюпорта на миникарте (доли
             # миникарты годятся для любой карты), если миникарта найдена и
@@ -1268,7 +1325,9 @@ class Session:
                 cam = (row["cx"], row["cy"])
             vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, None,
                                  units, None, camera_src="minimap", camera_why=cam_why,
-                                 tracks_why=f"{off_map}: треки ведутся в единицах Ущелья")
+                                 tracks_why=f"{off_map}: треки ведутся в единицах Ущелья",
+                                 spells=spells,
+                                 spells_why=off.get("hud_spells") or _spells_why(row))
         with self._lock:
             self.vision = vision
         ms["out"] = (time.perf_counter() - t0) * 1000
@@ -1295,6 +1354,15 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+
+
+def _spells_why(row: dict) -> str | None:
+    """Почему у кадра нет чтения заклинаний, если паспорт его не запрещал."""
+    if row.get("spells") is not None:
+        return None
+    if row.get("kind", "game") != "game":
+        return f"кадр не игровой ({row.get('kind')})"
+    return "панель умений ещё ищется"
 
 
 # Сервис состояния сеанса ещё поднимается — временная причина, а не отказ.

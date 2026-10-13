@@ -957,3 +957,76 @@ def test_spells_refused_with_parse_reason_and_schema_closes_them():
     bad["me"]["spells"] = {"value": ["SummonerFlash"], "source": "api", "age": 0.0,
                            "reason": None}
     assert any("me.spells" in e for e in check_snapshot(bad))
+
+
+# ---------------------------------------------------------------- готовность D/F по HUD (#806)
+
+def slot(k: str, state: str, value, reason=None) -> dict:
+    return {"slot": k, "state": state, "value": value, "reason": reason, "sim": None,
+            "vrel": None}
+
+
+def spell_inputs(reads, panel: bool = True, view: str = "player"):
+    """Свой — Zilean с Телепортом (D) и Скачком (F); кадр с чтениями слотов."""
+    inp, now = full_inputs(view)
+    api = with_spells(inp.api, {"Zilean": spells("SummonerTeleportUpgrade", "SummonerFlash")})
+    p = passport(view)
+    if panel:
+        p.set_spell_panel(True, 0.0, "тест", scale=1.0, score=0.6)
+    vis = replace(inp.vision, spells=reads, spells_why=None if reads is not None else "нет")
+    return replace(inp, api=api, passport=p, vision=vis), now
+
+
+def test_spells_ready_by_family_from_hud():
+    inp, now = spell_inputs([slot("D", "cooldown", False), slot("F", "ready", True)])
+    snap = build_snapshot(inp, now)
+    assert check_snapshot(snap) == []
+    sr = snap["me"]["spells_ready"]
+    assert sr["source"] == "hud" and sr["reason"] is None
+    assert sr["value"] == {"SummonerTeleport": False, "SummonerFlash": True}
+    hud = snap["me"]["spells_hud"]["value"]
+    assert [h["state"] for h in hud] == ["cooldown", "ready"]
+    assert hud[0]["spell"] == "SummonerTeleport"
+
+
+def test_spells_ready_null_slot_keeps_other_and_reason_in_hud():
+    why = "заклинание под запретом: красный крестик"
+    inp, now = spell_inputs([slot("D", "blocked", None, why), slot("F", "ready", True)])
+    snap = build_snapshot(inp, now)
+    assert check_snapshot(snap) == []
+    assert snap["me"]["spells_ready"]["value"] == {"SummonerTeleport": None,
+                                                   "SummonerFlash": True}
+    assert snap["me"]["spells_hud"]["value"][0]["reason"] == why
+
+
+def test_spells_ready_refused_when_both_unknown_or_passport_says_no():
+    inp, now = spell_inputs([slot("D", "dead", None, "свой мёртв"),
+                             slot("F", "hidden", None, "панели нет")])
+    snap = build_snapshot(inp, now)
+    sr = snap["me"]["spells_ready"]
+    assert sr["value"] is None and "свой мёртв" in sr["reason"] and "панели нет" in sr["reason"]
+    assert check_snapshot(snap) == []
+    # вид наблюдателя — читатель выключен паспортом
+    inp, now = spell_inputs([slot("D", "ready", True), slot("F", "ready", True)],
+                            view="spectator")
+    snap = build_snapshot(inp, now)
+    assert "нужен вид игрока" in snap["me"]["spells_ready"]["reason"]
+    # панель не найдена
+    inp, now = spell_inputs([slot("D", "ready", True), slot("F", "ready", True)], panel=False)
+    snap = build_snapshot(inp, now)
+    assert "панель умений не найдена" in snap["me"]["spells_ready"]["reason"]
+    assert check_snapshot(snap) == []
+
+
+def test_spells_ready_needs_spells_from_api():
+    inp, now = full_inputs("player")
+    p = passport("player")
+    p.set_spell_panel(True, 0.0, "тест", scale=1.0, score=0.6)
+    vis = replace(inp.vision, spells=[slot("D", "ready", True), slot("F", "ready", True)])
+    snap = build_snapshot(replace(inp, passport=p, vision=vis), now)
+    assert snap["me"]["spells_ready"]["value"] is None
+    assert "заклинания из API неизвестны" in snap["me"]["spells_ready"]["reason"]
+    bad = json.loads(json.dumps(snap))
+    bad["me"]["spells_ready"] = {"value": {"SummonerFlash": "yes"}, "source": "hud",
+                                 "age": 0.1, "reason": None}
+    assert any("spells_ready" in e for e in check_snapshot(bad))

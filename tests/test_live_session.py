@@ -753,3 +753,31 @@ def test_minimap_search_gives_up_then_retries_after_pause(rigged, monkeypatch):
     found = [e for e in st["passport_events"] if e["key"] == "item:minimap"]
     assert [e["new"]["found"] for e in found] == [True]   # отказ значение не менял
     assert st["passport"]["items"]["minimap"]["value"]["found"] is True
+
+
+# ---------- готовность заклинаний D/F по HUD (#806) ----------
+
+def _with_panel(t: float) -> Frame:
+    """Кадр своего экрана 1920×1080 с панелью умений своего HUD на месте."""
+    from lolvision import hud_spells as hs
+    tpl = cv2.cvtColor(cv2.imread(str(hs.TEMPLATE)), cv2.COLOR_BGR2RGB)
+    img = np.full((1080, 1920, 3), 60, np.uint8)
+    x, y = hs.TEMPLATE_ORIGIN
+    img[y:y + tpl.shape[0], x:x + tpl.shape[1]] = tpl
+    return Frame(Status.OK, t, img)
+
+
+def test_spell_panel_found_and_slots_read(cpu_models):
+    """Свой экран — вид игрока: панель умений найдена (паспорт), эталоны
+    готовых иконок набраны, оба слота «готово» в строке кадра."""
+    build, _ = cpu_models
+    frames = [_with_panel(2.0 * k) for k in range(16)]
+    src = _Source(frames, kind="screen", size=(1920, 1080))
+    st = _finish(live.Session("screen", "r", src, device="cpu", build=build))
+    item = st["passport"]["items"]["spell_panel"]
+    assert item["value"]["found"] is True and abs(item["value"]["scale"] - 1.0) < 0.03
+    assert "hud_spells" in st["passport"]["enabled"]
+    first = next(r for r in st["frames"] if r.get("spells"))
+    assert {x["slot"] for x in first["spells"]} == {"D", "F"}
+    last = st["frames"][-1]["spells"]
+    assert [x["value"] for x in last] == [True, True]
