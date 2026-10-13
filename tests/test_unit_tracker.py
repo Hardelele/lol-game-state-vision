@@ -81,6 +81,35 @@ def test_hp_rise_does_not_match_minion():
     assert before[0.2] == after[0.2] and before[1.0] == after[0.9]
 
 
+def test_dying_minion_track_is_not_taken_by_full_hp_neighbour():
+    # Добитый крип исчез, сосед с полным ХП рядом: трек не переходит к
+    # соседу (D37cbVNs0EU 274,5 с: 0,16 → 0,94), а крип умирает.
+    tr = tracker()
+    for t in (0.0, 0.25):
+        tr.update(t, (0.5, 0.5), [minion(500, 500, 0.16), minion(540, 500, 0.95)])
+    ids = {round(t.hp, 1): t.id for t in tr.tracks}
+    ev = tr.update(0.5, (0.5, 0.5), [minion(520, 500, 0.94)])
+    assert [(e.type, e.id) for e in ev] == [("unit_death", ids[0.2])]
+    assert [t.id for t in tr.tracks if t.state == "seen"] == [ids[0.9]]
+
+
+def test_minion_beaten_fast_dies_above_death_hp():
+    # При 4 кадрах/с крипа добивают с 0,4: ХП падало 1,2 в секунду, к
+    # кадру пропажи по скорости оно уже ниже порога — смерть, не потеря.
+    tr = tracker()
+    tr.update(0.0, (0.5, 0.5), [minion(500, 500, 0.7)])
+    tr.update(0.25, (0.5, 0.5), [minion(500, 500, 0.4)])
+    ev = tr.update(0.5, (0.5, 0.5), [])
+    assert [e.type for e in ev] == ["unit_death"]
+
+
+def test_untouched_minion_vanishing_is_not_death():
+    tr = tracker()
+    tr.update(0.0, (0.5, 0.5), [minion(500, 500, 0.5)])
+    tr.update(0.25, (0.5, 0.5), [minion(500, 500, 0.5)])
+    assert tr.update(0.5, (0.5, 0.5), []) == []
+
+
 def test_champion_gets_named_id_when_name_is_read():
     tr = tracker()
     tr.update(0.0, (0.5, 0.5), [UnitRec("champion", "CHAOS", 0.5, 0.5, 1.0, 0.9, None)])

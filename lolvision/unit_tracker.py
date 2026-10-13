@@ -61,8 +61,9 @@ EXPIRE = {"champion": 1e9, "minion": 20.0, "ward": 180.0}   # с без набл
 GONE_KEEP = 500
 CONFIRM = 2              # пар подряд, чтобы трек стал настоящим (не мусор детектора)
 MISS_IN_VIEW = 3         # кадров «должен быть виден, но нет» — потерян
-DEATH_HP = 0.3           # ХП на последнем наблюдении, ниже — исчезновение в кадре = смерть
+DEATH_HP = 0.45          # ХП к кадру пропажи (по скорости, с которой били), ниже — смерть
 HP_RISE_COST = 400.0     # ед. штрафа за рост ХП у миньона на всю шкалу
+HP_JUMP = 0.3            # рост ХП миньона больше — заведомо другой крип
 ALPHABET = string.ascii_lowercase + string.digits
 
 
@@ -109,6 +110,7 @@ class Track:
     born: float
     hp: float
     name: str | None = None
+    hp_rate: float = 0.0           # доля ХП в секунду (≤ 0): как быстро крипа бьют
     hits: int = 1
     miss: int = 0                  # кадров подряд «должен быть виден, но нет»
     state: str = "new"             # new / seen / unseen / lost / dead
@@ -123,6 +125,10 @@ class Track:
 
     def predict(self, t: float) -> np.ndarray:
         return self.uv + self.vel * (t - self.t)
+
+    def hp_at(self, t: float) -> float:
+        """ХП на момент `t` по скорости, с которой крипа били."""
+        return self.hp + self.hp_rate * max(0.0, t - self.t)
 
     def take_sides(self, det: UnitRec) -> None:
         """Отношение и сторона из наблюдения: известное не перетирается."""
@@ -206,6 +212,8 @@ class UnitTracker:
                     if d > gate:
                         continue
                     c = d
+                    if kind == "minion" and dets[i].hp > tr.hp + HP_JUMP:
+                        continue
                     if kind == "minion" and dets[i].hp > tr.hp + 0.1:
                         c += HP_RISE_COST * (dets[i].hp - tr.hp)
                     cost[a, b] = c
@@ -224,7 +232,7 @@ class UnitTracker:
                 continue
             if vis[k]:
                 tr.miss += 1
-                if tr.kind == "minion" and tr.hp <= DEATH_HP and tr.state != "new":
+                if tr.kind == "minion" and tr.hp_at(t) <= DEATH_HP and tr.state != "new":
                     tr.state = "dead"
                     ev.append(UnitDeathEvent(t, tr.id, tr.kind, tr.team,
                                              float(tr.uv[0]), float(tr.uv[1]),
@@ -267,6 +275,9 @@ class UnitTracker:
             tr.vel = v if tr.hits == 1 else 0.5 * tr.vel + 0.5 * v
             if np.hypot(*tr.vel) * MAP_UNITS > SPEED[tr.kind] * 1.5:
                 tr.vel = np.zeros(2)
+        if dt > 0:
+            rate = min(0.0, (float(det.hp) - tr.hp) / dt)
+            tr.hp_rate = rate if tr.hits == 1 else 0.5 * tr.hp_rate + 0.5 * rate
         tr.uv, tr.t, tr.hp = uv.copy(), t, float(det.hp)
         tr.xy = (float(det.x), float(det.y))
         tr.hits += 1

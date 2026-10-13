@@ -106,8 +106,8 @@ FAR_UV = (0.20 + 2000 / MAP_UNITS, 0.20)
 
 def test_last_hit_missed_and_unseen():
     frames = [(t / 4, 10, [], ME) for t in range(4)]
-    # 1.0 с: крип умер рядом, CS +1 на следующем прочтении — добил.
-    frames += [(1.0, 10, [death("m1", *NEAR_UV)], ME), (1.25, 11, [], ME), (1.5, 11, [], ME)]
+    # 1.0 с: крип умер рядом, CS +1 на том же кадре — добил.
+    frames += [(1.0, 11, [death("m1", *NEAR_UV)], ME), (1.25, 11, [], ME), (1.5, 11, [], ME)]
     # 5 с: крип умер рядом, CS не растёт — упущено.
     frames += [(t / 4, 11, [], ME) for t in range(7, 20)]
     frames += [(5.0, 11, [death("m2", *NEAR_UV)], ME)]
@@ -149,6 +149,14 @@ def test_self_unit_is_single_green_or_yellow_champion():
     assert lh.self_unit([a, b]) is a
     assert lh.self_unit([a, dict(a, color="green")]) is None
     assert lh.self_unit([dict(a, kind="minion")]) is None
+
+
+def test_gain_on_the_next_frame_is_not_a_last_hit():
+    # Рост CS кадром позже смерти — фон (замер в docs/last-hits.md): не пара.
+    frames = [(0, 5, [], ME), (0.25, 5, [], ME), (1.0, 5, [death("m1", *NEAR_UV)], ME),
+              (1.25, 6, [], ME), (1.5, 6, [], ME)]
+    ev = run(frames)
+    assert [(e.type, e.id) for e in ev] == [("missed_last_hit", "m1"), ("cs_unseen", None)]
 
 
 def test_gain_goes_to_death_on_its_frame_not_the_earlier_one():
