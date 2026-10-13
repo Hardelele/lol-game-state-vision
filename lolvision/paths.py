@@ -37,6 +37,7 @@ VIDEOS = DATA / "videos"               # ролики и их .info.json от yt
 CHANNELS = DATA / "channels"           # channels.py: кеш списков роликов каналов
 NOT_GAME_DATA = DATA / "not_game"      # build_not_game.py: кадры стримов
 OWN = DATA / "own"                     # record_own_game.py: записи своей игры (2D)
+LOADOUTS = DATA / "loadouts"           # паспорта выбора игр (loadouts.py, #807)
 
 RUNS = ROOT / "runs"
 COORDS_RUNS = RUNS / "coords"          # модель координат камеры

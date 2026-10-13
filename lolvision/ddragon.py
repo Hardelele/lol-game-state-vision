@@ -6,6 +6,7 @@
 
     data/ddragon/versions.json
     data/ddragon/<версия>/champion.json
+    data/ddragon/<версия>/item.json               # предметы (паспорт выбора, #807)
     data/ddragon/<версия>/champion/<Id>.json      # полные данные: скины
     data/ddragon/<версия>/img/champion/<Id>.png   # иконка 120×120
     data/ddragon/img/champion/splash/<Id>_<n>.jpg # сплэши от версии не зависят
@@ -126,6 +127,12 @@ class DDragon:
         return self._json(f"{v}/champion/{cid}.json",
                           f"{BASE}/cdn/{v}/data/en_US/champion/{cid}.json")["data"][cid]
 
+    def items(self) -> dict[str, dict]:
+        """Id предмета (строкой) → запись item.json (name, gold, into, depth,
+        tags, maps, consumed, …) — для паспорта выбора (#807)."""
+        v = self.version
+        return self._json(f"{v}/item.json", f"{BASE}/cdn/{v}/data/en_US/item.json")["data"]
+
     def skins(self, cid: str) -> list[dict]:
         """[{id, num, name, chromas}, …]; num — номер сплэша."""
         return self.champion_full(cid)["skins"]
@@ -171,6 +178,11 @@ def champions(version: str = DEFAULT_VERSION, root: Path = DDRAGON) -> list[str]
 def names(version: str = DEFAULT_VERSION, root: Path = DDRAGON) -> dict[str, str]:
     """Id → отображаемое имя («MonkeyKing» → «Wukong»)."""
     return DDragon(version, root).names()
+
+
+def items(version: str = DEFAULT_VERSION, root: Path = DDRAGON) -> dict[str, dict]:
+    """Id предмета → запись item.json из кэша (FileNotFoundError, если нет)."""
+    return DDragon(version, root).items()
 
 
 def load_icons(version: str = DEFAULT_VERSION, root: Path = DDRAGON) -> dict:

@@ -68,8 +68,8 @@ coach» ниже).
 незнакомые поля, а не отказывать из-за них. Машинная схема ниже закрытая
 (`additionalProperties: false`) — это проверка самого сервиса на опечатки,
 а не требование к клиентам; новое поле добавляется в неё вместе с кодом
-(так добавлены `me.position`, #802, `events`, #803, и `spells` /
-`spell_variants`, #804). Исключение — записи
+(так добавлены `me.position`, #802, `events`, #803, `spells` /
+`spell_variants`, #804, и `role` / `runes`, #807). Исключение — записи
 юнитов и треков и пункты паспорта: это `to_dict()` записей lolvision как
 есть, их поля версионируются там (`records.SCHEMA`, docs/passport.md), а
 схема сервиса проверяет только поля, на которые он опирается. Клиент,
@@ -260,7 +260,31 @@ who — участник события, **без ника**:
 отказы с этой причиной; своего нет в контексте матча — `alive`,
 `respawn_in`, `position` отказ с причиной контекста. `spells` и
 `spell_variants` — заклинания призывателя, как у записи в `champions`
-(ниже, «Заклинания призывателя»).
+(ниже, «Заклинания призывателя»); `role` и `runes` — роль и руны, тоже как у
+записи в `champions` (ниже, «Роль и руны»).
+
+### Роль и руны: `role`, `runes` (#807)
+
+Есть у `me` и у каждой записи `champions`, факт `api`.
+
+* `role` — `TOP` / `JUNGLE` / `MIDDLE` / `BOTTOM` / `UTILITY` из
+  `allPlayers[].position`. Это **назначенная драфтом роль**, а не то, где
+  чемпион стоит сейчас (место — `position`, `{"u", "v"}`). Заполнена в
+  ранкеде и обычном драфте (оба журнала 2026-10-12 — у всех десяти); в
+  тренировке API даёт `"NONE"`, в режимах без ролей (ARAM, образец Riot) —
+  `""`: тогда отказ «API не дал роль (position=…: режим без ролей)».
+  Незнакомое значение — отказ «position в незнакомом формате».
+* `runes` — `{"keystone": {"id", "name"}, "primary": {"id", "name"},
+  "secondary": {"id", "name"}}`: ключевая руна и две ветки. `id` — числовой
+  id Riot (perk / perkstyle), `name` — нормализованное имя: у ключевой руны
+  из `rawDisplayName` (`perk_displayname_ArcaneComet` → `ArcaneComet`), а
+  если там число — по id (`live_client.KEYSTONES`); у веток ключ всегда
+  числовой (`perkstyle_displayname_7202`), имя — по id (`RUNE_TREES`:
+  `Precision` 8000, `Domination` 8100, `Sorcery` 8200, `Inspiration` 8300,
+  `Resolve` 8400). Незнакомый id — `name: null`, id остаётся. Локализованное
+  `displayName` не используется. Малые руны и осколки (`fullRunes`) API даёт
+  только своему игроку — в выход не идут. Нет `runes` или id — отказ с
+  причиной разбора.
 
 ### Заклинания призывателя: `spells`, `spell_variants` (#804)
 
@@ -340,6 +364,8 @@ CommunityDragon) или своя готовая иконка, запомненн
 | `relation` | `self` / `ally` / `enemy` | api | отношение к своему игроку по API (`relation_to_me`: его чемпион — `self`, его команда — `ally`, иначе `enemy`); своего игрока нет или состав не из API — отказ |
 | `riot_id`, `level`, `items`, `scores` | строка, целое, массив id, объект | api | из `allPlayers` по Id чемпиона; без API — отказ |
 | `spells`, `spell_variants` | массив из двух строк | api | заклинания призывателя по слотам (см. выше); API их не дал — отказ с причиной разбора |
+| `role` | `TOP` / `JUNGLE` / `MIDDLE` / `BOTTOM` / `UTILITY` | api | роль по драфту (см. «Роль и руны»); режим без ролей — отказ с причиной |
+| `runes` | `{keystone, primary, secondary}` по `{id, name}` | api | ключевая руна и ветки (см. «Роль и руны»); API их не дал — отказ |
 | `alive` | bool | api / hud / minimap / inferred | `ChampCtx.alive` с источником `alive_src` и возрастом `alive_age`; не наблюдался — отказ |
 | `respawn_in` | с | api / hud (`ChampCtx.respawn_src`) | `ChampCtx.respawn_in` у мёртвого; живой — отказ «жив (источник)»; мёртв без таймера — отказ |
 | `position` | `{"u", "v"}` | minimap / screen / inferred | последнее известное место (`ChampCtx`); не наблюдалось — отказ |
@@ -476,7 +502,12 @@ CommunityDragon) или своя готовая иконка, запомненн
   "spells":     {"value": ["SummonerTeleport", "SummonerFlash"], "source": "api", "age": 0.2,
                  "reason": null},
   "spell_variants": {"value": ["SummonerTeleportUpgrade", "SummonerFlash"], "source": "api",
-                 "age": 0.2, "reason": null}
+                 "age": 0.2, "reason": null},
+  "role":       {"value": "TOP", "source": "api", "age": 0.2, "reason": null},
+  "runes":      {"value": {"keystone": {"id": 8229, "name": "ArcaneComet"},
+                           "primary": {"id": 8200, "name": "Sorcery"},
+                           "secondary": {"id": 8300, "name": "Inspiration"}},
+                 "source": "api", "age": 0.2, "reason": null}
  },
  "champions": {"source": "api", "age": 0.2, "reason": null, "value": [
   {"champion":   {"value": "Darius", "source": "api", "age": 0.2, "reason": null},

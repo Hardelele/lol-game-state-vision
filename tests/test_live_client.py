@@ -28,6 +28,7 @@ from lolstream.live_client import (
     journal_transport,
     parse_allgamedata,
     parse_events,
+    parse_runes,
     read_journal,
     replay,
     spell_id,
@@ -176,6 +177,76 @@ def test_spells_fall_back_to_raw_description():
     d["allPlayers"][0]["summonerSpells"]["summonerSpellOne"].pop("rawDisplayName")
     (p,) = parse_allgamedata(d, champion_index(IDS)).players
     assert p.spells[0].variant == "SummonerFlash"
+
+
+# --- роль и руны (#807) ---
+
+def runes(keystone: tuple[int, str], primary: int, secondary: int) -> dict:
+    kid, kraw = keystone
+    return {"keystone": {"displayName": "Комета", "id": kid,
+                         "rawDescription": f"perk_tooltip_{kraw}",
+                         "rawDisplayName": f"perk_displayname_{kraw}"},
+            "primaryRuneTree": {"displayName": "Колдовство", "id": primary,
+                                "rawDisplayName": "perkstyle_displayname_7202"},
+            "secondaryRuneTree": {"displayName": "Вдохновение", "id": secondary,
+                                  "rawDisplayName": "perkstyle_displayname_7203"}}
+
+
+def test_riot_sample_runes_and_role():
+    (p,) = parse_allgamedata(sample(), champion_index(IDS)).players
+    assert p.runes.to_dict() == {"keystone": {"id": 8112, "name": "Electrocute"},
+                                 "primary": {"id": 8100, "name": "Domination"},
+                                 "secondary": {"id": 8200, "name": "Sorcery"}}
+    assert p.runes_reason is None
+    # в образце Riot position пустой — роли нет, причина
+    assert p.role is None and "режим без ролей" in p.role_reason
+    d = p.to_dict()
+    assert d["role"] is None and d["runes"]["keystone"]["name"] == "Electrocute"
+
+
+def test_runes_names_from_raw_or_by_id():
+    # русский клиент: displayName локализован, имя — из rawDisplayName
+    r, why = parse_runes({"runes": runes((8229, "ArcaneComet"), 8200, 8300)})
+    assert why is None and (r.keystone, r.primary, r.secondary) == (
+        "ArcaneComet", "Sorcery", "Inspiration")
+    # числовой ключ (как «perk_displayname_8226» у малых рун) — имя по id
+    r, _ = parse_runes({"runes": runes((8010, "8010"), 8000, 8400)})
+    assert r.keystone == "Conqueror" and r.secondary == "Resolve"
+    # незнакомые id — имя None, id остаётся
+    r, _ = parse_runes({"runes": runes((99999, "99999"), 9100, 8000)})
+    assert (r.keystone_id, r.keystone, r.primary) == (99999, None, None)
+
+
+@pytest.mark.parametrize("value, word", [
+    (None, "runes"), ({"keystone": {"id": 8010}}, "primaryRuneTree"),
+    ({"keystone": {"id": "8010"}, "primaryRuneTree": {"id": 8000},
+      "secondaryRuneTree": {"id": 8100}}, "keystone"),
+])
+def test_missing_runes_are_a_reason(value, word):
+    d = sample()
+    if value is None:
+        del d["allPlayers"][0]["runes"]
+    else:
+        d["allPlayers"][0]["runes"] = value
+    (p,) = parse_allgamedata(d, champion_index(IDS)).players
+    assert p.runes is None and word in p.runes_reason and p.champion == "Annie"
+
+
+@pytest.mark.parametrize("position, role, word", [
+    ("JUNGLE", "JUNGLE", None), ("UTILITY", "UTILITY", None),
+    ("NONE", None, "режим без ролей"),          # тренировка (data/own 2026-10-12)
+    ("", None, "режим без ролей"), (None, None, "режим без ролей"),
+    ("SUPPORT", None, "незнакомом"),
+])
+def test_role_from_position(position, role, word):
+    d = sample()
+    if position is None:
+        del d["allPlayers"][0]["position"]
+    else:
+        d["allPlayers"][0]["position"] = position
+    (p,) = parse_allgamedata(d, champion_index(IDS)).players
+    assert p.role == role
+    assert (p.role_reason is None) if word is None else word in p.role_reason
 
 
 def test_active_player_missing_is_a_reason():

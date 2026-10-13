@@ -347,7 +347,9 @@ def live_start(h) -> None:
     run = b.get("run") or h.server.live_run
     source = b.get("source") or "youtube"
     if source == "screen":
-        return h._json(live.start_screen(run, b.get("fps") or 2.0, b.get("backend") or "auto"))
+        kw = {} if b.get("loadouts", True) else {"loadouts": False}   # паспорт выбора, #807
+        return h._json(live.start_screen(run, b.get("fps") or 2.0, b.get("backend") or "auto",
+                                         **kw))
     if source != "youtube":
         raise ValueError(f"неизвестный источник {source!r}: youtube или screen")
     h._json(live.start(b.get("id", ""), run, b.get("fps") or 1.0, float(b.get("start") or 0.0)))
