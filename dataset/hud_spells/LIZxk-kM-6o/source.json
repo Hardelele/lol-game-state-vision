@@ -1,0 +1,24 @@
+{
+  "video_id": "LIZxk-kM-6o",
+  "url": "https://www.youtube.com/watch?v=LIZxk-kM-6o",
+  "title": "RANK 1 LEE SIN -  HAIL OF BLADES",
+  "channel": "Truck Driver",
+  "channel_url": "https://www.youtube.com/channel/UC2G75vvDKJwEacdWuIw0efQ",
+  "upload_date": "20260810",
+  "duration_sec": 1654,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "format_id": "399",
+  "license": null,
+  "sampling": {
+    "fps": 1.0,
+    "crop": [
+      0.2,
+      0.74,
+      0.8,
+      1.0
+    ],
+    "tool": "tools/hud_spells.py extract (вырезы низа кадра, видео в data/videos, в Git не идёт)"
+  }
+}

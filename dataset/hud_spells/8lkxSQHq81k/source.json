@@ -1,0 +1,24 @@
+{
+  "video_id": "8lkxSQHq81k",
+  "url": "https://www.youtube.com/watch?v=8lkxSQHq81k",
+  "title": "Deokdam Stream Korean Challenger POV | Tristana · Ezreal | ADC Proview",
+  "channel": "Pro ADC Archive",
+  "channel_url": "https://www.youtube.com/channel/UCgHY7gqH2zIlrsS0kLp6eEg",
+  "upload_date": "20261009",
+  "duration_sec": 1934,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "license": null,
+  "sampling": {
+    "fps": 1.0,
+    "crop": [
+      0.2,
+      0.74,
+      0.8,
+      1.0
+    ],
+    "tool": "tools/hud_spells.py extract (вырезы низа кадра, видео в data/videos, в Git не идёт)"
+  }
+}

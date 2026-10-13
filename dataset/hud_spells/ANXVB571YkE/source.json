@@ -1,0 +1,24 @@
+{
+  "video_id": "ANXVB571YkE",
+  "url": "https://www.youtube.com/watch?v=ANXVB571YkE",
+  "title": "You Don't Have to Carry to WIN on Brand",
+  "channel": "Burst",
+  "channel_url": "https://www.youtube.com/channel/UCoVoxJ4Kk2xXYk8qCQHcObg",
+  "upload_date": "20261009",
+  "duration_sec": 1540,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "license": null,
+  "sampling": {
+    "fps": 1.0,
+    "crop": [
+      0.2,
+      0.74,
+      0.8,
+      1.0
+    ],
+    "tool": "tools/hud_spells.py extract (вырезы низа кадра, видео в data/videos, в Git не идёт)"
+  }
+}

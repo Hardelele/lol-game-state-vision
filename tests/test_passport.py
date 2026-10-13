@@ -45,7 +45,8 @@ def spectator_stream() -> Passport:
 def test_player_view_disables_spectator_readers():
     p = player_with_api()
     dis = p.disabled()
-    assert set(dis) == {"names", "hud_roster", "camera_truth", "minimap_icons"}
+    assert set(dis) == {"names", "hud_roster", "camera_truth", "minimap_icons", "hud_spells"}
+    assert "панель умений не найдена" in dis["hud_spells"]
     assert "нужен вид наблюдателя, а это вид игрока" in dis["names"]
     assert "нужен вид наблюдателя, а это вид игрока" in dis["hud_roster"]
     # Миникарта ещё не найдена: по раскладке наблюдателя она мимо настоящей.
@@ -62,11 +63,30 @@ def test_player_view_with_found_minimap_gets_camera_and_icons():
     assert "minimap" not in p.pending
 
 
+def test_spell_panel_found_enables_hud_spells_and_size_change_drops_it():
+    p = player_with_api()
+    ch = p.set_spell_panel(True, 6.0, "найдена по кадру", box=(0.38, 0.9, 0.56, 1.0),
+                           scale=1.04, score=0.66)
+    assert {"item:spell_panel", "reader:hud_spells"} <= keys(ch)
+    assert p.verdict("hud_spells").ok
+    assert p.to_dict()["items"]["spell_panel"]["value"]["found"] is True
+    ch = p.set_frame_size((1280, 720), 9.0)
+    assert "reader:hud_spells" in keys(ch)
+    assert "панель умений не найдена" in p.verdict("hud_spells").reason
+
+
+def test_spell_panel_needs_player_view():
+    p = spectator_stream()
+    p.set_spell_panel(True, 6.0, "найдена", scale=1.0, score=0.6)
+    assert not p.verdict("hud_spells").ok
+
+
 def test_spectator_view_without_api():
     p = spectator_stream()
     dis = p.disabled()
-    assert set(dis) == {"sides", "api_facts"}
+    assert set(dis) == {"sides", "api_facts", "hud_spells"}
     assert "нужен вид игрока" in dis["sides"]
+    assert "нужен вид игрока" in dis["hud_spells"]
     assert dis["api_facts"].startswith("Live Client API: не подключён")
     # У наблюдателя раскладка и есть миникарта: истина камеры — без находки.
     assert p.verdict("camera_truth").ok
@@ -238,7 +258,7 @@ def test_to_dict_is_json_and_lists_disabled_readers():
     p.set_minimap(BIG, 1.2, 0.61, 7.0)
     d = json.loads(json.dumps(p.to_dict()))
     assert set(d["items"]) == {"source", "resolution", "game_rect", "minimap", "view",
-                               "api", "scene", "roster", "assets"}
+                               "api", "scene", "roster", "assets", "spell_panel"}
     for it in d["items"].values():
         assert set(it) == {"value", "source", "how", "t"}
     assert d["items"]["view"] == {"value": "player", "source": "hud",
@@ -246,7 +266,7 @@ def test_to_dict_is_json_and_lists_disabled_readers():
     assert d["items"]["minimap"]["value"] == {"found": True, "box": list(BIG),
                                               "scale": 1.2, "score": 0.61}
     assert d["items"]["resolution"]["value"] == [1920, 1080]
-    assert {x["reader"] for x in d["disabled"]} == {"names", "hud_roster"}
+    assert {x["reader"] for x in d["disabled"]} == {"names", "hud_roster", "hud_spells"}
     assert all(x["reason"] for x in d["disabled"])
     assert set(d["enabled"]) | {x["reader"] for x in d["disabled"]} == set(READERS)
 

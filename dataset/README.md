@@ -74,6 +74,28 @@ not_game/
 `tools/build_not_game.py --url <id>` собирает их потоком в
 `data/not_game/` по интервалам из `source.json`.
 
+## Готовность заклинаний D/F по HUD (`hud_spells/`)
+
+Ролики вида игрока и разметка состояний слотов D/F по времени для читателя
+готовности заклинаний (`lolvision/hud_spells.py`, `tools/hud_spells.py`,
+подробности — `docs/hud-spells.md`, #806):
+
+```
+hud_spells/
+  panel_template.png         эталон панели умений: медиана 32 кадров СВОЕЙ игры
+                             (1920×1080, только панель HUD, без ников)
+  <video_id>/source.json     источник ролика, лицензия, выборка (вырез низа кадра, 1 кадр/с)
+  <video_id>/labels.csv      slot, start_sec, end_sec, state, note
+  <video_id>/spells.csv      slot, start_sec, end_sec, spell, note — семья заклинания слота
+```
+
+`state` — `ready`, `cooldown`, `blocked` (крестик или все иконки серые),
+`dead`, `hidden` (панели нет), `?` (не разобрать — в счёт не идёт).
+Интервал полуоткрытый, поздние строки сильнее ранних: в начале — черновик
+грубым правилом (`note` = «черновик»), в конце — правки глазами (`note`
+начинается с «глазами»). Видео — `data/videos/<id>.mp4` (yt-dlp, как выше),
+вырезы — `python tools/hud_spells.py extract <id>` в `data/hud_spells/`.
+
 ## Вердикты по шуму меток (`label_noise/`)
 
 Ручная проверка ключевых кадров «метка с миникарты ↔ модель ↔ траектория по

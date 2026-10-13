@@ -1,0 +1,24 @@
+{
+  "video_id": "1Z9DJyLsXHo",
+  "url": "https://www.youtube.com/watch?v=1Z9DJyLsXHo",
+  "title": "Romaer Mid Proview | Ahri vs Twisted Fate | Korean Challenger POV",
+  "channel": "Pro Mid Archive",
+  "channel_url": "https://www.youtube.com/channel/UCm_focQWSZicRjZ4ahDcvDA",
+  "upload_date": "20260918",
+  "duration_sec": 899,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "299",
+  "license": null,
+  "sampling": {
+    "fps": 1.0,
+    "crop": [
+      0.2,
+      0.74,
+      0.8,
+      1.0
+    ],
+    "tool": "tools/hud_spells.py extract (вырезы низа кадра, видео в data/videos, в Git не идёт)"
+  }
+}
