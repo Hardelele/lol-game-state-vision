@@ -1141,7 +1141,9 @@ def test_practice_tool_bots_may_repeat_my_champion_in_the_other_team():
     assert len(ch) == 10
     assert ("Zilean", "ORDER", "self") in ch and ("Zilean", "CHAOS", "enemy") in ch
     assert snap["me"]["alive"]["value"] is False          # свой, а не бот-двойник
-    assert snap["enemies"]["reason"].startswith("режим тренировки")
+    # Боты той стороны есть в allPlayers — враги как в обычной игре.
+    en = [e["champion"]["value"] for e in snap["enemies"]["value"]]
+    assert len(en) == 5 and "Zilean" in en
     # В обычной игре тот же повтор — отказ, как раньше.
     snap = provided(practice_statuses("CLASSIC", bots=True))
     assert snap["sources"]["match"]["api_refused"] == "чемпионы повторяются"

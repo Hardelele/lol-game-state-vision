@@ -654,8 +654,9 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
         enemies = refuse(champions["reason"])
     elif me is None:
         enemies = refuse(f"своя сторона неизвестна: {me_why}")
-    elif partial_roster(game.game_mode):
-        # Пустой список соврал бы «врагов нет»: их не знает API.
+    elif partial_roster(game.game_mode) and not any(p.team != me.team for p in game.players):
+        # Тренировка без ботов на той стороне: пустой список соврал бы «врагов
+        # нет» — их не знает API. С ботами (они в allPlayers) враги — как обычно.
         enemies = refuse(WHY_NO_ENEMIES_PRACTICE)
     else:
         enemies = fact([{k: e[k] for k in ("champion", "position", "map_state", "alive",
