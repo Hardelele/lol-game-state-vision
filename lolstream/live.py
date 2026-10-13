@@ -103,7 +103,7 @@ from lolstream.live_champions import LiveChampions
 from lolvision.hud_spells import SpellHud
 from lolvision.match_state import API_STALE, ApiObs, MatchState, rift
 from lolvision.passport import UNKNOWN, Change, Passport
-from lolvision.records import SCHEMA, UnitRec, dicts
+from lolvision.records import SCHEMA, RosterEvent, UnitRec, dicts
 from lolvision.sides import SideContext, assign as assign_sides
 
 LOCATE_PAUSE = 60.0      # с потока между кругами поиска миникарты после сдачи
@@ -117,7 +117,18 @@ MINIMAP_CAM_Q = 0.3
 # Типы сцены «игра под оверлеем»: миникарта видна, сцена закрыта окном.
 OVERLAY_KINDS = ("shop", "tab")
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
-MAX_FRAMES = 5400        # потолок памяти: полтора часа при 1 кадр/с
+# Память кадров сеанса (#801). У ролика — потолок: дальше MAX_FRAMES кадров
+# сеанс не читает (полтора часа при 1 кадр/с). Свой экран живёт через много
+# игр подряд, и потолок обрывал его посреди игры (при 2 кадр/с — через
+# 45 минут от запуска сервиса): у экрана — скользящее окно, последние
+# SCREEN_WINDOW кадров, старые выбрасываются вместе с картинками. Кадр в окне
+# ~120 КБ (сцена ~37 КБ, кадр целиком 640×360 ~43 КБ, миникарта ~18 КБ,
+# тепловая карта 8 КБ, строка с юнитами и контекстом) — окно ~650 МБ, столько
+# же, сколько занимал потолок.
+MAX_FRAMES = 5400
+SCREEN_WINDOW = 5400     # 45 минут при 2 кадр/с
+# Событий Live Client в памяти сеанса — не больше (счёт всех — api_events_n).
+API_EVENTS_KEEP = 2000
 DEFAULT_RUN = "patches/cnn-split16-v2-notgame"
 # Как найдена миникарта (minimap_locate.Fit.how) — для note и паспорта.
 FIT_HOW = {"map": "эталон Ущелья", "frame": "рамка миникарты",
@@ -478,6 +489,9 @@ class Session:
     minimap_store: Path | None = None
     minimap_scale: float | None = None
     loadouts: LoadoutRecorder | None = None     # паспорт выбора (#807)
+    window: int | None = None
+    dropped = 0
+    api_events_n = 0
 
     def __init__(self, sid: str, run: str, source: FrameSource, device: str = "cuda",
                  api: LiveClient | None = None,
@@ -499,8 +513,14 @@ class Session:
         self.api_reason = (None if api is not None else
                            f"нет — источник {SOURCE_LABELS.get(source.kind, source.kind)}")
         self.api_events: list[EventRecord] = []
+        self.api_events_n = 0                  # всего событий за сеанс, с выброшенными
         self._build = build if build is not None else build_pipeline
         self.rows: list[dict] = []
+        # Окно кадров (#801): у экрана — сколько последних держать, у ролика —
+        # None (потолок MAX_FRAMES). Номер кадра row["i"] — сквозной за сеанс;
+        # `dropped` — сколько первых кадров выброшено (номер self.rows[0]).
+        self.window: int | None = SCREEN_WINDOW if source.kind == "screen" else None
+        self.dropped = 0
         self.scene: dict[int, bytes] = {}
         self.mini: dict[int, bytes] = {}
         self.full: dict[int, bytes] = {}       # кадр целиком 640×360 — под юнитов
@@ -567,6 +587,8 @@ class Session:
         if new:
             with self._lock:
                 self.api_events.extend(new)
+                self.api_events_n += len(new)
+                del self.api_events[:-API_EVENTS_KEEP]
 
     def _api_view(self) -> dict | None:
         """Статус API для status(): всё из LiveStatus.to_dict(), кроме полного
@@ -585,7 +607,7 @@ class Session:
             "me": None if me is None else {"champion": me.champion, "team": me.team,
                                            "is_dead": me.is_dead},
             "me_reason": g.me_reason}
-        d["events"] = len(self.api_events)
+        d["events"] = self.api_events_n
         return d
 
     def api_full(self) -> dict:
@@ -618,11 +640,24 @@ class Session:
         return StateInputs(session=self.state.label, frames=frames, vision=vision, match=match,
                            api=self.api_status(), passport=passport, vision_events=events)
 
+    @property
+    def count(self) -> int:
+        """Сколько кадров выдано за сеанс, включая выброшенные из окна."""
+        return self.dropped + len(self.rows)
+
     def status(self, since: int = 0) -> dict:
+        """Состояние сеанса и кадры с номером >= `since` (номера сквозные).
+
+        `count` — номер следующего кадра (его и передавать в `since` дальше).
+        У экрана кадры держатся окном (`window`): `first` — номер старейшего
+        кадра в памяти; `since` старше него — отдаются все кадры окна, а
+        `dropped_before` — сколько запрошенных кадров уже выброшено."""
         self._drain_api()
+        since = max(0, since)
         with self._lock:
-            rows = self.rows[since:]
-            n = len(self.rows)
+            first = self.dropped
+            rows = self.rows[max(0, since - first):]
+            n = first + len(self.rows)
             tail = self.rows[-TIMING_WINDOW:]
             last_t = self.rows[-1]["t"] if self.rows else None
             passport = None if self.passport is None else self.passport.to_dict()
@@ -667,6 +702,8 @@ class Session:
                 "state_url": self.state_url, "state_reason": self.state_reason,
                 "loadouts": self._loadouts_view(),
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
+                "window": self.window, "first": first,
+                "dropped_before": max(0, first - since),
                 "minimap": self.minimap, "view": self.view, "elapsed": round(el, 1),
                 "speed": speed, "map_units": MAP_UNITS}
 
@@ -845,7 +882,7 @@ class Session:
         self.state = State.RUNNING
 
         while not self._stop.is_set():
-            if len(self.rows) >= MAX_FRAMES:
+            if self.window is None and len(self.rows) >= MAX_FRAMES:
                 self.note += f" · потолок памяти {MAX_FRAMES} кадров: дальше не читаю"
                 break
             self._drain_api()
@@ -1325,6 +1362,10 @@ class Session:
         # События юнитов — отдельно от событий чемпионов: смертей крипов
         # десятки в минуту.
         tracks = None
+        if self.tracker is not None and any(isinstance(e, RosterEvent) for e in ev):
+            # Новая игра (другой состав): треки прошлой — не этой (#801). У
+            # чемпионов срока нет, и без сброса они висели бы «unseen» вечно.
+            self.tracker.reset()
         if (self.tracker is not None and row.get("kind", "game") == "game"
                 and units is not None and on_rift):
             cam = (row["px"], row["py"])
@@ -1382,6 +1423,17 @@ class Session:
             # в float32 заняли бы почти 90 МБ одних тепловых карт.
             self.heat[i] = hm.astype(np.float16)
             self.rows.append(row)
+            if self.window is not None and len(self.rows) > self.window:
+                self._drop(len(self.rows) - self.window)
+
+    def _drop(self, k: int) -> None:
+        """Выбросить `k` старейших кадров окна со всеми картинками (под замком)."""
+        for r in self.rows[:k]:
+            j = r["i"]
+            for store in (self.scene, self.mini, self.full, self.heat):
+                store.pop(j, None)
+        del self.rows[:k]
+        self.dropped += k
 
 
 def _spells_why(row: dict) -> str | None:
@@ -1574,6 +1626,6 @@ def stop(sid: str) -> None:
 
 def listing() -> list[dict]:
     return [{"id": s.sid, "state": s.state.label, "active": s.state.active,
-             "count": len(s.rows), "run": s.run, "kind": s.kind, "title": s.title,
+             "count": s.count, "run": s.run, "kind": s.kind, "title": s.title,
              "source": s.source.kind}
             for s in _sessions.values()]

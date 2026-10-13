@@ -604,16 +604,18 @@ function film() {
       frag.appendChild(d);
       continue;
     }
-    let el = old.get(String(j));
+    // Клетка — по номеру кадра, а не по месту в списке: у своего экрана
+    // старые кадры выбрасываются из начала (#801), и места сдвигаются.
+    let el = old.get(String(f.i));
     if (el) {
-      old.delete(String(j));
+      old.delete(String(f.i));
     } else {
       el = document.createElement("div");
-      el.dataset.i = j;
+      el.dataset.i = f.i;
       el.innerHTML = '<div class="pic"><img loading="lazy"></div><div class="eb"></div>';
       el.querySelector("img").src = sceneSrc(f);
       el.querySelector(".eb").style.background = BAR[errClass(f.err)];
-      el.onclick = () => go(j);
+      el.onclick = () => go(S.frames.indexOf(f));
     }
     el.className = "th" + (k === 0 ? " cur" : "");
     el.title = fmtTime(f.t);
@@ -1371,6 +1373,13 @@ async function pollLive() {
     const wasLast = S.pos >= S.frames.length - 1;
     S.frames = S.frames.concat(d.frames);
     S.live.since = d.count;
+    // Свой экран держит окно последних кадров (#801): старше его картинок
+    // на сервере уже нет — смотрелка держит то же окно.
+    if (d.window && S.frames.length > d.window) {
+      const k = S.frames.length - d.window;
+      S.frames = S.frames.slice(k);
+      S.pos = Math.max(0, S.pos - k);
+    }
     summary();
     // Следуем за свежим кадром, только пока сами не ушли листать назад.
     if (S.follow && wasLast) go(S.frames.length - 1);

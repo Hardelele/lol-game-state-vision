@@ -56,6 +56,9 @@ from lolvision.records import UNSET, Event, TrackRec, UnitDeathEvent, UnitNewEve
 SPEED = {"champion": 600.0, "minion": 420.0, "ward": 0.0}
 GATE0 = {"champion": 260.0, "minion": 160.0, "ward": 120.0}
 EXPIRE = {"champion": 1e9, "minion": 20.0, "ward": 180.0}   # с без наблюдений
+# Ушедших треков в отчёте не больше (#801): миньонов гибнут десятки в
+# минуту, а трекер своего экрана живёт часами.
+GONE_KEEP = 500
 CONFIRM = 2              # пар подряд, чтобы трек стал настоящим (не мусор детектора)
 MISS_IN_VIEW = 3         # кадров «должен быть виден, но нет» — потерян
 DEATH_HP = 0.3           # ХП на последнем наблюдении, ниже — исчезновение в кадре = смерть
@@ -148,6 +151,12 @@ class UnitTracker:
     valid: np.ndarray | None = None        # (H, W) 0/1: где детектор отвечает
     tracks: list[Track] = field(default_factory=list)
     gone: list[Track] = field(default_factory=list)   # умершие и истёкшие (для отчёта)
+
+    def reset(self) -> None:
+        """Новая игра: активные треки — в ушедшие, следующий кадр с нуля."""
+        self.gone.extend(tr for tr in self.tracks if tr.state != "new")
+        self.tracks = []
+        del self.gone[:-GONE_KEEP]
 
     def visible(self, uv: np.ndarray, cam) -> np.ndarray:
         """Должна ли точка карты быть видна детектору при этой камере."""
@@ -245,6 +254,7 @@ class UnitTracker:
                 continue
             keep.append(tr)
         self.tracks = keep
+        del self.gone[:-GONE_KEEP]
         return ev
 
     def _observe(self, tr: Track, t: float, uv: np.ndarray, det: UnitRec,

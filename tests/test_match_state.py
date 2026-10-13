@@ -475,3 +475,19 @@ def test_practice_tool_bot_with_my_champion_is_kept_apart_by_team():
     assert alive == {"ORDER": True, "CHAOS": False}
     # В обычной игре такой повтор — отказ.
     assert practice(roster, mode="CLASSIC").problem() == "чемпионы повторяются"
+
+
+def test_events_are_kept_as_a_bounded_tail(monkeypatch):
+    """Сеанс своего экрана живёт через много игр (#801): события контекста —
+    хвостом EVENTS_KEEP, новые события кадра в нём есть."""
+    import lolvision.match_state as ms
+    monkeypatch.setattr(ms, "EVENTS_KEEP", 3)
+    m = MatchState()
+    m.update(0, "game", champs())
+    for k in range(6):                         # смена состава — событие roster
+        names = NAMES[k + 1:] + NAMES[:k + 1]
+        other = [replace(c, name=n) for c, n in zip(champs(), names)]
+        for j in range(3):
+            ev = m.update(1 + 3 * k + j, "game", other)
+        assert ev[0].type == "roster" and m.events[-1] is ev[0]
+    assert len(m.events) == 3
