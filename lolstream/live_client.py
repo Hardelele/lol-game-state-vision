@@ -662,7 +662,9 @@ def api_observation(snap: GameSnapshot, age: float = 0.0) -> tuple[ApiObs | None
     (None, причина). `age` — сколько секунд прошло с получения снимка до
     момента, на который нужно наблюдение: время матча идёт вперёд, таймеры
     возрождения — назад. Чемпион не опознан, не десять игроков, не 5/5 —
-    отказ: половина состава хуже, чем никакого."""
+    отказ: половина состава хуже, чем никакого. Исключение — режимы, где
+    API честно отдаёт не всех (тренировка, match_state.PARTIAL_ROSTER_MODES,
+    #803): там состав — те, кто есть, а решает gameMode, а не число."""
     for p in snap.players:
         if p.champion is None:
             return None, f"чемпион не опознан: {p.champion_reason}"
@@ -675,7 +677,7 @@ def api_observation(snap: GameSnapshot, age: float = 0.0) -> tuple[ApiObs | None
                        for p in players),
                  me.team if me is not None else None,
                  me.champion if me is not None else None,
-                 snap.map_number)
+                 snap.map_number, snap.game_mode)
     why = obs.problem()
     return (None, why) if why is not None else (obs, None)
 

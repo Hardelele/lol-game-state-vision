@@ -55,6 +55,13 @@ sides.py), а кто из десяти свой — говорит API (ApiObs.m
 кадре своя иконка есть на миникарте, место — с миникарты (она не зависит
 от ответа камеры), а экран с ней сверяется: дальше SELF_PLACE_TOL —
 conflicts["self_place"].
+
+Неполный состав (#803). В Practice Tool API отдаёт только своего игрока:
+режим (ApiObs.game_mode, PARTIAL_ROSTER_MODES) разрешает снимок с теми, кто
+есть, — состав из одного, время матча, жив / мёртв своего. Иконки миникарты
+назначаются только этому составу; остальные детекции (боты) — лишние. Про
+отсутствующих ничего не выводится. В остальных режимах неполный снимок —
+по-прежнему отказ.
 """
 
 from __future__ import annotations
@@ -81,6 +88,18 @@ FOUNTAIN = {"ORDER": (0.035, 0.965), "CHAOS": (0.965, 0.035)}
 # пары ингибиторов совпали в пределах 0.01. Сам ORDER на кадрах не проверен.
 FOUNTAIN_ABYSS = {"ORDER": (0.111, 0.929), "CHAOS": (0.941, 0.147)}
 FOUNTAINS = {RIFT: FOUNTAIN, ABYSS: FOUNTAIN_ABYSS}
+# Режимы (gameMode API), где Live Client честно отдаёт не весь состав (#803):
+# в Practice Tool allPlayers — только свой игрок, ботов и противников API не
+# знает (журнал своей игры data/own/20261012-185628: 1 игрок, Master Yi).
+# Решает режим, а не число игроков: в обычной игре (CLASSIC, ARAM, …)
+# неполный снимок — сбой или хвост загрузки, и он по-прежнему отвергается.
+PARTIAL_ROSTER_MODES = frozenset({"PRACTICETOOL"})
+WHY_NO_ENEMIES_PRACTICE = "режим тренировки: API не отдаёт ботов/противников"
+
+
+def partial_roster(game_mode: str | None) -> bool:
+    """Режим, где API отдаёт не весь состав (тренировка)."""
+    return game_mode in PARTIAL_ROSTER_MODES
 
 
 def fountain(team: str, map_number: int | None) -> tuple[float, float] | None:
@@ -132,33 +151,60 @@ class ApiPlayer:
 class ApiObs:
     """Снимок API на момент наблюдения: время матча, десять игроков (ORDER,
     затем CHAOS), своя команда и свой чемпион (Id Data Dragon) — None, если
-    своего игрока нет (наблюдатель в клиенте)."""
+    своего игрока нет (наблюдатель в клиенте). В режиме неполного состава
+    (`partial`, тренировка) игроков столько, сколько отдал API."""
     game_time: float           # с от начала матча
     players: tuple[ApiPlayer, ...]
     me_team: str | None = None
     me: str | None = None
     map_number: int | None = None   # mapNumber: 11 — Ущелье, 12 — Воющая бездна
+    game_mode: str | None = None    # gameMode: CLASSIC, ARAM, PRACTICETOOL, …
 
     @property
     def roster(self) -> tuple[str, ...]:
         return tuple(p.name for p in self.players)
 
+    @property
+    def partial(self) -> bool:
+        """Режим неполного состава (PARTIAL_ROSTER_MODES): в составе только
+        те, кого отдал API."""
+        return partial_roster(self.game_mode)
+
     def problem(self) -> str | None:
-        """Почему снимок не годится как состав матча; None — годится."""
-        if len(self.players) != 10:
+        """Почему снимок не годится как состав матча; None — годится.
+
+        Обычно нужны ровно десять, 5/5: неполный снимок — сбой, а половина
+        состава хуже, чем никакого (иконки миникарты назначились бы не тем).
+        В режиме неполного состава (тренировка) — от одного до пяти на
+        команду, повтор чемпиона только в разных командах (боты), и свой
+        игрок обязан быть в составе: без него снимок ничего не говорит."""
+        n = Counter(p.team for p in self.players)
+        if self.partial:
+            if not self.players:
+                return f"игроков нет ({self.game_mode})"
+            if n["ORDER"] > 5 or n["CHAOS"] > 5:
+                return f"по командам {n['ORDER']}/{n['CHAOS']}: больше пяти"
+            if self.me is None:
+                return f"своего игрока нет ({self.game_mode})"
+        elif len(self.players) != 10:
             return f"игроков {len(self.players)}, а не 10"
         bad = sorted({p.team for p in self.players} - set(TEAMS))
         if bad:
             return f"команды не ORDER/CHAOS: {bad}"
-        n = Counter(p.team for p in self.players)
-        if n["ORDER"] != 5 or n["CHAOS"] != 5:
+        if not self.partial and (n["ORDER"] != 5 or n["CHAOS"] != 5):
             return f"по командам {n['ORDER']}/{n['CHAOS']}, а не 5/5"
-        if len(set(self.roster)) != 10:
+        if self.partial:
+            # В тренировке боты бывают теми же чемпионами, что и в другой
+            # команде (живой Practice Tool: Malphite в обеих) — это не сбой.
+            if len({(p.name, p.team) for p in self.players}) != len(self.players):
+                return "чемпион повторяется в одной команде"
+        elif len(set(self.roster)) != len(self.players):
             return "чемпионы повторяются"
         if self.me_team is not None and self.me_team not in TEAMS:
             return f"своя команда {self.me_team!r}"
         if self.me is not None:
-            mine = next((p for p in self.players if p.name == self.me), None)
+            same = [p for p in self.players if p.name == self.me]
+            mine = next((p for p in same if p.team == self.me_team), same[0] if same else None)
             if mine is None:
                 return f"своего чемпиона {self.me!r} нет в составе"
             if self.me_team is not None and mine.team != self.me_team:
@@ -218,6 +264,9 @@ class MatchState:
     # self_many — несколько своих юнитов на кадре, self_place — место
     # своего с экрана против своей иконки миникарты (#802).
     conflicts: Counter = field(default_factory=Counter)
+    # Чемпионы, которые в составе API в обеих командах (тренировка с ботами,
+    # #803): у них ключ в `champs` / `order` — «имя/команда», у остальных — имя.
+    _dup: frozenset = frozenset()
     _other: tuple | None = None
     _other_n: int = 0
 
@@ -258,6 +307,14 @@ class MatchState:
         self.events += new
         return new
 
+    def _key(self, name: str, team: str) -> str:
+        """Ключ чемпиона в `champs` / `order`: имя, а у повторённого в обеих
+        командах (тренировка, #803) — «имя/команда»."""
+        return f"{name}/{team}" if name in self._dup else name
+
+    def _keys(self, champs) -> tuple[str, ...]:
+        return tuple(self._key(c.name, c.team) for c in champs)
+
     def _roster(self, t: float, champs: list[MinimapChamp], new: list[Event]) -> None:
         if self.api is not None:
             # Состав дал API: HUD его не меняет, а сверяется с ним.
@@ -280,6 +337,7 @@ class MatchState:
             new.append(RosterEvent(t, roster))
 
     def _reset(self, champs: list[MinimapChamp]) -> None:
+        self._dup = frozenset()
         self.order = [c.name for c in champs]
         self.champs = {c.name: Champ(c.name, c.team, c.slot) for c in champs}
         self._other, self._other_n = None, 0
@@ -311,11 +369,11 @@ class MatchState:
             self._reset_api(obs)
             new.append(RosterEvent(t, obs.roster))
         else:
-            self.order = list(obs.roster)   # тот же состав: память остаётся
+            self.order = list(self._keys(obs.players))   # тот же состав: память остаётся
         self.api, self.api_t = obs, t
         self.game_time = Fact(obs.game_time, t, "api")
         for p in obs.players:
-            c = self.champs[p.name]
+            c = self.champs[self._key(p.name, p.team)]
             was_dead = c.alive is not None and c.alive.value is False
             if p.dead:
                 c.respawn_at, c.respawn_src, c.dead_n = t + p.respawn_in, "api", 0
@@ -333,13 +391,15 @@ class MatchState:
                 c.alive = Fact(True, t, "api")
 
     def _reset_api(self, obs: ApiObs) -> None:
-        self.order = list(obs.roster)
+        names = Counter(obs.roster)
+        self._dup = frozenset(k for k, v in names.items() if v > 1)
+        self.order = list(self._keys(obs.players))
         n: Counter = Counter()
         self.champs = {}
         for p in obs.players:
             n[p.team] += 1
             slot = f"{'LR'[TEAMS.index(p.team)]}{n[p.team]}"
-            self.champs[p.name] = Champ(p.name, p.team, slot)
+            self.champs[self._key(p.name, p.team)] = Champ(p.name, p.team, slot)
         self._other, self._other_n = None, 0
 
     def _check_hud(self, c: Champ, m: MinimapChamp, t: float) -> None:
@@ -366,7 +426,7 @@ class MatchState:
             self._from_champs_api(t, champs)
             return
         for m in champs:
-            c, alive, timer = self.champs[m.name], m.alive, m.timer
+            c, alive, timer = self.champs[self._key(m.name, m.team)], m.alive, m.timer
             if m.visible and m.u is not None:
                 c.pos, c.seen = Fact((m.u, m.v), t, "minimap"), t
                 if c.alive is not None and c.alive.value is False and \
@@ -398,7 +458,7 @@ class MatchState:
         """Миникарта и панели при живом API: жив / мёртв — из API, отсюда
         только место (иконка) и сверка."""
         for m in champs:
-            c = self.champs[m.name]
+            c = self.champs[self._key(m.name, m.team)]
             self._check_hud(c, m, t)
             if not (m.visible and m.u is not None):
                 continue
@@ -422,11 +482,14 @@ class MatchState:
                      and rift(self.map_number))
         where = (px, py) if placeable else None
         mine = [u for u in units if u.kind == "champion" and u.relation == "self"]
+        # Юнит с именем повторённого чемпиона (тренировка, #803) не ставим: по
+        # имени не сказать, который из двух, — ключа «имя» у него в champs нет.
         for u in units:
             if u.kind != "champion" or u.relation == "self" or u.name not in self.champs:
                 continue
             self._seen_on_screen(self.champs[u.name], u, t, where)
-        me = self.api.me if self.api is not None else None
+        me = (self._key(self.api.me, self.api.me_team or "")
+              if self.api is not None and self.api.me is not None else None)
         if not mine or me not in self.champs:
             return                      # свой чемпион неизвестен — некого ставить
         if len(mine) > 1:
@@ -476,6 +539,11 @@ class MatchState:
     # ---------- выход ----------
 
     @property
+    def partial(self) -> bool:
+        """Состав из API в режиме неполного состава (тренировка, #803)."""
+        return self.api is not None and self.api.partial
+
+    @property
     def roster_src(self) -> str | None:
         """Откуда состав: api — из Live Client API, hud — по портретам HUD
         (миникарта live_champions), None — состава нет."""
@@ -493,12 +561,12 @@ class MatchState:
         """Снимок для строки кадра, по составу."""
         t = self.t
         out = []
-        for name in self.order:
-            c = self.champs[name]
+        for key in self.order:
+            c = self.champs[key]
             p, a, hp = c.pos, c.alive, c.hp
             # Между опросами API момент возрождения может пройти раньше, чем
             # API скажет «жив»: до возрождения тогда 0, а не минус.
-            out.append(ChampCtx(name, c.team, c.status(t),
+            out.append(ChampCtx(c.name, c.team, c.status(t),
                                 p.value[0] if p else None, p.value[1] if p else None,
                                 t - p.t if p else None, p.src if p else None,
                                 float(hp.value) if hp else None,

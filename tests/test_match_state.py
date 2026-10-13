@@ -413,3 +413,65 @@ def test_no_place_from_screen_off_rift():
     m.update(1, "game", champs(), [SELF], (.5, .5))
     r = view(m, "Jhin")
     assert r.state == "visible" and r.hp == .6 and r.u is None and r.src is None
+
+
+# ---------- тренировка: неполный состав (#803) ----------
+
+def practice(players, me="Irelia", me_team="ORDER", mode="PRACTICETOOL"):
+    return ApiObs(60.0, tuple(ApiPlayer(n, t, False, 0.0) for n, t in players), me_team, me,
+                  RIFT, mode)
+
+
+def test_partial_roster_depends_on_game_mode_not_on_count():
+    alone = [("Irelia", "ORDER")]
+    assert practice(alone).problem() is None and practice(alone).partial
+    assert practice(alone, mode="CLASSIC").problem() == "игроков 1, а не 10"
+    assert practice(alone, mode="ARAM").problem() == "игроков 1, а не 10"
+    assert practice(alone, mode=None).problem() == "игроков 1, а не 10"
+    # И в тренировке: без своего игрока снимок ничего не говорит.
+    assert "своего игрока нет" in practice(alone, me=None).problem()
+    assert "нет в составе" in practice([("Jinx", "CHAOS")]).problem()
+    assert "больше пяти" in practice([(n, "ORDER") for n in NAMES[:6]]).problem()
+    assert practice([("Irelia", "ORDER"), ("Irelia", "ORDER")]).problem() == \
+        "чемпион повторяется в одной команде"
+
+
+def test_practice_tool_alone_gives_clock_me_and_my_icon():
+    m = MatchState()
+    m.update(0, "game", api=practice([("Irelia", "ORDER")]))
+    assert m.api_refused is None and m.partial and m.order == ["Irelia"]
+    assert m.game_clock().value == 60.0 and view(m, "Irelia").alive is True
+    # Своя иконка на миникарте — место своего; ботов в составе нет.
+    mine = MinimapChamp("Irelia", "ORDER", "L1", True, .3, .7, None, None)
+    m.update(1, "game", [mine])
+    r = view(m, "Irelia")
+    assert (r.u, r.v, r.src) == (.3, .7, "minimap") and len(m.frame_view()) == 1
+    m.update(2, "game", api=practice([("Irelia", "ORDER")], mode="CLASSIC"))
+    assert m.api_refused == "игроков 1, а не 10"
+
+
+def test_practice_tool_bot_with_my_champion_is_kept_apart_by_team():
+    roster = [(n, "ORDER") for n in NAMES[:5]] + [("Irelia", "CHAOS")] + \
+        [(n, "CHAOS") for n in NAMES[6:]]
+    m = MatchState()
+    m.update(0, "game", api=practice(roster))
+    assert m.api_refused is None and len(m.frame_view()) == 10
+    both = [r for r in m.frame_view() if r.name == "Irelia"]
+    assert sorted(r.team for r in both) == ["CHAOS", "ORDER"]
+    # Иконки по командам: своя (синяя) и бот (красная) — каждому своё место.
+    place = {"ORDER": (.2, .8), "CHAOS": (.9, .1)}
+    icons = [MinimapChamp(n, t, "", n == "Irelia", *(place[t] if n == "Irelia" else (None, None)),
+                          None, None) for n, t in roster]
+    m.update(1, "game", icons)
+    at = {r.team: (r.u, r.v) for r in m.frame_view() if r.name == "Irelia"}
+    assert at == {"ORDER": (.2, .8), "CHAOS": (.9, .1)}
+    # Смерть бота-двойника — не смерть своего.
+    dead = practice(roster)
+    dead = replace(dead, players=tuple(replace(p, dead=True, respawn_in=9.0)
+                                       if p.team == "CHAOS" and p.name == "Irelia" else p
+                                       for p in dead.players))
+    m.update(2, "game", api=dead)
+    alive = {r.team: r.alive for r in m.frame_view() if r.name == "Irelia"}
+    assert alive == {"ORDER": True, "CHAOS": False}
+    # В обычной игре такой повтор — отказ.
+    assert practice(roster, mode="CLASSIC").problem() == "чемпионы повторяются"

@@ -1066,3 +1066,82 @@ def test_spells_ready_needs_spells_from_api():
     bad["me"]["spells_ready"] = {"value": {"SummonerFlash": "yes"}, "source": "hud",
                                  "age": 0.1, "reason": None}
     assert any("spells_ready" in e for e in check_snapshot(bad))
+
+
+# ---------------------------------------------------------------- тренировка (#803)
+
+def practice_statuses(mode: str = "PRACTICETOOL", bots: bool = False) -> list[LiveStatus]:
+    """Журнал своей игры, переделанный под Practice Tool: `gameMode` = `mode`;
+    без `bots` в allPlayers только свой (Zilean, ORDER), как в живом Practice
+    Tool без ботов; с `bots` — все десять, а верхний CHAOS (Darius) заменён на
+    Zilean: бот тем же чемпионом, что и свой."""
+    rows = []
+    for row in read_journal(OWN):
+        r = row.response
+        if r.code == 200 and r.body:
+            d = json.loads(r.body)
+            d["gameData"]["gameMode"] = mode
+            me = d["activePlayer"]["riotId"]
+            ps = d["allPlayers"]
+            if bots:
+                mine = next(p for p in ps if p["riotId"] == me)
+                for p in ps:
+                    if p["team"] == "CHAOS" and p["position"] == "TOP":
+                        p["rawChampionName"] = mine["rawChampionName"]
+                        p["championName"] = mine["championName"]
+            else:
+                d["allPlayers"] = [p for p in ps if p["riotId"] == me]
+            row = replace(row, response=replace(r, body=json.dumps(d)))
+        rows.append(row)
+    return [s for s, _ in replay(rows, IDS)]
+
+
+def provided(sts: list[LiveStatus]) -> dict:
+    """Снимок сервиса без сеанса live после всего журнала `sts`."""
+    clock = iter(s.t for s in sts)
+    provide = ss.api_only_provider(FakeClient(sts), clock=lambda: next(clock))
+    for _ in range(len(sts) - 1):
+        provide()
+    snap = build_snapshot(provide(), sts[-1].t)
+    assert check_snapshot(snap) == []
+    return snap
+
+
+def test_practice_tool_with_only_me_is_accepted():
+    snap = provided(practice_statuses())
+    assert snap["match"]["mode"]["value"] == "PRACTICETOOL"
+    assert snap["match"]["practice"]["value"] is True
+    assert snap["match"]["time"]["source"] == "api"
+    assert snap["sources"]["match"]["api_refused"] is None
+    assert snap["sources"]["match"]["roster"] == "api"
+    ch = snap["champions"]["value"]
+    assert [c["champion"]["value"] for c in ch] == ["Zilean"]
+    assert ch[0]["relation"]["value"] == "self"
+    assert snap["me"]["alive"]["value"] is False and snap["me"]["respawn_in"]["value"] > 0
+    assert snap["me"]["position"]["reason"] == "место не наблюдалось"   # зрения нет
+    # Врагов не выдумываем и не говорим «их нет»: отказ с причиной.
+    assert snap["enemies"]["value"] is None
+    assert snap["enemies"]["reason"] == "режим тренировки: API не отдаёт ботов/противников"
+
+
+def test_classic_with_one_player_is_still_refused():
+    snap = provided(practice_statuses("CLASSIC"))
+    assert snap["match"]["practice"]["value"] is False
+    why = "снимок API не принят: игроков 1, а не 10"
+    assert snap["sources"]["match"]["api_refused"] == "игроков 1, а не 10"
+    assert snap["match"]["time"]["reason"] == why
+    assert snap["champions"]["reason"] == why and snap["me"]["alive"]["reason"] == why
+
+
+def test_practice_tool_bots_may_repeat_my_champion_in_the_other_team():
+    snap = provided(practice_statuses(bots=True))
+    assert snap["sources"]["match"]["api_refused"] is None
+    ch = [(c["champion"]["value"], c["team"]["value"], c["relation"]["value"])
+          for c in snap["champions"]["value"]]
+    assert len(ch) == 10
+    assert ("Zilean", "ORDER", "self") in ch and ("Zilean", "CHAOS", "enemy") in ch
+    assert snap["me"]["alive"]["value"] is False          # свой, а не бот-двойник
+    assert snap["enemies"]["reason"].startswith("режим тренировки")
+    # В обычной игре тот же повтор — отказ, как раньше.
+    snap = provided(practice_statuses("CLASSIC", bots=True))
+    assert snap["sources"]["match"]["api_refused"] == "чемпионы повторяются"

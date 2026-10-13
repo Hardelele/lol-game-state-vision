@@ -98,3 +98,37 @@ def test_same_api_roster_keeps_match_and_none_drops_it(champs):
     assert champs.match is m                    # повтор снимка — не новый состав
     champs.set_api(None)
     assert champs.match is None and champs.view is None
+
+
+# ---------- тренировка: неполный состав (#803) ----------
+
+def practice(players, me="Zilean", me_team="ORDER", mode="PRACTICETOOL") -> ApiObs:
+    return ApiObs(100.0, tuple(ApiPlayer(n, t, False, 0.0) for n, t in players), me_team, me,
+                  11, mode)
+
+
+def test_practice_tool_alone_assigns_only_my_icon(champs):
+    assert champs.set_api(practice([("Zilean", "ORDER")])) is None
+    assert champs.roster == ["Zilean"] and champs.view == "player"
+    # Своя синяя иконка — своя; боты на миникарте (их API не знает) — лишние.
+    champs.icon_net = lambda mini: [det("Darius", 1, 200, 30), det("Zilean", 0, 10, 20),
+                                    det("Lux", 1, 90, 90)]
+    out = champs.minimap(np.zeros((1080, 1920, 3), np.uint8), np.zeros((256, 256, 3)))
+    assert [(r.name, r.team, r.slot, r.visible) for r in out] == [("Zilean", "ORDER", "L1",
+                                                                   True)]
+    assert (out[0].u, out[0].v) == (10 / lc.MM, 20 / lc.MM)
+    # В обычной игре один игрок — отказ, как раньше.
+    why = champs.set_api(practice([("Zilean", "ORDER")], mode="CLASSIC"))
+    assert why == "игроков 1, а не 10" and champs.api_error == why
+
+
+def test_practice_tool_bot_twin_is_told_apart_by_icon_color(champs):
+    roster = [(n, "ORDER") for n in ORDER] + [("Zilean", "CHAOS")] + \
+        [(n, "CHAOS") for n in CHAOS[1:]]
+    assert champs.set_api(practice(roster)) is None
+    assert champs.roster.count("Zilean") == 2
+    champs.icon_net = lambda mini: [det("Zilean", 1, 200, 30), det("Zilean", 0, 10, 20)]
+    out = champs.minimap(np.zeros((1080, 1920, 3), np.uint8), np.zeros((256, 256, 3)))
+    at = {(r.team, r.slot): (r.u, r.v) for r in out if r.name == "Zilean"}
+    assert at == {("ORDER", "L1"): (10 / lc.MM, 20 / lc.MM),
+                  ("CHAOS", "R1"): (200 / lc.MM, 30 / lc.MM)}

@@ -998,6 +998,10 @@ class Session:
                    else "не прочитан")
         elif champs.match is not None and champs.match.api:
             src, how = "api", "Live Client API"
+            if len(champs.roster) < 10:
+                # Тренировка (#803): API отдаёт только своего — состав неполный.
+                n = len(champs.roster)
+                how = f"Live Client API, неполный состав: {n} из 10 (тренировка)"
         else:
             ok, why = self.passport.verdict("hud_roster")
             src, how = ("hud", "портреты HUD") if ok else (None, f"состав по HUD не принят: {why}")
@@ -1104,7 +1108,8 @@ class Session:
         mask = white_mask(np.asarray(mini, dtype=np.float32))
 
         # Live Client: состав из API — до миникарты (иконки назначаются
-        # только среди этих десяти). API пропал дольше API_STALE — состав
+        # только среди этих десяти, в тренировке — среди тех, кого отдал API,
+        # #803). API пропал дольше API_STALE — состав
         # снова по HUD; одиночный сбой опроса состав не сбрасывает.
         obs, refused = self._api_step(t, wall)
         champs = pl.champs
