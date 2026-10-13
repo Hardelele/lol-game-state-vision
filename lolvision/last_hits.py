@@ -52,7 +52,7 @@ from lolvision.geometry import MAP_UNITS
 from lolvision.unit_tracker import LANE_DIST, LANES, _seg_dist
 
 NEAR = 800.0 / MAP_UNITS        # доли карты
-TOL = 0.3                       # с: смерть и рост CS — один кадр (±1 при 4 кадр/с)
+TOL = 0.05                      # с: смерть и рост CS — один и тот же кадр
 WAIT = 1.0                      # с: рост выдаётся через прочтение после появления
 MAX_GAIN = 12                   # роста CS за одно прочтение больше — ошибка чтения
 NEW_GAME = 5                    # прочтений подряд меньше принятого — новая игра
