@@ -27,7 +27,9 @@
 * `scene` — тип сцены последнего кадра (сигнал, не условие читателей);
 * `roster` — откуда известен состав: api / hud или неизвестен;
 * `assets` — какие модели и банки есть у сеанса (unit_net, names_bank,
-  minimap_model).
+  minimap_model);
+* `spell_panel` — найдена ли панель умений своего HUD (вид игрока), её
+  масштаб и совпадение с эталоном (lolvision/hud_spells.py, #806).
 
 Пересчёт — по сигналу, а не на каждом кадре. Сеанс сообщает факт
 (`set_*`, `check_minimap`), паспорт отвечает списком изменений (`Change`:
@@ -166,6 +168,14 @@ def need_asset(name: str) -> Need:
     return check
 
 
+def need_spell_panel(p: Passport) -> str | None:
+    """Панель умений своего HUD найдена в кадре (lolvision.hud_spells)."""
+    it = p.items["spell_panel"]
+    if it.value["found"]:
+        return None
+    return f"панель умений не найдена ({it.how or 'не искали'})"
+
+
 def need_roster(p: Passport) -> str | None:
     it = p.items["roster"]
     return None if it.value is not None else f"состав неизвестен ({it.how or 'не прочитан'})"
@@ -210,6 +220,10 @@ READERS: dict[str, Reader] = {r.name: r for r in (
     Reader("sides", "свои / враги",
            (need_view("player"), need_api)),
     Reader("api_facts", "факты Live Client API", (need_api,)),
+    # Готовность своих заклинаний D/F по панели умений (#806): панель есть
+    # только у вида игрока, слоты — по найденной панели и её масштабу.
+    Reader("hud_spells", "готовность заклинаний по HUD",
+           (need_frame, need_view("player"), need_spell_panel)),
 )}
 
 
@@ -250,6 +264,7 @@ class Passport:
             "scene": Item(None, "none", "кадров ещё не было", t),
             "roster": Item(None, "none", "не прочитан", t),
             "assets": Item({k: bool(v) for k, v in (assets or {}).items()}, "session", None, t),
+            "spell_panel": Item(_panel(False), "none", "ещё не искали", t),
         }
         for k in (assets or {}):
             if k not in ASSETS:
@@ -300,6 +315,8 @@ class Passport:
             kind = self.items["source"].value
             self._set("game_rect", _rect_item(kind, size, None, t), changes, why)
             self._set("minimap", Item(_mm(False), "none", why + ", искать заново", t),
+                      changes, why)
+            self._set("spell_panel", Item(_panel(False), "none", why + ", искать заново", t),
                       changes, why)
             self._low = 0
             self.pending |= {"minimap", "game_rect"}
@@ -359,6 +376,16 @@ class Passport:
         changes = self._watch()
         self._set("minimap", Item(_mm(False), "layout", how, t), changes, how)
         self.pending.discard("minimap")
+        return self._done(changes, t)
+
+    def set_spell_panel(self, found: bool, t: float | None, how: str,
+                        box: tuple[float, float, float, float] | None = None,
+                        scale: float | None = None, score: float | None = None) -> list[Change]:
+        """Панель умений своего HUD: найдена (место — доли кадра, масштаб к
+        эталону, совпадение) или потеряна / не найдена (`how` — почему)."""
+        changes = self._watch()
+        val = _panel(found, box, scale, score)
+        self._set("spell_panel", Item(val, "hud" if found else "none", how, t), changes, how)
         return self._done(changes, t)
 
     def set_view(self, view: str | None, t: float | None, how: str,
@@ -466,6 +493,11 @@ def _mm(found: bool, box=None, scale: float | None = None,
             "box": None if box is None else tuple(round(float(b), 5) for b in box),
             "scale": None if scale is None else round(float(scale), 4),
             "score": None if score is None else round(float(score), 3)}
+
+
+def _panel(found: bool, box=None, scale: float | None = None,
+           score: float | None = None) -> dict:
+    return _mm(found, box, scale, score)
 
 
 def _rect_item(kind: str | None, size: tuple[int, int] | None,
