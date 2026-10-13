@@ -118,11 +118,25 @@ def test_bad_backend_is_a_message(fake, monkeypatch, capsys):
 
 def test_defaults_match_viewer(monkeypatch):
     seen = {}
-    monkeypatch.setattr(ls, "run", lambda fps, backend, run, minimap_scale: seen.update(
-        fps=fps, backend=backend, run=run, minimap_scale=minimap_scale) or 0)
+    monkeypatch.setattr(ls, "run", lambda fps, backend, run, minimap_scale, loadouts: seen.update(
+        fps=fps, backend=backend, run=run, minimap_scale=minimap_scale, loadouts=loadouts) or 0)
     assert ls.main([]) == 0
     assert seen == {"fps": 2.0, "backend": "auto", "run": live.DEFAULT_RUN,
-                    "minimap_scale": None}
+                    "minimap_scale": None, "loadouts": True}
+    assert ls.main(["--no-loadouts"]) == 0 and seen["loadouts"] is False
+
+
+def test_no_loadouts_goes_to_session(monkeypatch):
+    """--no-loadouts доходит до start_screen как loadouts=False (#807)."""
+    seen = {}
+
+    def start_screen(run, fps, backend, **kw):
+        seen.update(kw)
+        raise ValueError("стоп после старта")
+    monkeypatch.setattr(live, "start_screen", start_screen)
+    monkeypatch.setattr(live, "get", lambda sid: None)
+    assert ls.run(2.0, "auto", "r", busy=lambda: False, loadouts=False) == 2
+    assert seen == {"loadouts": False}
 
 
 def test_minimap_scale_goes_to_session(monkeypatch):

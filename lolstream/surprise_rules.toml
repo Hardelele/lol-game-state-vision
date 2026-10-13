@@ -1,0 +1,168 @@
+# Правила детектора нетипичного выбора (#807): lolstream/surprises.py.
+#
+# Пока только пометки в записях паспорта выбора (data/loadouts/*.jsonl), без
+# голоса. Каждое сработавшее правило — запись в `surprises`:
+# {kind, what, expected, confidence, basis, rule}. `confidence` — насколько
+# правило уверено, что это действительно необычно (0..1), а не вероятность
+# ошибки игрока. Правила по роли работают, только когда API дал роль
+# (ранкед / драфт); без роли — ни одно не применяется, причина в записи.
+#
+# Семьи заклинаний — как в live_client.spell_id: улучшенный Телепорт —
+# SummonerTeleport, все стадии Кары — SummonerSmite. Id: SummonerFlash
+# (Скачок), SummonerTeleport, SummonerSmite (Кара), SummonerDot
+# (Воспламенение), SummonerHeal (Исцеление), SummonerBarrier (Барьер),
+# SummonerBoost (Очищение), SummonerExhaust (Изнурение), SummonerHaste
+# (Призрак). Ключевые руны — имена live_client.KEYSTONES.
+#
+# Значения подобраны по общему знанию мета-игры (не по статистике): это
+# эвристика, а не база. Сравнение с базой частот — раздел [base].
+
+version = 1
+
+# ---------------------------------------------------------------- заклинания
+
+# Ожидаемые семьи по роли. Заклинание вне списка — сюрприз с
+# `other_confidence`, если на ту же семью нет отдельного правила ниже.
+[spells.roles.TOP]
+expected = ["SummonerFlash", "SummonerTeleport", "SummonerDot", "SummonerHaste"]
+other_confidence = 0.4
+
+[spells.roles.JUNGLE]
+expected = ["SummonerFlash", "SummonerSmite"]
+other_confidence = 0.5
+
+[spells.roles.MIDDLE]
+expected = ["SummonerFlash", "SummonerTeleport", "SummonerDot", "SummonerBarrier",
+            "SummonerBoost", "SummonerHaste", "SummonerExhaust"]
+other_confidence = 0.4
+
+[spells.roles.BOTTOM]
+expected = ["SummonerFlash", "SummonerHeal", "SummonerBarrier", "SummonerBoost"]
+other_confidence = 0.4
+
+[spells.roles.UTILITY]
+expected = ["SummonerFlash", "SummonerDot", "SummonerExhaust", "SummonerHeal"]
+other_confidence = 0.4
+
+# Отдельные правила: `has` — семья взята, `lacks` — семьи нет. Сработавшее
+# правило заменяет общее «вне списка» для своей семьи.
+[[spells.rule]]
+id = "smite_off_jungle"
+roles = ["TOP", "MIDDLE", "BOTTOM", "UTILITY"]
+has = "SummonerSmite"
+confidence = 0.9
+why = "Кара не в лесу: второй лесник или вторжение / «смайт-бот»"
+
+[[spells.rule]]
+id = "jungle_without_smite"
+roles = ["JUNGLE"]
+lacks = "SummonerSmite"
+confidence = 0.95
+why = "лесник без Кары: без неё лес почти не фармится"
+
+[[spells.rule]]
+id = "bottom_teleport"
+roles = ["BOTTOM"]
+has = "SummonerTeleport"
+confidence = 0.6
+why = "стрелок с Телепортом: на нижней линии обычно Исцеление / Барьер"
+
+[[spells.rule]]
+id = "bottom_ignite"
+roles = ["BOTTOM"]
+has = "SummonerDot"
+confidence = 0.5
+why = "стрелок с Воспламенением: агрессивная линия или маг на нижней"
+
+[[spells.rule]]
+id = "bottom_ghost"
+roles = ["BOTTOM"]
+has = "SummonerHaste"
+confidence = 0.5
+why = "стрелок с Призраком: бывает у отдельных стрелков, но не типично"
+
+[[spells.rule]]
+id = "utility_teleport"
+roles = ["UTILITY"]
+has = "SummonerTeleport"
+confidence = 0.7
+why = "поддержка с Телепортом: редкость"
+
+[[spells.rule]]
+id = "no_flash"
+roles = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
+lacks = "SummonerFlash"
+confidence = 0.5
+why = "без Скачка: его берут почти все"
+
+# ---------------------------------------------------------------- ключевые руны
+
+# Ключевые руны, необычные для роли (без учёта чемпиона — его учитывает база).
+# Слабая эвристика: confidence низкий.
+[keystones.roles.JUNGLE]
+unusual = ["SummonAery", "ArcaneComet", "Guardian", "UnsealedSpellbook"]
+confidence = 0.35
+
+[keystones.roles.BOTTOM]
+unusual = ["GraspOfTheUndying", "Aftershock", "Guardian"]
+confidence = 0.35
+
+[keystones.roles.UTILITY]
+unusual = ["LethalTempo", "FleetFootwork", "Conqueror"]
+confidence = 0.35
+
+# ---------------------------------------------------------------- предметы
+
+# Наборы id предметов Data Dragon 16.19.1: предмет поддержки (World Atlas и
+# все его улучшения) и питомцы леса (оба уровня).
+[items.sets]
+support = [3865, 3866, 3867, 3869, 3870, 3871, 3876, 3877]
+jungle_pet = [1101, 1102, 1103, 1105, 1106, 1107]
+
+# `has_any` — хоть раз был в инвентаре, `lacks_any` — не было ни разу;
+# `min_game_time` — правило «нет предмета» проверяется, только если игру
+# видели хотя бы столько секунд (иначе мог не успеть купить).
+[[items.rule]]
+id = "support_item_off_utility"
+roles = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM"]
+has_any = "support"
+confidence = 0.8
+why = "предмет поддержки не у поддержки: две поддержки или смена ролей"
+
+[[items.rule]]
+id = "utility_without_support_item"
+roles = ["UTILITY"]
+lacks_any = "support"
+min_game_time = 600
+confidence = 0.6
+why = "поддержка без предмета поддержки"
+
+[[items.rule]]
+id = "jungle_pet_off_jungle"
+roles = ["TOP", "MIDDLE", "BOTTOM", "UTILITY"]
+has_any = "jungle_pet"
+confidence = 0.85
+why = "питомец леса не у лесника"
+
+[[items.rule]]
+id = "jungle_without_pet"
+roles = ["JUNGLE"]
+lacks_any = "jungle_pet"
+min_game_time = 300
+confidence = 0.6
+why = "лесник без питомца"
+
+# ---------------------------------------------------------------- база частот
+
+# Сравнение с базой «типичного» (loadouts.Base, docs/loadouts.md): по
+# чемпиону — роль; по чемпиону и роли — семьи заклинаний, ключевая руна,
+# первый законченный предмет. Пока в базе меньше `min_games` игр чемпиона
+# (в роли) — не сравниваем: на малой выборке «редко» ничего не значит.
+# Доля ниже `rare_share` — сюрприз; уверенность растёт с выборкой:
+# min(max_confidence, games / (games + confidence_games)).
+[base]
+min_games = 20
+rare_share = 0.05
+max_confidence = 0.9
+confidence_games = 30
+dimensions = ["role", "spells", "keystone", "first_item"]

@@ -16,6 +16,10 @@
 lolstream/minimap_fit.json). `--minimap-scale` — масштаб миникарты из
 настроек клиента (1.0 — стандартный): тогда без поиска (#803).
 
+По концу игры сеанс пишет паспорт выбора всех десяти (роль, заклинания,
+руны, предметы, пометки нетипичного; без ников) в data/loadouts/<дата>.jsonl
+(#807, docs/loadouts.md); `--no-loadouts` — не писать.
+
 Запуск:
     python tools/live_screen.py
     python tools/live_screen.py --fps 2 --backend dxcam --run patches/cnn
@@ -98,17 +102,20 @@ def shutdown(sess, wait: float = STOP_WAIT) -> None:
 
 def run(fps: float, backend: str, run_id: str, period: float = PERIOD,
         sleep: Callable[[float], None] = time.sleep,
-        busy: Callable[[], bool] = port_busy, minimap_scale: float | None = None) -> int:
+        busy: Callable[[], bool] = port_busy, minimap_scale: float | None = None,
+        loadouts: bool = True) -> int:
     """Сеанс до Ctrl+C или до его конца. → код выхода."""
     have = live.get(live.SCREEN_ID)
     if (have is not None and have.status(10**9).get("active")) or busy():
         print(BUSY_HINT.format(host=HOST, port=PORT), file=sys.stderr)
         return 2
     try:
-        if minimap_scale is None:
-            live.start_screen(run_id, fps, backend)
-        else:
-            live.start_screen(run_id, fps, backend, minimap_scale=minimap_scale)
+        kw: dict = {}
+        if minimap_scale is not None:
+            kw["minimap_scale"] = minimap_scale
+        if not loadouts:
+            kw["loadouts"] = False                         # паспорт выбора выключен (#807)
+        live.start_screen(run_id, fps, backend, **kw)
     except (ValueError, FileNotFoundError) as exc:        # fps, бэкенд, прогон, масштаб
         print(f"сеанс не открыт: {exc}", file=sys.stderr)
         return 2
@@ -147,8 +154,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--minimap-scale", type=float, default=None,
                     help="масштаб миникарты из настроек клиента (1.0 — стандартный); "
                          "без него миникарта ищется в кадре")
+    ap.add_argument("--no-loadouts", dest="loadouts", action="store_false",
+                    help="не писать паспорт выбора игры в data/loadouts/ (#807)")
     args = ap.parse_args(argv)
-    return run(args.fps, args.backend, args.run, minimap_scale=args.minimap_scale)
+    return run(args.fps, args.backend, args.run, minimap_scale=args.minimap_scale,
+               loadouts=args.loadouts)
 
 
 if __name__ == "__main__":

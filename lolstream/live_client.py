@@ -55,7 +55,8 @@ SummonerTeleport_DisplayName» → «SummonerTeleport»), а не из лока�
 id — `runes = None` и `runes_reason`.
 
 Чтение — `LiveClient` в своём потоке (~2 Гц), наружу последний `LiveStatus`
-и очередь новых событий; ошибки транспорта и разбора не выходят наружу.
+и очередь новых событий (и наблюдатель `on_status` на каждый опрос);
+ошибки транспорта и разбора не выходят наружу.
 Разбор и состояния — `Tracker` без потока и сети, на нём же воспроизведение
 журнала `{"t", "code", "body"}` (`read_journal`, `replay`).
 """
@@ -710,8 +711,13 @@ class LiveClient:
 
     def __init__(self, transport: Transport | None = None, period: float = 0.5,
                  champion_ids: Iterable[str] | None = None, lost_after: float = 5.0,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time,
+                 on_status: Callable[[LiveStatus], Any] | None = None):
         self.transport = transport or HttpTransport()
+        # Наблюдатель каждого статуса (паспорт выбора, #807) — в потоке опроса;
+        # его исключение не роняет опрос, текст — в `observer_error`.
+        self.on_status = on_status
+        self.observer_error: str | None = None
         self.period = period
         self.clock = clock
         self.tracker = Tracker(champion_ids, lost_after)
@@ -730,6 +736,11 @@ class LiveClient:
         with self._lock:
             self._status = status
             self._events.extend(new)
+        if self.on_status is not None:
+            try:
+                self.on_status(status)
+            except Exception as e:  # noqa: BLE001 — наблюдатель не роняет опрос
+                self.observer_error = f"{type(e).__name__}: {e}"
         return status
 
     def status(self) -> LiveStatus:

@@ -74,6 +74,7 @@ from lolvision.checkpoints import checkpoint_kind, load_checkpoint, read_checkpo
 from lolvision.dataset_io import MINI_STORE, STORE_W
 from lolstream.channels import check_fps, youtube_id
 from lolstream.frame_source import BACKENDS, FrameSource, ScreenSource, Status, VideoSource
+from lolstream.loadouts import LoadoutRecorder, live_recorder
 from lolstream.live_client import (EventRecord, LiveClient, LiveStatus, ddragon_champion_ids,
                                    status_observation)
 from lolstream.live_client import State as ApiState
@@ -466,14 +467,19 @@ class Session:
     map_number: int | None = None
     minimap_store: Path | None = None
     minimap_scale: float | None = None
+    loadouts: LoadoutRecorder | None = None     # паспорт выбора (#807)
 
     def __init__(self, sid: str, run: str, source: FrameSource, device: str = "cuda",
                  api: LiveClient | None = None,
                  build: Callable[..., Pipeline] | None = None,
                  state_port: int | None = None,
                  minimap_store: Path | None = None,
-                 minimap_scale: float | None = None):
+                 minimap_scale: float | None = None,
+                 loadouts: LoadoutRecorder | None = None):
         self.sid, self.run, self.source = sid, run, source
+        # Паспорт выбора (#807): наблюдатель API, пишет игру по её концу;
+        # сеанс закрыт посреди игры — дописывает то, что есть (close).
+        self.loadouts = loadouts
         self.minimap_store, self.minimap_scale = minimap_store, minimap_scale
         self.map_number = None
         self.fps = float(source.fps)
@@ -649,9 +655,21 @@ class Session:
                 "api": self._api_view(), "api_reason": self.api_reason,
                 "passport": passport, "passport_events": pev, "passport_events_n": n_pev,
                 "state_url": self.state_url, "state_reason": self.state_reason,
+                "loadouts": self._loadouts_view(),
                 "count": n, "since": since, "frames": rows, "roster": self.roster,
                 "minimap": self.minimap, "view": self.view, "elapsed": round(el, 1),
                 "speed": speed, "map_units": MAP_UNITS}
+
+    def _loadouts_view(self) -> dict | None:
+        """Паспорт выбора (#807): куда записано, что пропущено, ошибка; None — выключен."""
+        rec = self.loadouts
+        if rec is None:
+            return None
+        api_err = getattr(self.api, "observer_error", None)
+        return {"out_dir": None if rec.out_dir is None else str(rec.out_dir),
+                "games": len(rec.games),
+                "written": [{"file": str(p), "rows": n} for p, n in rec.written],
+                "skipped": list(rec.skipped), "error": rec.error or api_err}
 
     def stop(self) -> None:
         self._stop.set()
@@ -683,6 +701,11 @@ class Session:
             if self.api is not None:
                 self.api.stop()
                 self._drain_api()
+            if self.loadouts is not None:
+                try:
+                    self.loadouts.close()
+                except Exception as exc:                      # noqa: BLE001
+                    self.loadouts.error = f"{type(exc).__name__}: {exc}"
             if self.state_server is not None:
                 self.state_server.close()
                 self.state_reason = "сеанс закрыт"
@@ -1434,7 +1457,7 @@ def start(vid: str, run: str = DEFAULT_RUN, fps: float = 1.0,
 
 
 def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto",
-                 minimap_scale: float | None = None) -> dict:
+                 minimap_scale: float | None = None, loadouts: bool = True) -> dict:
     """Сеанс по своему экрану (окно игры) вместе с Live Client своей игры и
     сервисом состояния для coach на 127.0.0.1:STATE_PORT (state_service.py;
     адрес — `state_url` в status()).
@@ -1442,6 +1465,9 @@ def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto"
     Миникарта: найденный эталоном прямоугольник запоминается вне репозитория
     (minimap_locate.fit_file) и выручает на других картах; `minimap_scale` —
     масштаб миникарты из настроек клиента, тогда без поиска (#803).
+
+    `loadouts` — писать паспорт выбора игры (роль, заклинания, руны, предметы
+    всех десяти, без ников) в data/loadouts/ по концу игры (#807).
 
     Захват открывается в потоке сеанса (mss привязан к потоку), не здесь."""
     fps = check_fps(fps)
@@ -1451,10 +1477,16 @@ def start_screen(run: str = DEFAULT_RUN, fps: float = 2.0, backend: str = "auto"
         raise ValueError(f"неизвестный бэкенд захвата {backend!r}: auto, {', '.join(BACKENDS)}")
     run = run or DEFAULT_RUN
     run_checkpoint(run)
-    return _open(SCREEN_ID, run, lambda: Session(
-        SCREEN_ID, run, ScreenSource(fps, backend=backend),
-        api=LiveClient(champion_ids=ddragon_champion_ids()), state_port=STATE_PORT,
-        minimap_store=fit_file(), minimap_scale=minimap_scale))
+
+    def make() -> Session:
+        rec = live_recorder() if loadouts else None
+        api = LiveClient(champion_ids=ddragon_champion_ids())
+        if rec is not None:
+            api.on_status = rec.observe          # каждый опрос API — в паспорт выбора
+        return Session(SCREEN_ID, run, ScreenSource(fps, backend=backend), api=api,
+                       state_port=STATE_PORT, minimap_store=fit_file(),
+                       minimap_scale=minimap_scale, loadouts=rec)
+    return _open(SCREEN_ID, run, make)
 
 
 def get(sid: str) -> Session | None:
