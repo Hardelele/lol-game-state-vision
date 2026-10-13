@@ -167,3 +167,93 @@ def test_death_with_new_track_on_the_spot_is_revived():
     m.update(0.25, 5, [death("m1", *NEAR_UV)], ME)
     m.update(0.5, 5, [], ME, born=[(NEAR_UV[0] + 50 / MAP_UNITS, NEAR_UV[1])])
     assert m.flush() == [] and m.counts["revived"] == 1
+
+
+# ---------- часы матча по полосе (#780) ----------
+
+def test_hud_clock_tracks_game_time_between_whole_seconds():
+    c = hs.HudClock()
+    # Время матча = кадр + 100,4 с; полоса показывает целые секунды вниз.
+    for k in range(12):
+        t = 0.25 * k
+        c.update(t, int(t + 100.4))
+    assert abs(c.value(3.0) - 103.4) < 0.3
+
+
+def test_hud_clock_ignores_single_misread_and_follows_a_pause():
+    c = hs.HudClock()
+    for t in range(5):
+        c.update(t, 600 + t)
+    c.update(5, 644)                 # 10:44 вместо 10:05 — одно прочтение
+    assert abs(c.value(5) - 605.5) < 0.6
+    for t in range(6, 9):            # игра продолжилась как шла
+        c.update(t, 600 + t)
+    assert abs(c.value(8) - 608.5) < 0.6
+    # Пауза игры 20 с: время на полосе стоит, кадр идёт — новый отрезок
+    # принимается со второго согласного прочтения.
+    c.update(30, 609)
+    assert c.value(30) is None       # старый отрезок устарел, новый не подтверждён
+    c.update(31, 610)
+    assert abs(c.value(31) - 610.5) < 0.6
+
+
+def test_hud_clock_goes_stale_without_readings():
+    c = hs.HudClock()
+    c.update(0, 300)
+    c.update(1, 301)
+    c.update(2, None)
+    assert c.value(5) is not None
+    assert c.value(1 + hs.CLOCK_STALE + 1) is None
+
+
+def test_self_place_and_frame_inputs():
+    units = [{"kind": "champion", "color": "green", "x": 0.5, "y": 0.5},
+             {"kind": "champion", "color": "red", "x": 0.2, "y": 0.3}]
+    tracks = [{"id": "me", "kind": "champion", "x": 0.5, "y": 0.5, "u": 0.3, "v": 0.7},
+              {"id": "m1", "kind": "minion", "x": 0.6, "y": 0.5, "u": 0.31, "v": 0.7}]
+    assert lh.self_place(units, tracks) == (0.3, 0.7)
+    assert lh.self_place(units[1:], tracks) is None
+    uev = [{"type": "unit_death", "id": "m0", "kind": "minion", "relation": "enemy"},
+           {"type": "unit_new", "id": "m1", "kind": "minion", "relation": "enemy"}]
+    deaths, born = lh.frame_inputs(uev, tracks)
+    assert [d["id"] for d in deaths] == ["m0"] and born == [(0.31, 0.7)]
+
+
+# ---------- монстры и своё место (#816, вторая часть) ----------
+
+def test_raptor_death_off_mid_corridor_is_a_monster_not_a_missed_last_hit():
+    # D37cbVNs0EU 152,5 с: «пташка» в 0,084 от диагонали средней линии,
+    # свой рядом, CS не вырос — раньше это было missed_last_hit.
+    m = lh.LastHits()
+    me = (0.50, 0.37)
+    raptor = {"type": "unit_death", "id": "mid-minion-r", "kind": "minion", "relation": "enemy",
+              "u": 0.503, "v": 0.379}
+    lane = {"type": "unit_death", "id": "mid-minion-l", "kind": "minion", "relation": "enemy",
+            "u": 0.518, "v": 0.536}           # 0,038 от диагонали — настоящая средняя
+    evs = []
+    for k in range(20):
+        t = 0.25 * k
+        evs += m.update(t, 40, [raptor, lane] if k == 2 else [], (0.52, 0.52) if k == 2 else me)
+    evs += m.flush()
+    assert m.counts["monster"] == 1
+    assert [e.id for e in evs if e.type == "missed_last_hit"] == ["mid-minion-l"]
+
+
+def test_on_lane_corridors():
+    assert lh.on_lane(0.50, 0.50)                 # на диагонали средней
+    assert not lh.on_lane(0.475, 0.393)           # лагерь пташек
+    assert lh.on_lane(0.12, 0.33)                 # верхняя линия, смерть в 0,04
+    assert not lh.on_lane(0.30, 0.30)             # лес между верхней и средней
+
+
+def test_self_place_remembers_own_track_while_bar_color_is_unreadable():
+    sp = lh.SelfPlace(keep=20.0)
+    me_unit = {"kind": "champion", "color": "green", "x": 0.5, "y": 0.5}
+    tr = {"id": "c1", "kind": "champion", "x": 0.5, "y": 0.5, "u": 0.3, "v": 0.7}
+    assert sp.update(0.0, [me_unit], [tr]) == (0.3, 0.7) and sp.src == "color"
+    # Плашка не читается (полоса храбрости Kled): цвет «неоднозначен».
+    blurred = dict(me_unit, color=None)
+    moved = dict(tr, x=0.55, u=0.32)
+    assert sp.update(5.0, [blurred], [moved]) == (0.32, 0.7) and sp.src == "track"
+    assert sp.update(6.0, [blurred], [dict(moved, x=None)]) is None   # трек не виден
+    assert sp.update(30.0, [blurred], [moved]) is None                # память истекла

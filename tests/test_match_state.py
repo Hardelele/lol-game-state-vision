@@ -491,3 +491,35 @@ def test_events_are_kept_as_a_bounded_tail(monkeypatch):
             ev = m.update(1 + 3 * k + j, "game", other)
         assert ev[0].type == "roster" and m.events[-1] is ev[0]
     assert len(m.events) == 3
+
+
+# ---------- часы по полосе HUD (#780, #816) ----------
+
+def test_clock_falls_back_to_hud_strip_without_api():
+    m = MatchState()
+    m.update(10.0)
+    assert m.game_clock() is None
+    m.set_hud_time(10.0, 125.0)
+    m.update(11.0)
+    clock = m.game_clock()
+    assert clock.src == "hud" and abs(clock.value - 126.0) < 1e-6
+
+
+def test_api_clock_wins_and_hud_disagreement_is_a_conflict():
+    m = MatchState()
+    m.update(0.0, api=api(game_time=60.0))
+    m.set_hud_time(0.0, 60.4)
+    assert m.game_clock().src == "api" and "clock" not in m.conflicts
+    m.set_hud_time(0.0, 75.0)
+    assert m.conflicts["clock"] == 1
+
+
+def test_self_minimap_place_needs_api_identity_and_fresh_icon():
+    from lolvision.match_state import Fact
+    m = MatchState()
+    assert m.self_minimap(0.0) is None                     # без API — кто свой, неизвестно
+    obs = api(me=NAMES[0])
+    m.update(0.0, api=obs)
+    m.champs[m._key(obs.me, obs.me_team)].pos = Fact((0.4, 0.6), 0.0, "minimap")
+    assert m.self_minimap(0.3) == (0.4, 0.6)
+    assert m.self_minimap(2.0) is None                     # иконка устарела

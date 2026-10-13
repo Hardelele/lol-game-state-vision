@@ -101,6 +101,8 @@ from lolvision.minimap_locate import (AGREE_PX, LOCATE_MAX, Locator, corner_px, 
                                       SCALES, fit_file, load_fit, save_fit)
 from lolstream.live_champions import LiveChampions
 from lolvision.hud_spells import SpellHud
+from lolvision import hud_stats
+from lolvision import last_hits as lh
 from lolvision.match_state import API_STALE, ApiObs, MatchState, rift
 from lolvision.passport import UNKNOWN, Change, Passport
 from lolvision.records import SCHEMA, RosterEvent, UnitRec, dicts
@@ -152,6 +154,7 @@ PASSPORT_NOTE = 3
 # после SPELL_LOCATE_SAY попыток без находки паспорт узнаёт причину.
 SPELL_LOCATE_EVERY = 2.0
 SPELL_LOCATE_SAY = 10
+LAST_HITS_RECENT = 20        # последних событий добиваний в /state (#816)
 PASSPORT_STATUS = 50
 PASSPORT_KEEP = 1000
 
@@ -316,6 +319,8 @@ class Pipeline:
         self.spells = SpellHud()
         self.spell_try_t: float | None = None
         self.spell_said = False
+        # Полоса статистики вида игрока (#816): CS и время матча.
+        self.stats = hud_stats.StatsReader()
 
     def cpu_scene(self, fr: np.ndarray) -> np.ndarray:
         """Сцена на процессоре: обрезка видом, маска на малом, cv2 INTER_AREA
@@ -553,6 +558,12 @@ class Session:
         self._api_refused: str | None = None   # почему снимок API последнего кадра не принят
         self.tracker: UnitTracker | None = None  # id юнитов между кадрами (#782)
         self.proj: Projection | None = None    # кадр → карта (есть, когда есть юниты)
+        # Полоса статистики (#816): часы матча без API и добивания — на сеанс,
+        # пересборка пути кадра их не сбрасывает.
+        self.hud_clock = hud_stats.HudClock()
+        self.last_hits = lh.LastHits()
+        self.last_hits_recent: list[dict] = []
+        self.self_place = lh.SelfPlace()
         # Паспорт трансляции и его изменения (Change.to_dict, по порядку).
         self.passport: Passport | None = None
         self.passport_events: list[dict] = []
@@ -826,7 +837,8 @@ class Session:
         """Что есть у пути кадра — в паспорт (читатели без ресурса отказывают)."""
         have = {"unit_net": pl.unit_model is not None,
                 "names_bank": pl.champs is not None and pl.champs.names is not None,
-                "minimap_model": pl.champs is not None}
+                "minimap_model": pl.champs is not None,
+                "hud_stats": pl.stats.digits.ok and pl.stats.icon.ref is not None}
         for name, ok in have.items():
             if self.passport.items["assets"].value.get(name) != ok:
                 self._sig(lambda p, name=name, ok=ok: p.set_asset(name, ok, t))
@@ -989,6 +1001,18 @@ class Session:
             if me is not None and me.spells is not None:
                 hud.set_spells(tuple(x.variant for x in me.spells))
         return [r.to_dict() for r in hud.read(fr, t).values()]
+
+    def _stats_step(self, pl: Pipeline, fr: np.ndarray, game: bool, view: str,
+                    off: dict) -> dict | None:
+        """Полоса статистики своего HUD (#816, lolvision.hud_stats): CS и
+        время матча. Только игровой кадр вида игрока; полоса стоит на одном
+        месте при любом масштабе HUD. Значка миньона нет (Tab, вебкамера
+        поверх угла, чужой вид) — present false, числа null."""
+        if not game or view != "player" or "hud_stats" in off:
+            return None
+        # Кадр сеанса — RGB, читатель полосы — по BGR (значок сравнивается в сером).
+        st = pl.stats.read_strip(np.ascontiguousarray(hud_stats.strip(fr)[..., ::-1]))
+        return {"present": st.present, "cs": st.cs, "time": st.time}
 
     def _my_team(self) -> tuple[str | None, str | None]:
         """Команда своего игрока по API для sides.assign или (None, причина)."""
@@ -1193,6 +1217,7 @@ class Session:
                               my_team_reason=my_why)
             ms["unit_recs"] = assign_sides(recs, ctx, fr)
         ms["spells"] = self._spells_step(pl, fr, t, game, view)
+        ms["hud"] = self._stats_step(pl, fr, game, view, off)
         ms.update(full_img=_full_small(fr, pl.fr_dev), off=off, view=view, api_obs=obs,
                   api_refused=refused, wall=wall)
         pl.n_frame += 1
@@ -1306,6 +1331,11 @@ class Session:
             row["spells"] = spells
         elif "hud_spells" in off:
             row["spells"] = None
+        hud = ms.pop("hud", None)
+        if hud is not None:
+            row["hud"] = hud
+        elif "hud_stats" in off:
+            row["hud"] = None
         if units is not None:
             row["units"] = dicts(units)
         elif "units" in off:
@@ -1342,6 +1372,11 @@ class Session:
                 self.match = MatchState(proj=self.proj)
             ev = self.match.update(row["t"], row.get("kind", "game"), mini_champs, units,
                                    (row["px"], row["py"]) if on_rift else None, api=obs)
+            # Часы по полосе HUD (#780, #816): без API — время матча отсюда.
+            if hud is not None:
+                self.hud_clock.update(row["t"], hud["time"])
+            self.match.set_hud_time(row["t"], None if "hud_stats" in off
+                                    else self.hud_clock.value(row["t"]))
             self._match_at = wall if wall is not None else time.time()
             ctx = self.match.frame_view() if self.match.order else None
             clock = self.match.game_clock()
@@ -1374,11 +1409,13 @@ class Session:
             row["tracks"] = dicts(tracks)
             if uev:
                 row["uev"] = dicts(uev)
+        last_hits = self._last_hits_step(row, hud, off)
         if on_rift:
             cam = None if row["px"] is None or row["py"] is None else (row["px"], row["py"])
             vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, row["spread"],
                                  units, tracks, spells=spells,
-                                 spells_why=off.get("hud_spells") or _spells_why(row))
+                                 spells_why=off.get("hud_spells") or _spells_why(row),
+                                 **last_hits)
         else:
             # Не Ущелье: центр камеры — рамка вьюпорта на миникарте (доли
             # миникарты годятся для любой карты), если миникарта найдена и
@@ -1396,12 +1433,48 @@ class Session:
                                  units, None, camera_src="minimap", camera_why=cam_why,
                                  tracks_why=f"{off_map}: треки ведутся в единицах Ущелья",
                                  spells=spells,
-                                 spells_why=off.get("hud_spells") or _spells_why(row))
+                                 spells_why=off.get("hud_spells") or _spells_why(row),
+                                 **last_hits)
         with self._lock:
             self.vision = vision
         ms["out"] = (time.perf_counter() - t0) * 1000
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         self._out.submit(self._store, row, scene, full_img, mini, hm)
+
+    def _last_hits_step(self, row: dict, hud: dict | None, off: dict) -> dict:
+        """Добивания по кадру (#816, lolvision.last_hits): прочтение CS полосы,
+        смерти и новые треки трекера, своё место. События — в строку
+        (`last_hits`), итог для /state — поля VisionFrame.
+
+        Кадр без треков (трекер не шёл) — CS всё равно учитывается: рост
+        без смерти в кадре уйдёт в `cs_unseen`. Без разрешения `last_hits`
+        (нет детектора юнитов) идёт только счётчик CS."""
+        why = off.get("last_hits")
+        if hud is not None:
+            # CS считается всегда, когда полоса читается; смерти крипов —
+            # только когда добивания разрешены (есть детектор юнитов).
+            deaths, born, me = [], [], None
+            if why is None:
+                tracks = row.get("tracks")
+                deaths, born = lh.frame_inputs(row.get("uev"), tracks)
+                # Своё место: плашка своего цвета, запомненный свой трек, а с
+                # API — своя иконка миникарты.
+                me = self.self_place.update(row["t"], row.get("units"), tracks)
+                if me is None and self.match is not None:
+                    me = self.match.self_minimap(row["t"])
+            evs = self.last_hits.update(row["t"], hud["cs"], deaths, me, born)
+            if evs:
+                row["last_hits"] = [e.to_dict() for e in evs]
+                self.last_hits_recent = (self.last_hits_recent
+                                         + row["last_hits"])[-LAST_HITS_RECENT:]
+        f = self.last_hits.cs
+        cs_why = off.get("hud_stats") or (
+            None if f.cs is not None else "CS ещё не подтверждён: нужны два согласных прочтения полосы")
+        return {"cs": f.cs, "cs_t": f.t, "cs_why": cs_why,
+                "last_hits": ({"counts": dict(self.last_hits.counts),
+                               "recent": list(self.last_hits_recent)}
+                              if f.cs is not None and why is None else None),
+                "last_hits_why": why or cs_why}
 
     def _store(self, row: dict, scene: np.ndarray, full_img: np.ndarray | None,
                mini: Image.Image, hm: np.ndarray) -> None:

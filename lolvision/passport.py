@@ -66,6 +66,7 @@ ASSETS = {
     "unit_net": "детектор юнитов",
     "names_bank": "банк имён над плашками",
     "minimap_model": "модель иконок миникарты",
+    "hud_stats": "образцы цифр полосы статистики HUD",
 }
 ROSTER_SOURCES = ("api", "hud")
 # Сколько проверок подряд с совпадением ниже MIN_SCORE снимают находку
@@ -224,6 +225,13 @@ READERS: dict[str, Reader] = {r.name: r for r in (
     # только у вида игрока, слоты — по найденной панели и её масштабу.
     Reader("hud_spells", "готовность заклинаний по HUD",
            (need_frame, need_view("player"), need_spell_panel)),
+    # CS и время матча по полосе статистики вида игрока (#816): полоса стоит
+    # на одном месте при любом масштабе HUD, искать её не нужно.
+    Reader("hud_stats", "CS и время по полосе HUD",
+           (need_frame, need_view("player"), need_asset("hud_stats"))),
+    # Добивания (#816): рост CS по полосе против смертей миньонов трекера.
+    Reader("last_hits", "добивания по CS и смертям крипов",
+           (need_frame, need_view("player"), need_asset("hud_stats"), need_asset("unit_net"))),
 )}
 
 

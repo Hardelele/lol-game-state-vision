@@ -19,8 +19,17 @@
 4 кадра/с) сдвиг «смерть − рост» собран в 0 и +0,25 с при фоне ~5 пар на
 шаг 0,25 с; окно ±1,5 с собирало чужие смерти (docs/last-hits.md).
 
-Миньоны леса — монстры, которых детектор принимает за вражеских миньонов
-(id трекера `jungle-minion-…`: родился вдали от линий), — не считаются.
+Монстры леса — детектор знает только «миньон» и принимает их за вражеских
+миньонов. Не считаются: родившиеся вдали от линий (id трекера
+`jungle-minion-…`) и умершие вне коридора своей линии (`on_lane`; счётчик
+`monster`). Коридор средней линии узкий: лагерь «пташек» лежит в 0,084–0,110
+карты от её диагонали, настоящие смерти миньонов средней — в 0,025–0,050
+(D37cbVNs0EU); у верхней и нижней линии ломаная грубая, смерти доходят до
+0,129, и коридор прежний, 0,13 (unit_tracker.LANE_DIST).
+
+Своё место (`SelfPlace`): свой чемпион кадра по цвету плашки, а когда цвет
+не читается (у Kled его перебивает полоса храбрости), — последний трек,
+опознанный своим, не дольше SELF_KEEP с после опознания.
 
 Счётчик CS (`CsFilter`): прочтение принимается, только когда следующее
 прочтение его подтверждает (не меньше и в пределах шага) — одиночная
@@ -40,6 +49,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from lolvision.geometry import MAP_UNITS
+from lolvision.unit_tracker import LANE_DIST, LANES, _seg_dist
 
 NEAR = 800.0 / MAP_UNITS        # доли карты
 TOL = 0.3                       # с: смерть и рост CS — один кадр (±1 при 4 кадр/с)
@@ -51,6 +61,9 @@ SELF_COLORS = ("green", "yellow")
 # трекер потерял его за чужой плашкой или эффектом и объявил смерть
 # (D37cbVNs0EU 108,5 с: крип на следующих кадрах жив).
 REVIVE_R, REVIVE_T = 200.0 / MAP_UNITS, 1.0
+# Коридор линии (доли карты от её ломаной): смерть дальше — монстр леса.
+LANE_TOL = {"mid": 0.065, "top": LANE_DIST, "bot": LANE_DIST}
+SELF_KEEP = 20.0                # с: свой трек помнится без подтверждения цветом
 
 
 @dataclass
@@ -139,6 +152,14 @@ def lane_minion(d: dict) -> bool:
             and not str(d.get("id", "")).startswith("jungle-"))
 
 
+def on_lane(u: float, v: float) -> bool:
+    """Место на карте в коридоре ближайшей линии (LANE_TOL)."""
+    p = np.array([u, v])
+    d = {k: min(_seg_dist(p, a, b) for a, b in zip(pts, pts[1:])) for k, pts in LANES.items()}
+    k = min(d, key=d.get)
+    return d[k] <= LANE_TOL[k]
+
+
 @dataclass
 class LastHits:
     """Сопоставление роста CS со смертями вражеских миньонов линии.
@@ -152,7 +173,7 @@ class LastHits:
     gains: list[CsGain] = field(default_factory=list)
     counts: dict = field(default_factory=lambda: {"last_hit": 0, "missed_last_hit": 0,
                                                    "cs_unseen": 0, "unjudged": 0,
-                                                   "revived": 0})
+                                                   "revived": 0, "monster": 0})
 
     def update(self, t: float, cs: int | None, deaths: list[dict],
                me_uv: tuple[float, float] | None,
@@ -166,8 +187,13 @@ class LastHits:
                     np.hypot(d.uv[0] - u, d.uv[1] - v) <= REVIVE_R for u, v in born):
                 d.revived = True
         for d in deaths:
-            if lane_minion(d):
-                self.deaths.append(Death(t, d["id"], (float(d["u"]), float(d["v"])), me_uv))
+            if not lane_minion(d):
+                continue
+            uv = (float(d["u"]), float(d["v"]))
+            if not on_lane(*uv):
+                self.counts["monster"] += 1
+                continue
+            self.deaths.append(Death(t, d["id"], uv, me_uv))
         return self._resolve(t)
 
     def _resolve(self, now: float, final: bool = False) -> list[LastHitEvent]:
@@ -221,3 +247,68 @@ def self_unit(units: list[dict]) -> dict | None:
     mine = [u for u in units or [] if u.get("kind") == "champion"
             and u.get("color") in SELF_COLORS]
     return mine[0] if len(mine) == 1 else None
+
+
+def self_track(units: list[dict] | None, tracks: list[dict] | None) -> dict | None:
+    """Трек своего чемпиона кадра: свой по цвету плашки (`self_unit`) — тот
+    трек чемпиона, что виден в той же точке кадра. None — не найден."""
+    me = self_unit(units or [])
+    if me is None:
+        return None
+    for tr in tracks or []:
+        if tr["kind"] == "champion" and tr.get("x") is not None \
+                and abs(tr["x"] - me["x"]) < 1e-3 and abs(tr["y"] - me["y"]) < 1e-3:
+            return tr
+    return None
+
+
+class SelfPlace:
+    """Своё место на карте по кадрам: по цвету плашки, без него — по
+    последнему своему треку не дольше SELF_KEEP с (`src` — color / track)."""
+
+    def __init__(self, keep: float = SELF_KEEP):
+        self.keep = keep
+        self.id: str | None = None
+        self.t: float | None = None
+        self.src: str | None = None
+
+    def update(self, t: float, units: list[dict] | None,
+               tracks: list[dict] | None) -> tuple[float, float] | None:
+        tr = self_track(units, tracks)
+        if tr is not None:
+            self.id, self.t, self.src = tr["id"], t, "color"
+            return tr["u"], tr["v"]
+        self.src = None
+        if self.id is None or t - self.t > self.keep:
+            return None
+        for tr in tracks or []:
+            if tr["id"] == self.id:
+                if tr.get("x") is None:
+                    return None             # трек есть, но на кадре не виден
+                self.src = "track"
+                return tr["u"], tr["v"]
+        return None
+
+
+def self_place(units: list[dict] | None, tracks: list[dict] | None) -> tuple[float, float] | None:
+    """Своё место на карте (доли): свой чемпион кадра (`self_unit`) — тот
+    трек чемпиона, что виден в той же точке кадра. None — не найден."""
+    me = self_unit(units or [])
+    if me is None:
+        return None
+    for tr in tracks or []:
+        if tr["kind"] == "champion" and tr.get("x") is not None                 and abs(tr["x"] - me["x"]) < 1e-3 and abs(tr["y"] - me["y"]) < 1e-3:
+            return tr["u"], tr["v"]
+    return None
+
+
+def frame_inputs(uev: list[dict] | None, tracks: list[dict] | None
+                 ) -> tuple[list[dict], list[tuple[float, float]]]:
+    """События трекера кадра → (смерти юнитов, места новых треков вражеских
+    миньонов) — входы `LastHits.update`."""
+    uev = uev or []
+    deaths = [e for e in uev if e["type"] == "unit_death"]
+    new = {e["id"] for e in uev if e["type"] == "unit_new"
+           and e["kind"] == "minion" and e.get("relation") == "enemy"}
+    born = [(tr["u"], tr["v"]) for tr in tracks or [] if tr["id"] in new]
+    return deaths, born

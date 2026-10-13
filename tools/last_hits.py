@@ -37,7 +37,7 @@ import hud_stats as tool_stats
 
 LH_DATA = DATA / "last_hits"
 OUT = RUNS / "last_hits"
-ROW_KEYS = ("i", "t", "kind", "px", "py", "units", "tracks", "uev", "game_time")
+ROW_KEYS = ("i", "t", "kind", "px", "py", "units", "tracks", "uev", "game_time", "hud", "last_hits", "view")
 
 
 def cmd_session(args) -> None:
@@ -63,24 +63,12 @@ def cmd_session(args) -> None:
     print(f"{args.id}: {n} кадров за {time.time() - t0:.0f} с, вид {st['view']}")
 
 
-def me_uv(row: dict) -> tuple[float, float] | None:
-    """Своё место на карте: свой чемпион кадра (last_hits.self_unit) — тот
-    трек чемпиона, что виден в той же точке кадра."""
-    me = lh.self_unit(row.get("units") or [])
-    if me is None:
-        return None
-    for tr in row.get("tracks") or []:
-        if tr["kind"] == "champion" and tr.get("x") is not None \
-                and abs(tr["x"] - me["x"]) < 1e-3 and abs(tr["y"] - me["y"]) < 1e-3:
-            return tr["u"], tr["v"]
-    return None
-
-
 def cmd_match(args) -> None:
     rows = [json.loads(ln) for ln in open(LH_DATA / f"{args.id}.jsonl", encoding="utf-8")]
     strips = tool_stats.load(args.id, args.fps)
     rd = hs.StatsReader()
     m = lh.LastHits()
+    me_place = lh.SelfPlace()
     events, seen_xy, cs_at = [], {}, {}
     n_me = n_game = 0
     for r in rows:
@@ -91,12 +79,9 @@ def cmd_match(args) -> None:
         if tracks is None:              # не игра или вид не решён: трекер не шёл
             continue
         n_game += 1
-        me = me_uv(r)
+        me = me_place.update(r["t"], r.get("units"), tracks)
         n_me += me is not None
-        deaths = [e for e in r.get("uev") or [] if e["type"] == "unit_death"]
-        new = {e["id"] for e in r.get("uev") or [] if e["type"] == "unit_new"
-               and e["kind"] == "minion" and e.get("relation") == "enemy"}
-        born = [(tr["u"], tr["v"]) for tr in tracks if tr["id"] in new]
+        deaths, born = lh.frame_inputs(r.get("uev"), tracks)
         for e in m.update(r["t"], cs, deaths, me, born):
             events.append(e)
         for tr in tracks:

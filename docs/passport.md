@@ -26,7 +26,7 @@
 | `api` | `{state, available}` | `api`; `none` — клиента API нет |
 | `scene` | тип сцены последнего кадра | `scene` |
 | `roster` | `api` / `hud` / `null` | откуда известен состав |
-| `assets` | `{unit_net, names_bank, minimap_model: bool}` | `session`; чего нет в словаре — «нет сведений», и читатель отказывает |
+| `assets` | `{unit_net, names_bank, minimap_model, hud_stats: bool}` | `session`; чего нет в словаре — «нет сведений», и читатель отказывает |
 | `spell_panel` | `{found, box, scale, score}` — панель умений своего HUD: прямоугольник слотов Q…F (доли кадра), масштаб к эталону своего HUD, совпадение (#806, [hud-spells.md](hud-spells.md)) | `hud` (найдена по кадру); `none` — не искали, не нашли или размер кадра сменился |
 
 `unknown` — честное значение: пока раскладка не решена (мало чтений HUD) или
@@ -96,6 +96,8 @@
 | `sides` | свои / враги / сам (#790) | вид игрока; API доступен (своя сторона — из API) |
 | `api_facts` | факты Live Client API | API доступен |
 | `hud_spells` | готовность своих D/F по панели умений (#806) | размер кадра; вид игрока; панель умений найдена (`spell_panel`) |
+| `hud_stats` | CS и время матча по полосе статистики HUD (#816) | размер кадра; вид игрока; есть `hud_stats` (образцы цифр и значок) |
+| `last_hits` | добивания: рост CS против смертей крипов трекера (#816) | размер кадра; вид игрока; есть `hud_stats` и `unit_net` |
 
 Что выходит по раскладкам (тесты `tests/test_passport.py`):
 
@@ -103,8 +105,8 @@
   («нужен вид наблюдателя, а это вид игрока»); `camera_truth` и
   `minimap_icons` — пока миникарта не найдена; `hud_spells` — пока не
   найдена панель умений;
-* **наблюдатель (YouTube), API нет** — отключены `sides` и `hud_spells`
-  («нужен вид игрока») и `api_facts` («Live Client API: не подключён»);
+* **наблюдатель (YouTube), API нет** — отключены `sides`, `hud_spells`,
+  `hud_stats` и `last_hits` («нужен вид игрока») и `api_facts` («Live Client API: не подключён»);
 * **неизвестная раскладка** — отключены все: зависящие от вида — «вид
   неизвестен», `camera_truth` и `minimap_icons` — пока миникарта не найдена;
   после находки миникарты `camera_truth` отвечает.
@@ -157,7 +159,7 @@
 | Когда | Сигнал |
 | --- | --- |
 | после `source.open()` | `Passport.build(source.describe())`; у ролика — `set_api(None, …, reason="нет — источник YouTube")`; у своего экрана — сразу `set_view("player", how="свой экран: своя игра", source="source")` |
-| собран путь кадра | `set_asset` для `unit_net`, `names_bank`, `minimap_model` — что есть у пути |
+| собран путь кадра | `set_asset` для `unit_net`, `names_bank`, `minimap_model`, `hud_stats` — что есть у пути |
 | кадр с новым `Frame.size` | `set_frame_size`; у экрана ещё `set_game_rect` (кадр — окно игры); путь кадра пересобирается с новым `Locator` |
 | `Locator.offer_region` нашёл | `set_minimap(box, scale, score, t, how)`; `how` — чем: эталон Ущелья, рамка миникарты, сохранённый прямоугольник или явный масштаб (#803); у рамки и сохранённого `score` — совпадение рамки (порог `FRAME_MIN` выше `MIN_SCORE`) |
 | `Locator.tried >= LOCATE_MAX` (`minimap_locate.LOCATE_MAX`, общий с `tools/build_coords.py`) | `minimap_missing` |

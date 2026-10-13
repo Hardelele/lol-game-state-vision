@@ -128,6 +128,14 @@ class VisionFrame:
     # слотам или None — тогда `spells_why`, почему чтения нет.
     spells: Sequence[dict] | None = None
     spells_why: str | None = None
+    # Полоса статистики HUD (#816): принятый счётчик CS (lolvision.last_hits.
+    # CsFilter) и время его прочтения по шкале потока; добивания — счётчики
+    # и последние события сеанса. None — тогда `*_why`.
+    cs: int | None = None
+    cs_t: float | None = None
+    cs_why: str | None = None
+    last_hits: Mapping | None = None
+    last_hits_why: str | None = None
 
 
 @dataclass(frozen=True)
@@ -443,6 +451,37 @@ def hud_spells(spells: dict, vis: VisionFrame | None, why_vis: str, lag: float |
     return fact({x["spell"]: x["ready"] for x in slots}, "hud", lag), hud
 
 
+def hud_cs(vis: VisionFrame | None, why_vis: str, lag: float | None, ok: bool,
+           why: str | None, lh_ok: bool, lh_why: str | None) -> tuple[dict, dict]:
+    """CS и добивания по полосе статистики HUD (#816) → (`cs`, `last_hits`).
+
+    Не зависят от Live Client API: на ролике YouTube это единственный CS.
+    `cs` — принятый счётчик (два согласных прочтения полосы), давность — от
+    его прочтения. `last_hits` — счётчики сеанса по типам событий
+    (lolvision.last_hits), `share` — добитые от добитых и упущенных рядом
+    (null, пока ни тех, ни других), `recent` — последние события."""
+    if not ok:
+        return refuse(why), refuse(lh_why if not lh_ok else why)
+    if vis is None:
+        return refuse(why_vis), refuse(why_vis)
+    if vis.cs is None:
+        why_c = vis.cs_why or "CS по полосе HUD не прочитан"
+        return refuse(why_c), refuse(vis.last_hits_why or why_c)
+    age = None if lag is None or vis.cs_t is None else lag + max(0.0, vis.t - vis.cs_t)
+    cs = fact(vis.cs, "hud", age)
+    if not lh_ok:
+        return cs, refuse(lh_why)
+    if vis.last_hits is None:
+        return cs, refuse(vis.last_hits_why or "добивания не считались")
+    c = vis.last_hits["counts"]
+    judged = c["last_hit"] + c["missed_last_hit"]
+    out = {**{k: int(c.get(k, 0)) for k in ("last_hit", "missed_last_hit", "cs_unseen",
+                                              "unjudged", "revived", "monster")},
+           "share": round(c["last_hit"] / judged, 3) if judged else None,
+           "recent": list(vis.last_hits["recent"])}
+    return cs, fact(out, "inferred", lag)
+
+
 def _record(rec: UnitRec | TrackRec, age: float | None) -> dict:
     """Запись records.py в выход: поля как есть, отношение и сторона — фактами."""
     d = {k: v for k, v in rec.to_dict().items() if k not in ("relation_reason", "side_reason")}
@@ -649,6 +688,11 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                   "spells": spells, "spell_variants": variants, "role": role,
                   "runes": runes, "spells_ready": ready, "spells_hud": hud}
 
+    # --- CS и добивания по HUD (#816): без API тоже ---
+    cs_ok, cs_why = reader_ok(inp.passport, "hud_stats", miss)
+    lh_ok, lh_why = reader_ok(inp.passport, "last_hits", miss)
+    me_out["cs"], me_out["last_hits"] = hud_cs(vis, why_vis, lag, cs_ok, cs_why, lh_ok, lh_why)
+
     # --- враги с давностью места ---
     if champions["value"] is None:
         enemies = refuse(champions["reason"])
@@ -795,6 +839,12 @@ def snapshot_schema() -> dict:
     """JSON Schema (draft 2020-12) снимка. Проверка без зависимостей — `check_snapshot`."""
     num, s, b, i = {"type": "number"}, {"type": "string"}, {"type": "boolean"}, \
         {"type": "integer"}
+    lh_event = _obj({"t": num, "type": {"enum": ["last_hit", "missed_last_hit", "cs_unseen"]},
+                     "id": {"type": ["string", "null"]}, "n": i,
+                     "dist": {"type": ["number", "null"]}})
+    last_hits = _obj({"last_hit": i, "missed_last_hit": i, "cs_unseen": i, "unjudged": i,
+                      "revived": i, "monster": i, "share": {"type": ["number", "null"]},
+                      "recent": {"type": "array", "items": lh_event}})
     nnum, ns, ni, nb = {"type": ["number", "null"]}, {"type": ["string", "null"]}, \
         {"type": ["integer", "null"]}, {"type": ["boolean", "null"]}
     uv = _obj({"u": num, "v": num})
@@ -890,7 +940,8 @@ def snapshot_schema() -> dict:
                         "runes": _fact_of(runes),
                         "spells_ready": _fact_of({"type": "object", "additionalProperties": nb}),
                         "spells_hud": _fact_of({"type": "array", "items": spell_hud,
-                                                "minItems": 2, "maxItems": 2})}),
+                                                "minItems": 2, "maxItems": 2}),
+                        "cs": _fact_of(i), "last_hits": _fact_of(last_hits)}),
             "champions": _fact_of({"type": "array", "items": champ, "maxItems": 10}),
             "enemies": _fact_of({"type": "array", "items": enemy, "maxItems": 5}),
             "camera": _obj({"center": _fact_of(uv), "spread": _fact_of(num)}),

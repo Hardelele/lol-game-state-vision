@@ -880,3 +880,56 @@ def test_api_events_are_a_bounded_tail(monkeypatch):
     for _ in range(4):
         s._drain_api()
     assert s.api_events == [4, 5, 6] and s.api_events_n == 6
+
+
+# ---------- CS и время матча по полосе HUD (#816, #780) ----------
+
+def _with_stats(t: float, cs: int, game_s: int) -> Frame:
+    """Кадр своего экрана 1920×1080 с полосой статистики: CS и MM:SS."""
+    from lolvision import hud_stats as hs
+    z = np.load(hs.DIGITS)
+    labels = list(z["labels"])
+    img = np.full((1080, 1920, 3), 35, np.uint8)
+    ic = cv2.imread(str(hs.ICON), cv2.IMREAD_GRAYSCALE)
+    img[hs.ICON_Y[0]:hs.ICON_Y[1], hs.ICON_X[0]:hs.ICON_X[0] + ic.shape[1]] = ic[..., None]
+
+    def put(text: str, x: int) -> None:
+        for c in text:
+            if c == ":":
+                img[12:14, x:x + 2] = 230
+                img[18:20, x:x + 2] = 230
+                x += 5
+                continue
+            g = (z["glyphs"][labels.index(c)] * 230).astype(np.uint8)
+            img[9:21, x:x + g.shape[1]] = g[..., None]
+            x += g.shape[1] + 2
+
+    put(str(cs), hs.CS_X[0] + 2)
+    put(f"{game_s // 60:02d}:{game_s % 60:02d}", hs.TIME_X[0] + 2)
+    return Frame(Status.OK, t, img)
+
+
+def test_hud_strip_gives_cs_and_match_clock_without_api(cpu_models):
+    """Свой экран без API: CS и время матча — с полосы. CS в /state после
+    двух согласных прочтений, время матча — src hud; добивания без детектора
+    юнитов — отказ с причиной паспорта."""
+    from lolstream.state_service import build_snapshot
+    build, _ = cpu_models
+    # CS 20…23 по три кадра: последнее значение подтверждено следующим прочтением.
+    frames = [_with_stats(1.0 * k, 20 + k // 3, 300 + k) for k in range(12)]
+    s = live.Session("screen", "r", _Source(frames, kind="screen", size=(1920, 1080)),
+                     device="cpu", build=build)
+    st = _finish(s)
+    assert "hud_stats" in st["passport"]["enabled"]
+    rows = [r for r in st["frames"] if r.get("hud")]
+    assert rows and all(r["hud"]["present"] for r in rows)
+    last = st["frames"][-1]
+    assert last["hud"]["cs"] == 23 and last["hud"]["time"] == 311
+    assert last["game_time"]["src"] == "hud" and abs(last["game_time"]["value"] - 311.5) < 0.6
+    snap = build_snapshot(s.state_inputs(), time.time())
+    assert check_snapshot(snap) == []
+    assert snap["me"]["cs"]["value"] == 23 and snap["me"]["cs"]["source"] == "hud"
+    assert snap["me"]["riot_id"]["value"] is None          # API нет — а CS есть
+    assert snap["match"]["time"]["source"] == "hud"
+    lh = snap["me"]["last_hits"]
+    assert lh["value"] is None and "детектор юнитов" in lh["reason"]

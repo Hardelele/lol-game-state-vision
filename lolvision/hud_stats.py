@@ -53,8 +53,21 @@ def _scale(frame_bgr: np.ndarray) -> np.ndarray:
 
 def strip(frame_bgr: np.ndarray) -> np.ndarray:
     """Вырез полосы y 0…36, x 1500…1920 (кадр приводится к 1920×1080) —
-    в нём работают все функции ниже; инструменты хранят только его."""
-    return np.ascontiguousarray(_scale(frame_bgr)[0:36, 1500:1920])
+    в нём работают все функции ниже; инструменты хранят только его.
+
+    Кадр другого размера масштабируется не целиком, а угол с запасом в
+    пару пикселей: живой сеанс зовёт это на каждом кадре вида игрока."""
+    h, w = frame_bgr.shape[:2]
+    if (h, w) == (REF_H, REF_W):
+        return np.ascontiguousarray(frame_bgr[0:36, 1500:1920])
+    sx, sy = w / REF_W, h / REF_H
+    pad = 4
+    x0, y1 = max(0, int((1500 - pad) * sx)), min(h, int(np.ceil((36 + pad) * sy)))
+    part = frame_bgr[0:y1, x0:w]
+    rw, rh = round(part.shape[1] / sx), round(part.shape[0] / sy)
+    part = cv2.resize(part, (rw, rh), interpolation=cv2.INTER_AREA)
+    ox = 1500 - round(x0 / sx)
+    return np.ascontiguousarray(part[0:36, ox:ox + 420])
 
 
 X0 = 1500                       # левый край выреза strip() в координатах кадра
@@ -226,3 +239,70 @@ class StatsReader:
             return None
         mm, ss = ds[0] * 10 + ds[1], ds[2] * 10 + ds[3]
         return None if ss > 59 else mm * 60 + ss
+
+
+CLOCK_STALE = 10.0              # с без прочтения — часам по полосе не верим
+CLOCK_SLACK = 0.35              # с: время кадра против показа HUD (шаг кадра, сжатие)
+
+
+@dataclass
+class _Segment:
+    """Отрезок, где время матча идёт вместе с кадром: время матча =
+    t + смещение, смещение в [lo, hi]. Полоса показывает целые секунды
+    (вниз), и каждое прочтение сужает промежуток."""
+    lo: float
+    hi: float
+    t: float                    # последнее прочтение
+    n: int = 1
+
+    def fits(self, t: float, secs: int) -> bool:
+        return secs - t <= self.hi + CLOCK_SLACK and secs + 1 - t >= self.lo - CLOCK_SLACK
+
+    def add(self, t: float, secs: int) -> None:
+        lo, hi = max(self.lo, secs - t), min(self.hi, secs + 1 - t)
+        # Промежуток схлопнулся в пределах допуска — берём середину спора.
+        if lo > hi:
+            lo = hi = (lo + hi) / 2
+        self.lo, self.hi, self.t, self.n = lo, hi, t, self.n + 1
+
+    def value(self, t: float) -> float:
+        return t + (self.lo + self.hi) / 2
+
+
+class HudClock:
+    """Часы матча по полосе статистики (#780, #816): время матча без Live
+    Client API — у ролика YouTube его нет.
+
+    Прочтения MM:SS (`StatsReader.read(...).time`) → время матча на момент
+    кадра, с точностью до доли секунды. Новый отрезок (пауза игры,
+    перемотка или склейка ролика, новая игра) принимается, только когда
+    следующее прочтение его подтверждает: одиночная ошибка чтения часы не
+    сбивает. Дольше CLOCK_STALE без прочтения — None (полоса не видна:
+    Tab, смерть с затемнением, чужой вид)."""
+
+    def __init__(self):
+        self.cur: _Segment | None = None
+        self._cand: _Segment | None = None
+
+    def update(self, t: float, secs: int | None) -> None:
+        if secs is None:
+            return
+        if self.cur is not None and self.cur.fits(t, secs):
+            self.cur.add(t, secs)
+            self._cand = None
+            return
+        if self._cand is not None and self._cand.fits(t, secs):
+            self._cand.add(t, secs)
+            self.cur, self._cand = self._cand, None
+            return
+        self._cand = _Segment(secs - t, secs + 1 - t, t)
+
+    def value(self, t: float) -> float | None:
+        """Время матча на момент `t` или None — часов по полосе нет."""
+        c = self.cur
+        if c is None or t - c.t > CLOCK_STALE or t < c.t - CLOCK_STALE:
+            return None
+        return c.value(t)
+
+    def reset(self) -> None:
+        self.cur = self._cand = None

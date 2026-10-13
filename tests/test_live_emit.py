@@ -46,6 +46,8 @@ def _session(found: bool, view: str, assets=None) -> live.Session:
     s = object.__new__(live.Session)
     s.start, s.fps, s._n_emit = 0.0, 3.0, 0
     s.match, s.tracker, s.proj, s._match_at, s.vision = None, None, None, None, None
+    s.hud_clock, s.last_hits, s.last_hits_recent = live.hud_stats.HudClock(), live.lh.LastHits(), []
+    s.self_place = live.lh.SelfPlace()
     s.minimap = {"box": [0.85, 0.75, 1.0, 1.0], "scale": None, "found": found}
     s.view = view
     s.passport = _passport(found, view, assets)
@@ -290,3 +292,35 @@ def test_rift_keeps_model_camera_and_not_game_veto():
         s, row = _arena_rows(map_number)
         assert row["kind"] == "other"                   # как раньше: не места Ущелья
         assert s.vision.camera_src == "screen" and s.vision.camera == (0.4, 0.6)
+
+
+# ---------- добивания в сеансе (#816) ----------
+
+def test_last_hits_step_pairs_cs_gain_with_minion_death():
+    """Смерть вражеского миньона линии на кадре роста CS → last_hit в строке
+    кадра и в итоге для /state; без разрешения last_hits — только CS."""
+    s = _session(found=True, view="player")
+    me = {"kind": "champion", "color": "green", "x": 0.5, "y": 0.5}
+    me_tr = {"id": "c1", "kind": "champion", "x": 0.5, "y": 0.5, "u": 0.30, "v": 0.70}
+    death = {"type": "unit_death", "id": "m7", "kind": "minion", "relation": "enemy",
+             "u": 0.31, "v": 0.70}
+    out = None
+    for k in range(12):
+        t = 0.25 * k
+        row = {"t": t, "units": [me], "tracks": [me_tr],
+               "uev": [death] if k == 4 else []}
+        out = s._last_hits_step(row, {"present": True, "cs": 30 if k < 4 else 31, "time": 90}, {})
+        if k == 4:
+            assert "last_hits" not in row          # событие — после подтверждения роста
+        if row.get("last_hits"):
+            assert [e["type"] for e in row["last_hits"]] == ["last_hit"]
+    assert out["cs"] == 31 and out["last_hits"]["counts"]["last_hit"] == 1
+    assert out["last_hits"]["recent"][0]["id"] == "m7"
+
+    s2 = _session(found=True, view="player")
+    out2 = s2._last_hits_step({"t": 0.0}, {"present": True, "cs": 5, "time": 10},
+                              {"last_hits": "нет: детектор юнитов"})
+    out2 = s2._last_hits_step({"t": 1.0}, {"present": True, "cs": 5, "time": 11},
+                              {"last_hits": "нет: детектор юнитов"})
+    assert out2["cs"] == 5 and out2["last_hits"] is None
+    assert out2["last_hits_why"] == "нет: детектор юнитов"

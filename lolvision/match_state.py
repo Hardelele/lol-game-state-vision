@@ -131,6 +131,7 @@ API_STALE = 5.0            # с без наблюдения API — источн
 # опережает на долю секунды — расхождение в этом окне не конфликт.
 API_SLACK = 1.5
 TIMER_SLACK = 2.0          # с: таймер панели против API — дальше конфликт
+CLOCK_SLACK = 2.0          # с: часы полосы HUD против API — дальше конфликт clock
 # Доля карты: место своего чемпиона с экрана против своей иконки миникарты в
 # том же кадре — дальше конфликт (#802). Обычная ошибка обоих — иконка p90
 # ~150 ед. (minimap-champions.md), камера внутри карты p90 ~160 ед.
@@ -263,6 +264,9 @@ class MatchState:
     api_t: float | None = None
     api_refused: str | None = None   # почему последний снимок API не принят
     game_time: Fact | None = None    # время матча из API на момент api_t
+    # Время матча по полосе статистики HUD (#816, hud_stats.HudClock) на
+    # момент своего кадра; часы без API (#780).
+    hud_time: Fact | None = None
     # Расхождения источников по виду (#781): roster / alive / timer /
     # minimap_dead — против API, hud_flicker — панель против таймера,
     # self_many — несколько своих юнитов на кадре, self_place — место
@@ -556,11 +560,40 @@ class MatchState:
             return None
         return "api" if self.api is not None else "hud"
 
-    def game_clock(self) -> Fact | None:
-        """Время матча на момент кадра по API, с; None — API нет или он пропал."""
-        if self.game_time is None or not self.api_live():
+    def set_hud_time(self, t: float, value: float | None) -> None:
+        """Время матча по полосе HUD на кадре `t` (None — часов по полосе
+        нет). При живом API расхождение больше CLOCK_SLACK — конфликт clock."""
+        self.hud_time = None if value is None else Fact(value, t, "hud")
+        api = self._api_clock(t)
+        if value is not None and api is not None and abs(api - value) > CLOCK_SLACK:
+            self._conflict(None, "clock")
+
+    def self_minimap(self, t: float, max_age: float = 0.5) -> tuple[float, float] | None:
+        """Место своего чемпиона по своей иконке миникарты не старше
+        `max_age` с; кто свой — говорит API (без него None). Для добиваний
+        (#816), когда своя плашка на кадре не читается."""
+        if self.api is None or self.api.me is None:
             return None
-        return Fact(self.game_time.value + (self.t - self.game_time.t), self.t, "api")
+        c = self.champs.get(self._key(self.api.me, self.api.me_team or ""))
+        if c is None or c.pos is None or c.pos.src != "minimap" or t - c.pos.t > max_age:
+            return None
+        return float(c.pos.value[0]), float(c.pos.value[1])
+
+    def _api_clock(self, t: float) -> float | None:
+        if self.game_time is None or not self.api_live(t):
+            return None
+        return self.game_time.value + (t - self.game_time.t)
+
+    def game_clock(self) -> Fact | None:
+        """Время матча на момент кадра, с: по API, без него — по полосе HUD
+        (src hud); None — ни того, ни другого."""
+        api = self._api_clock(self.t)
+        if api is not None:
+            return Fact(api, self.t, "api")
+        h = self.hud_time
+        if h is not None and abs(self.t - h.t) <= API_STALE:
+            return Fact(h.value + (self.t - h.t), self.t, "hud")
+        return None
 
     def frame_view(self) -> list[ChampCtx]:
         """Снимок для строки кадра, по составу."""

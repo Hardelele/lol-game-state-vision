@@ -14,7 +14,7 @@ SCREEN = {"kind": "screen", "backend": "dxcam", "backend_note": None,
           "fps": 2.0, "size": (1920, 1080), "title": "League of Legends (TM) Client"}
 YOUTUBE = {"kind": "youtube", "backend": "ffmpeg", "backend_note": None,
            "fps": 1.0, "size": (1280, 720), "title": "VOD"}
-ALL_ASSETS = {"unit_net": True, "names_bank": True, "minimap_model": True}
+ALL_ASSETS = {"unit_net": True, "names_bank": True, "minimap_model": True, "hud_stats": True}
 BIG = (0.83, 0.70, 0.993, 0.984)
 
 
@@ -84,7 +84,9 @@ def test_spell_panel_needs_player_view():
 def test_spectator_view_without_api():
     p = spectator_stream()
     dis = p.disabled()
-    assert set(dis) == {"sides", "api_facts", "hud_spells"}
+    assert set(dis) == {"sides", "api_facts", "hud_spells", "hud_stats", "last_hits"}
+    # Полоса статистики (#816) — только у вида игрока.
+    assert "нужен вид игрока" in dis["hud_stats"] and "нужен вид игрока" in dis["last_hits"]
     assert "нужен вид игрока" in dis["sides"]
     assert "нужен вид игрока" in dis["hud_spells"]
     assert dis["api_facts"].startswith("Live Client API: не подключён")
