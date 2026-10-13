@@ -37,7 +37,8 @@ import hud_stats as tool_stats
 
 LH_DATA = DATA / "last_hits"
 OUT = RUNS / "last_hits"
-ROW_KEYS = ("i", "t", "kind", "px", "py", "units", "tracks", "uev", "game_time", "hud", "last_hits", "view")
+ROW_KEYS = ("i", "t", "kind", "px", "py", "units", "tracks", "uev", "game_time", "hud", "last_hits",
+            "view", "abilities", "lane")
 
 
 def cmd_session(args) -> None:

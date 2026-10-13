@@ -306,5 +306,5 @@ class UnitTracker:
             out.append(TrackRec(tr.id, tr.kind, tr.team, tr.state, float(p[0]), float(p[1]),
                                 xy[0] if xy else None, xy[1] if xy else None, tr.hp, t - tr.t,
                                 tr.relation, tr.relation_reason, tr.side, tr.side_reason,
-                                tr.side_src))
+                                tr.side_src, tr.hp_rate))
         return out

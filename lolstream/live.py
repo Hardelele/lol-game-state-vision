@@ -101,8 +101,10 @@ from lolvision.minimap_locate import (AGREE_PX, LOCATE_MAX, Locator, corner_px, 
                                       SCALES, fit_file, load_fit, save_fit)
 from lolstream.live_champions import LiveChampions
 from lolvision.hud_spells import SpellHud
+from lolvision import hud_spells as hud_spells_mod
 from lolvision import hud_stats
 from lolvision import last_hits as lh
+from lolvision.lane_watch import LaneWatch
 from lolvision.match_state import API_STALE, ApiObs, MatchState, rift
 from lolvision.passport import UNKNOWN, Change, Passport
 from lolvision.records import SCHEMA, RosterEvent, UnitRec, dicts
@@ -564,6 +566,7 @@ class Session:
         self.last_hits = lh.LastHits()
         self.last_hits_recent: list[dict] = []
         self.self_place = lh.SelfPlace()
+        self.lane = LaneWatch()                # окно размена и кнопка в крипов (#816)
         # Паспорт трансляции и его изменения (Change.to_dict, по порядку).
         self.passport: Passport | None = None
         self.passport_events: list[dict] = []
@@ -963,7 +966,7 @@ class Session:
         return None, why if content else None
 
     def _spells_step(self, pl: Pipeline, fr: np.ndarray, t: float, game: bool,
-                     view: str) -> list[dict] | None:
+                     view: str) -> tuple[list[dict], list[dict]] | None:
         """Готовность своих заклинаний D/F по HUD (#806, lolvision.hud_spells).
 
         Только на игровом кадре вида игрока. Пока панель умений не найдена —
@@ -1000,7 +1003,10 @@ class Session:
             me = None if g is None else g.my_player
             if me is not None and me.spells is not None:
                 hud.set_spells(tuple(x.variant for x in me.spells))
-        return [r.to_dict() for r in hud.read(fr, t).values()]
+        reads = hud.read(fr, t, hud_spells_mod.SPELL_SLOTS + hud_spells_mod.ABILITY_SLOTS)
+        # Одно чтение панели: D/F — заклинания, Q/W/E/R — умения (тот же читатель).
+        return ([reads[k].to_dict() for k in hud_spells_mod.SPELL_SLOTS],
+                [reads[k].to_dict() for k in hud_spells_mod.ABILITY_SLOTS])
 
     def _stats_step(self, pl: Pipeline, fr: np.ndarray, game: bool, view: str,
                     off: dict) -> dict | None:
@@ -1216,7 +1222,7 @@ class Session:
             ctx = SideContext(view=None if view == UNKNOWN else view, my_team=my_team,
                               my_team_reason=my_why)
             ms["unit_recs"] = assign_sides(recs, ctx, fr)
-        ms["spells"] = self._spells_step(pl, fr, t, game, view)
+        ms["spells"], ms["abilities"] = self._spells_step(pl, fr, t, game, view) or (None, None)
         ms["hud"] = self._stats_step(pl, fr, game, view, off)
         ms.update(full_img=_full_small(fr, pl.fr_dev), off=off, view=view, api_obs=obs,
                   api_refused=refused, wall=wall)
@@ -1331,6 +1337,11 @@ class Session:
             row["spells"] = spells
         elif "hud_spells" in off:
             row["spells"] = None
+        abilities = ms.pop("abilities", None)
+        if abilities is not None:
+            row["abilities"] = abilities
+        elif "hud_spells" in off:
+            row["abilities"] = None
         hud = ms.pop("hud", None)
         if hud is not None:
             row["hud"] = hud
@@ -1409,12 +1420,15 @@ class Session:
             row["tracks"] = dicts(tracks)
             if uev:
                 row["uev"] = dicts(uev)
-        last_hits = self._last_hits_step(row, hud, off)
+        me = self._self_place_step(row)
+        last_hits = self._last_hits_step(row, hud, off, me)
+        last_hits.update(self._lane_step(row, abilities, off, me))
         if on_rift:
             cam = None if row["px"] is None or row["py"] is None else (row["px"], row["py"])
             vision = VisionFrame(i, row["t"], time.time(), row.get("kind"), cam, row["spread"],
                                  units, tracks, spells=spells,
                                  spells_why=off.get("hud_spells") or _spells_why(row),
+                                 abilities=abilities,
                                  **last_hits)
         else:
             # Не Ущелье: центр камеры — рамка вьюпорта на миникарте (доли
@@ -1434,6 +1448,7 @@ class Session:
                                  tracks_why=f"{off_map}: треки ведутся в единицах Ущелья",
                                  spells=spells,
                                  spells_why=off.get("hud_spells") or _spells_why(row),
+                                 abilities=abilities,
                                  **last_hits)
         with self._lock:
             self.vision = vision
@@ -1441,7 +1456,36 @@ class Session:
         row["ms"] = {k: round(ms.get(k, 0.0), 2) for k in STAGES}
         self._out.submit(self._store, row, scene, full_img, mini, hm)
 
-    def _last_hits_step(self, row: dict, hud: dict | None, off: dict) -> dict:
+    def _self_place_step(self, row: dict) -> tuple[float, float] | None:
+        """Своё место на карте этого кадра: плашка своего цвета, запомненный
+        свой трек (last_hits.SelfPlace), а с API — своя иконка миникарты."""
+        if row.get("tracks") is None:
+            return None
+        me = self.self_place.update(row["t"], row.get("units"), row["tracks"])
+        if me is None and self.match is not None:
+            me = self.match.self_minimap(row["t"])
+        return me
+
+    def _lane_step(self, row: dict, abilities: list[dict] | None, off: dict,
+                   me: tuple[float, float] | None) -> dict:
+        """Ситуации линии (lolvision.lane_watch): нажатия умений и окно
+        размена. Нужны треки юнитов и умения по HUD; события — в строку
+        (`lane`), итог для /state — поля VisionFrame."""
+        why = off.get("units") or off.get("hud_spells")
+        if why is None and row.get("tracks") is None:
+            why = "треки юнитов на этом кадре не велись"
+        if why is None and abilities is None:
+            why = "умения по HUD на этом кадре не читались"
+        if why is None:
+            evs = self.lane.update(row["t"], abilities, row["tracks"], me)
+            if evs:
+                row["lane"] = evs
+        return {"lane": None if why else {"window": self.lane.window,
+                                          "recent": list(self.lane.recent)},
+                "lane_why": why}
+
+    def _last_hits_step(self, row: dict, hud: dict | None, off: dict,
+                        me: tuple[float, float] | None = None) -> dict:
         """Добивания по кадру (#816, lolvision.last_hits): прочтение CS полосы,
         смерти и новые треки трекера, своё место. События — в строку
         (`last_hits`), итог для /state — поля VisionFrame.
@@ -1453,16 +1497,11 @@ class Session:
         if hud is not None:
             # CS считается всегда, когда полоса читается; смерти крипов —
             # только когда добивания разрешены (есть детектор юнитов).
-            deaths, born, me = [], [], None
+            deaths, born, at = [], [], None
             if why is None:
-                tracks = row.get("tracks")
-                deaths, born = lh.frame_inputs(row.get("uev"), tracks)
-                # Своё место: плашка своего цвета, запомненный свой трек, а с
-                # API — своя иконка миникарты.
-                me = self.self_place.update(row["t"], row.get("units"), tracks)
-                if me is None and self.match is not None:
-                    me = self.match.self_minimap(row["t"])
-            evs = self.last_hits.update(row["t"], hud["cs"], deaths, me, born)
+                deaths, born = lh.frame_inputs(row.get("uev"), row.get("tracks"))
+                at = me
+            evs = self.last_hits.update(row["t"], hud["cs"], deaths, at, born)
             if evs:
                 row["last_hits"] = [e.to_dict() for e in evs]
                 self.last_hits_recent = (self.last_hits_recent

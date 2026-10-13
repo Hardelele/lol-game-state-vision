@@ -933,3 +933,24 @@ def test_hud_strip_gives_cs_and_match_clock_without_api(cpu_models):
     assert snap["match"]["time"]["source"] == "hud"
     lh = snap["me"]["last_hits"]
     assert lh["value"] is None and "детектор юнитов" in lh["reason"]
+
+
+def test_ability_slots_read_with_the_spell_panel(cpu_models):
+    """Q/W/E/R читаются той же панелью и тем же читателем, что D/F: строка
+    кадра — `abilities`, снимок — me.abilities_ready / abilities_hud без API."""
+    from lolstream.state_service import build_snapshot
+    build, _ = cpu_models
+    frames = [_with_panel(2.0 * k) for k in range(16)]
+    s = live.Session("screen", "r", _Source(frames, kind="screen", size=(1920, 1080)),
+                     device="cpu", build=build)
+    st = _finish(s)
+    last = st["frames"][-1]
+    assert [x["slot"] for x in last["abilities"]] == ["Q", "W", "E", "R"]
+    assert {x["slot"] for x in last["spells"]} == {"D", "F"}
+    snap = build_snapshot(s.state_inputs(), time.time())
+    assert check_snapshot(snap) == []
+    hud = snap["me"]["abilities_hud"]
+    assert hud["source"] == "hud" and [x["slot"] for x in hud["value"]] == ["Q", "W", "E", "R"]
+    # Своя панель эталона — все умения изучены и готовы (иконки яркие).
+    ready = snap["me"]["abilities_ready"]["value"]
+    assert ready is not None and set(ready) == {"Q", "W", "E", "R"}

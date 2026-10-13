@@ -62,6 +62,7 @@ TEMPLATE_ORIGIN = (735, 975)
 SLOTS = {"Q": (69, 16, 107, 53), "W": (114, 16, 152, 53), "E": (159, 16, 198, 53),
          "R": (205, 16, 243, 53), "D": (257, 16, 284, 43), "F": (291, 16, 319, 43)}
 SPELL_SLOTS = ("D", "F")
+ABILITY_SLOTS = ("Q", "W", "E", "R")
 # Полоса ХП в координатах эталона: у мёртвого пустая.
 HP_BAR = (36, 72, 316, 82)
 # Что маска эталона закрывает: внутренность слотов, точки уровней, полосы,
@@ -426,7 +427,8 @@ class SpellHud:
 
     def __init__(self):
         self.panel: Panel | None = None
-        self.refs = {k: SlotRef() for k in SPELL_SLOTS}
+        # Умения Q/W/E/R — тем же читателем: перезарядка у них выглядит так же.
+        self.refs = {k: SlotRef() for k in SPELL_SLOTS + ABILITY_SLOTS}
         self._cand: list[Panel] = []
         self._miss = 0
         self.spells: tuple | None = None
@@ -467,11 +469,13 @@ class SpellHud:
         if spells is not None:
             self.spells = spells
 
-    def read(self, frame: np.ndarray, t: float) -> dict[str, SlotRead]:
+    def read(self, frame: np.ndarray, t: float,
+             slots: tuple[str, ...] = SPELL_SLOTS) -> dict[str, SlotRead]:
+        """Состояния слотов `slots` (по умолчанию D/F; умения — ABILITY_SLOTS)."""
         if self.panel is None:
-            return {k: SlotRead(k, "hidden", None, "панель умений не найдена") for k in SPELL_SLOTS}
+            return {k: SlotRead(k, "hidden", None, "панель умений не найдена") for k in slots}
         score = panel_score(frame, self.panel)
         present = score >= PRESENT_MIN
         dead = present and hp_fill(frame, self.panel) < DEAD_HP
         return {k: decide(k, slot_crop(frame, self.panel, k), self.refs[k], present, dead, t)
-                for k in SPELL_SLOTS}
+                for k in slots}

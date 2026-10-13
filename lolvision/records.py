@@ -96,11 +96,15 @@ class TrackRec:
     side: str | None = None
     side_reason: str | None = UNSET
     side_src: str | None = None    # как у UnitRec
+    # Доля ХП в секунду (≤ 0): как быстро юнита бьют (unit_tracker, #816);
+    # по ней видно, когда крип станет «на добивание».
+    hp_rate: float = 0.0
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "team": self.team, "state": self.state,
                 "u": _r(self.u, 4), "v": _r(self.v, 4), "x": _r(self.x, 4), "y": _r(self.y, 4),
-                "hp": _r(self.hp, 2), "age": _r(self.age, 1), **_sides(self)}
+                "hp": _r(self.hp, 2), "hp_rate": _r(self.hp_rate, 3), "age": _r(self.age, 1),
+                **_sides(self)}
 
 
 @dataclass(frozen=True)

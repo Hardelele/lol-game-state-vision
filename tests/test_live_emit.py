@@ -48,6 +48,7 @@ def _session(found: bool, view: str, assets=None) -> live.Session:
     s.match, s.tracker, s.proj, s._match_at, s.vision = None, None, None, None, None
     s.hud_clock, s.last_hits, s.last_hits_recent = live.hud_stats.HudClock(), live.lh.LastHits(), []
     s.self_place = live.lh.SelfPlace()
+    s.lane = live.LaneWatch()
     s.minimap = {"box": [0.85, 0.75, 1.0, 1.0], "scale": None, "found": found}
     s.view = view
     s.passport = _passport(found, view, assets)
@@ -197,7 +198,7 @@ def test_emit_glues_units_tracks_context_and_events_by_name():
     assert (vb["u"], vb["v"]) == (0.41, 0.6)
     assert {t["kind"] for t in last["tracks"]} == {"champion", "minion", "ward"}
     assert set(tracks[next(iter(tracks))]) == {"id", "kind", "team", "state", "u", "v",
-                                               "x", "y", "hp", "age", "relation",
+                                               "x", "y", "hp", "hp_rate", "age", "relation",
                                                "relation_reason", "side", "side_reason",
                                                "side_src"}
     # События трекера — на втором кадре (подтверждение треков).

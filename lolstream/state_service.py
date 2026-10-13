@@ -128,6 +128,9 @@ class VisionFrame:
     # слотам или None — тогда `spells_why`, почему чтения нет.
     spells: Sequence[dict] | None = None
     spells_why: str | None = None
+    # Готовность умений Q/W/E/R по той же панели (тот же читатель, причина
+    # отсутствия — та же `spells_why`).
+    abilities: Sequence[dict] | None = None
     # Полоса статистики HUD (#816): принятый счётчик CS (lolvision.last_hits.
     # CsFilter) и время его прочтения по шкале потока; добивания — счётчики
     # и последние события сеанса. None — тогда `*_why`.
@@ -136,6 +139,10 @@ class VisionFrame:
     cs_why: str | None = None
     last_hits: Mapping | None = None
     last_hits_why: str | None = None
+    # Ситуации линии (lolvision.lane_watch): открытое окно размена и последние
+    # события (нажатия умений с целью, окна размена).
+    lane: Mapping | None = None
+    lane_why: str | None = None
 
 
 @dataclass(frozen=True)
@@ -482,6 +489,30 @@ def hud_cs(vis: VisionFrame | None, why_vis: str, lag: float | None, ok: bool,
     return cs, fact(out, "inferred", lag)
 
 
+def hud_abilities(vis: VisionFrame | None, why_vis: str, lag: float | None,
+                  ok: bool, why: str | None) -> tuple[dict, dict]:
+    """Готовность своих умений по HUD → (`abilities_ready`, `abilities_hud`).
+
+    Тот же читатель, что у заклинаний (#806): `abilities_ready` — {"Q": true
+    | false | null, …}; null — по HUD нельзя определить (не изучено, иконка
+    сменилась — усиление или повторное нажатие, мёртв, панели нет), причина —
+    в `abilities_hud`. Все четыре null — отказ с причинами слотов. От API не
+    зависит."""
+    if not ok:
+        return refuse(why), refuse(why)
+    if vis is None:
+        return refuse(why_vis), refuse(why_vis)
+    if vis.abilities is None:
+        why_v = vis.spells_why or "умения по HUD на этом кадре не читались"
+        return refuse(why_v), refuse(why_v)
+    slots = [{"slot": r["slot"], "state": r["state"], "ready": r["value"], "reason": r["reason"]}
+             for r in vis.abilities]
+    hud = fact(slots, "hud", lag)
+    if all(x["ready"] is None for x in slots):
+        return refuse("; ".join(f"{x['slot']}: {x['reason']}" for x in slots)), hud
+    return fact({x["slot"]: x["ready"] for x in slots}, "hud", lag), hud
+
+
 def _record(rec: UnitRec | TrackRec, age: float | None) -> dict:
     """Запись records.py в выход: поля как есть, отношение и сторона — фактами."""
     d = {k: v for k, v in rec.to_dict().items() if k not in ("relation_reason", "side_reason")}
@@ -692,6 +723,22 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     cs_ok, cs_why = reader_ok(inp.passport, "hud_stats", miss)
     lh_ok, lh_why = reader_ok(inp.passport, "last_hits", miss)
     me_out["cs"], me_out["last_hits"] = hud_cs(vis, why_vis, lag, cs_ok, cs_why, lh_ok, lh_why)
+    ab_ok, ab_why = reader_ok(inp.passport, "hud_spells", miss)
+    if vis is None:
+        me_out["lane"] = refuse(why_vis)
+    elif vis.lane is None:
+        me_out["lane"] = refuse(vis.lane_why or "ситуации линии не считались")
+    else:
+        # `ago` — секунд от события до снимка: кадр зрения старше снимка на lag,
+        # событие старше кадра на (t кадра − t события). Окно размена живёт
+        # секунды — coach по `ago` решает, не поздно ли о нём говорить.
+        def ago(e):
+            return dict(e, ago=round(lag + max(0.0, vis.t - e["t"]), 2))
+        win = vis.lane["window"]
+        me_out["lane"] = fact({"window": None if win is None else ago(win),
+                               "recent": [ago(e) for e in vis.lane["recent"]]}, "inferred", lag)
+    me_out["abilities_ready"], me_out["abilities_hud"] = hud_abilities(vis, why_vis, lag,
+                                                                       ab_ok, ab_why)
 
     # --- враги с давностью места ---
     if champions["value"] is None:
@@ -858,6 +905,10 @@ def snapshot_schema() -> dict:
                       "state": {"enum": ["ready", "cooldown", "blocked", "dead", "hidden",
                                          "unsure"]},
                       "ready": nb, "reason": ns})
+    ability_hud = _obj({"slot": {"enum": ["Q", "W", "E", "R"]},
+                        "state": {"enum": ["ready", "cooldown", "blocked", "dead", "hidden",
+                                           "unsure"]},
+                        "ready": nb, "reason": ns})
     champ = _obj({"champion": _fact_of(s), "riot_id": _fact_of(s), "team": _fact_of(team),
                   "relation": _fact_of(rel), "level": _fact_of(i), "alive": _fact_of(b),
                   "respawn_in": _fact_of(num), "position": _fact_of(uv),
@@ -941,7 +992,12 @@ def snapshot_schema() -> dict:
                         "spells_ready": _fact_of({"type": "object", "additionalProperties": nb}),
                         "spells_hud": _fact_of({"type": "array", "items": spell_hud,
                                                 "minItems": 2, "maxItems": 2}),
-                        "cs": _fact_of(i), "last_hits": _fact_of(last_hits)}),
+                        "cs": _fact_of(i), "last_hits": _fact_of(last_hits),
+                        "abilities_ready": _fact_of({"type": "object", "additionalProperties": nb}),
+                        "abilities_hud": _fact_of({"type": "array", "items": ability_hud,
+                                                   "minItems": 4, "maxItems": 4}),
+                        "lane": _fact_of(_obj({"window": {"type": ["object", "null"]},
+                                               "recent": {"type": "array"}}))}),
             "champions": _fact_of({"type": "array", "items": champ, "maxItems": 10}),
             "enemies": _fact_of({"type": "array", "items": enemy, "maxItems": 5}),
             "camera": _obj({"center": _fact_of(uv), "spread": _fact_of(num)}),
