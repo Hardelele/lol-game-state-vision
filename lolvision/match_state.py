@@ -118,6 +118,10 @@ def rift(map_number: int | None) -> bool:
     карту (geometry.MAP_UNITS)."""
     return map_number is None or map_number == RIFT
 ROSTER_SWITCH = 3          # кадров с другим составом подряд — новый матч
+# Событий в памяти контекста не больше (#801): сеанс своего экрана живёт
+# через много игр, а события читаются хвостом (сервис состояния рассылает
+# новые и помнит разосланные).
+EVENTS_KEEP = 1000
 RESPAWN_SLACK = 2.0        # с: видим «мёртвого» раньше срока — верим глазам
 # Время матча по API, на которое оно может «откатиться» без новой игры:
 # опросы идут не по порядку только при сбоях часов, новая игра — с нуля.
@@ -305,6 +309,7 @@ class MatchState:
             self._from_units(t, units, cam)
         self._infer(t, new)
         self.events += new
+        del self.events[:-EVENTS_KEEP]
         return new
 
     def _key(self, name: str, team: str) -> str:

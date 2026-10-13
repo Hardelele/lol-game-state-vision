@@ -92,3 +92,22 @@ def test_lane_of():
     assert lane_of(0.5, 0.5) == "mid"
     assert lane_of(0.05, 0.4) == "top" and lane_of(0.6, 0.95) == "bot"
     assert lane_of(0.3, 0.45) == "jungle"
+
+
+def test_reset_and_gone_are_bounded(monkeypatch):
+    """Новая игра — треки прошлой уходят (у чемпионов срока нет); ушедших
+    в памяти — не больше GONE_KEEP (#801)."""
+    import lolvision.unit_tracker as ut
+    monkeypatch.setattr(ut, "GONE_KEEP", 2)
+    tr = tracker()
+    champ = UnitRec("champion", "ORDER", 0.5, 0.5, 1.0, 0.9, "Jinx")
+    for k in range(3):
+        tr.update(float(k), (0.5, 0.5), [champ, minion(300, 300)])
+    assert len(seen(tr)) == 2
+    tr.reset()
+    assert tr.tracks == [] and len(tr.gone) == 2
+    for k in range(4):                         # миньоны гибнут на глазах
+        tr.update(10.0 + 3 * k, (0.5, 0.5), [minion(500, 500, 0.6)])
+        tr.update(11.0 + 3 * k, (0.5, 0.5), [minion(500, 500, 0.15)])
+        tr.update(12.0 + 3 * k, (0.5, 0.5), [])
+    assert len(tr.gone) == 2 and all(t.state == "dead" for t in tr.gone)

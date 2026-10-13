@@ -781,3 +781,102 @@ def test_spell_panel_found_and_slots_read(cpu_models):
     assert {x["slot"] for x in first["spells"]} == {"D", "F"}
     last = st["frames"][-1]["spells"]
     assert [x["value"] for x in last] == [True, True]
+
+
+# ---------- окно кадров своего экрана (#801) ----------
+
+class _Reply:
+    """Ответчик маршрута смотрелки: что отдал — код ошибки или тело."""
+
+    def __init__(self):
+        self.code, self.body = None, None
+
+    def fail(self, code, text):
+        self.code = code
+
+    def _send(self, body, ctype, cache=0):
+        self.code, self.body = 200, body
+
+
+def _image(sid: str, kind: str, i: int) -> int:
+    from lolstream import serve_inspect
+    h = _Reply()
+    if kind == "heat":
+        serve_inspect.live_heat(h, sid, str(i))
+    else:
+        serve_inspect.live_image(h, sid, kind, str(i))
+    return h.code
+
+
+def test_screen_keeps_sliding_window_and_does_not_end(cpu_models, monkeypatch):
+    """Свой экран не упирается в потолок MAX_FRAMES: держит последние
+    SCREEN_WINDOW кадров, номера кадров сквозные, since — в этой нумерации."""
+    build, _ = cpu_models
+    monkeypatch.setattr(live, "SCREEN_WINDOW", 5)
+    monkeypatch.setattr(live, "MAX_FRAMES", 4)          # у экрана не действует
+    monkeypatch.setattr(live, "WARMUP_MAX", 1)          # кадр — сразу в строки
+    src = _Source([_ok(0.0), _ok(0.5), _ok(1.0)], kind="screen",
+                  forever=gap(Status.PAUSED, 99.0))
+    s = live.Session("screen", "r", src, device="cpu", build=build)
+    monkeypatch.setitem(live._sessions, "screen", s)
+    try:
+        # До выброса: окно не полно, всё с нуля.
+        st = _wait(s, lambda st: st["count"] == 3)
+        assert [r["i"] for r in st["frames"]] == [0, 1, 2]
+        assert (st["window"], st["first"], st["dropped_before"]) == (5, 0, 0)
+        assert [r["i"] for r in s.status(2)["frames"]] == [2]
+        assert _image("screen", "mini", 0) == 200
+        # Ещё девять кадров: окно сдвинулось, старые выброшены с картинками.
+        src.script.extend(_ok(1.5 + k / 2) for k in range(9))
+        st = _wait(s, lambda st: st["count"] == 12)
+        assert st["state"] == live.State.RUNNING.label and st["active"] is True
+        assert "потолок" not in st["note"]
+        assert [r["i"] for r in st["frames"]] == [7, 8, 9, 10, 11]
+        assert (st["first"], st["dropped_before"]) == (7, 7)
+        st = s.status(9)
+        assert [r["i"] for r in st["frames"]] == [9, 10, 11] and st["dropped_before"] == 0
+        st = s.status(5)                       # 5 и 6 уже выброшены
+        assert [r["i"] for r in st["frames"]] == [7, 8, 9, 10, 11]
+        assert st["dropped_before"] == 2
+        st = s.status(12)
+        assert st["frames"] == [] and st["count"] == 12 and st["dropped_before"] == 0
+        for store in (s.scene, s.mini, s.full, s.heat):
+            assert sorted(store) == [7, 8, 9, 10, 11]
+        assert s.mini.get(3) is None
+        for kind in ("scene", "mini", "full", "heat"):
+            assert _image("screen", kind, 3) == 404
+            assert _image("screen", kind, 10) == 200
+        assert next(x for x in live.listing() if x["id"] == "screen")["count"] == 12
+        json.dumps(st)
+    finally:
+        s.stop()
+        _finish(s)
+
+
+def test_video_still_stops_at_the_ceiling(cpu_models, monkeypatch):
+    """У ролика окна нет: потолок MAX_FRAMES, дальше сеанс не читает."""
+    build, _ = cpu_models
+    monkeypatch.setattr(live, "MAX_FRAMES", 4)
+    monkeypatch.setattr(live, "SCREEN_WINDOW", 2)        # ролика не касается
+    monkeypatch.setattr(live, "WARMUP_MAX", 1)
+    src = _Source([_ok(k / 2) for k in range(200)])
+    s = live.Session("vid", "r", src, device="cpu", build=build)
+    st = _finish(s)
+    assert st["state"] == live.State.ENDED.label
+    assert "потолок памяти 4 кадров" in st["note"]
+    assert 4 <= st["count"] < 200 and src.script          # ролик не дочитан
+    assert st["window"] is None and st["first"] == 0 and st["dropped_before"] == 0
+    assert [r["i"] for r in st["frames"]] == list(range(st["count"]))
+
+
+def test_api_events_are_a_bounded_tail(monkeypatch):
+    """События Live Client в памяти сеанса — хвостом, счёт — всех (#801)."""
+    monkeypatch.setattr(live, "API_EVENTS_KEEP", 3)
+    s = live.Session.__new__(live.Session)
+    s._lock = threading.Lock()
+    s.api_events = []
+    batches = deque([[1, 2], [3, 4, 5], [6]])
+    s.api = SimpleNamespace(events=lambda: batches.popleft() if batches else [])
+    for _ in range(4):
+        s._drain_api()
+    assert s.api_events == [4, 5, 6] and s.api_events_n == 6
