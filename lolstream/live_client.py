@@ -44,6 +44,16 @@ SummonerTeleport_DisplayName» → «SummonerTeleport»), а не из лока�
 Кары — семья Кара). Поля нет (старые сборки, обезличенные журналы) или формат
 незнакомый — `spells = None` и причина, разбор игры не падает.
 
+Роль и руны (#807). `position` (TOP / JUNGLE / MIDDLE / BOTTOM / UTILITY)
+заполнен в ранкеде и драфте; в тренировке — «NONE», в других режимах бывает
+пустым — тогда `PlayerRecord.role = None` и `role_reason`. `runes` —
+`{keystone, primaryRuneTree, secondaryRuneTree}` с числовым `id` и
+`rawDisplayName`: имя ключевой руны берётся из «perk_displayname_<Имя>»
+(«ArcaneComet»), у веток ключ числовой («perkstyle_displayname_7202»),
+поэтому имя ветки — по id (`RUNE_TREES`); числовое имя у ключевой руны —
+тоже по id (`KEYSTONES`, Data Dragon runesReforged 16.19.1). Нет поля или
+id — `runes = None` и `runes_reason`.
+
 Чтение — `LiveClient` в своём потоке (~2 Гц), наружу последний `LiveStatus`
 и очередь новых событий; ошибки транспорта и разбора не выходят наружу.
 Разбор и состояния — `Tracker` без потока и сети, на нём же воспроизведение
@@ -91,6 +101,23 @@ SPELL_SEASON = re.compile(r"S\d+_(\w+)")
 # «первобытные»). Остальные заклинания — сами себе семья.
 SPELL_FAMILIES = ("SummonerTeleport", "SummonerSmite")
 SPELL_SLOTS = ("summonerSpellOne", "summonerSpellTwo")
+# Роли allPlayers[].position (ранкед / драфт). «NONE» в тренировке, "" — в
+# режимах без ролей: роли нет.
+ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
+# Ветки рун по id (Data Dragon runesReforged, ключи стабильны с 2018 года).
+RUNE_TREES = {8000: "Precision", 8100: "Domination", 8200: "Sorcery",
+              8300: "Inspiration", 8400: "Resolve"}
+# Ключевые руны по id — запасное имя, если rawDisplayName числовой или его нет
+# (runesReforged 16.19.1, первый ряд каждой ветки).
+KEYSTONES = {8005: "PressTheAttack", 8008: "LethalTempo", 8021: "FleetFootwork",
+             8010: "Conqueror", 8112: "Electrocute", 8128: "DarkHarvest",
+             9923: "HailOfBlades", 8214: "SummonAery", 8229: "ArcaneComet",
+             8230: "PhaseRush", 8992: "DeathfireTouch", 8351: "GlacialAugment",
+             8360: "UnsealedSpellbook", 8369: "FirstStrike", 8437: "GraspOfTheUndying",
+             8439: "Aftershock", 8465: "Guardian"}
+RAW_KEYSTONE = re.compile(r"perk_displayname_(\w+)")
+RUNE_SLOTS = (("keystone", "keystone"), ("primary", "primaryRuneTree"),
+              ("secondary", "secondaryRuneTree"))
 
 
 class State(str, Enum):
@@ -193,10 +220,28 @@ class SpellRecord:
 
 
 @dataclass(frozen=True)
+class RuneRecord:
+    """Руны игрока: ключевая руна и две ветки — числовые id и нормализованные
+    имена («ArcaneComet», «Sorcery»); имя None, если его не узнать."""
+    keystone_id: int
+    keystone: str | None
+    primary_id: int
+    primary: str | None
+    secondary_id: int
+    secondary: str | None
+
+    def to_dict(self) -> dict:
+        return {"keystone": {"id": self.keystone_id, "name": self.keystone},
+                "primary": {"id": self.primary_id, "name": self.primary},
+                "secondary": {"id": self.secondary_id, "name": self.secondary}}
+
+
+@dataclass(frozen=True)
 class PlayerRecord:
     """Один из десяти. `champion` — Id Data Dragon или None с `champion_reason`;
     `riot_id` — «Имя#тег» (в старых сборках и образце Riot — summonerName).
-    `spells` — два заклинания призывателя по слотам или None с `spells_reason`."""
+    `spells` — два заклинания призывателя по слотам или None с `spells_reason`;
+    `runes` — руны или None с `runes_reason`; `role` — роль из `position`."""
     riot_id: str
     champion: str | None
     champion_reason: str | None
@@ -212,6 +257,21 @@ class PlayerRecord:
     skin_id: int
     spells: tuple[SpellRecord, ...] | None = None
     spells_reason: str | None = "заклинания не разбирались"
+    runes: RuneRecord | None = None
+    runes_reason: str | None = "руны не разбирались"
+
+    @property
+    def role(self) -> str | None:
+        """Роль (TOP / JUNGLE / MIDDLE / BOTTOM / UTILITY) или None."""
+        return self.position if self.position in ROLES else None
+
+    @property
+    def role_reason(self) -> str | None:
+        if self.role is not None:
+            return None
+        if not self.position or self.position == "NONE":
+            return f"API не дал роль (position={self.position!r}: режим без ролей)"
+        return f"position в незнакомом формате: {self.position!r}"
 
     def to_dict(self) -> dict:
         return {"riot_id": self.riot_id, "champion": self.champion,
@@ -222,7 +282,10 @@ class PlayerRecord:
                 "scores": self.scores.to_dict(), "position": self.position,
                 "is_bot": self.is_bot, "skin_id": self.skin_id,
                 "spells": None if self.spells is None else [x.to_dict() for x in self.spells],
-                "spells_reason": self.spells_reason, "source": SOURCE}
+                "spells_reason": self.spells_reason,
+                "runes": None if self.runes is None else self.runes.to_dict(),
+                "runes_reason": self.runes_reason, "role": self.role,
+                "role_reason": self.role_reason, "source": SOURCE}
 
 
 @dataclass(frozen=True)
@@ -368,6 +431,31 @@ def parse_spells(p: Mapping) -> tuple[tuple[SpellRecord, ...] | None, str | None
     return tuple(out), None
 
 
+def rune_name(raw: Any, rid: int, table: Mapping[int, str]) -> str | None:
+    """Имя руны: из «perk_displayname_<Имя>», если имя не число; иначе по id."""
+    if isinstance(raw, str) and (m := RAW_KEYSTONE.fullmatch(raw)) and not m.group(1).isdigit():
+        return m.group(1)
+    return table.get(rid)
+
+
+def parse_runes(p: Mapping) -> tuple[RuneRecord | None, str | None]:
+    """`runes` игрока → (руны, None) или (None, причина). Не бросает."""
+    r = p.get("runes")
+    if not isinstance(r, Mapping):
+        return None, "API не дал runes"
+    vals: list[Any] = []
+    for name, key in RUNE_SLOTS:
+        d = r.get(key)
+        rid = d.get("id") if isinstance(d, Mapping) else None
+        if not isinstance(rid, int) or isinstance(rid, bool):
+            return None, f"API не дал runes.{key}.id"
+        table = KEYSTONES if name == "keystone" else RUNE_TREES
+        nm = (rune_name(d.get("rawDisplayName"), rid, table) if name == "keystone"
+              else table.get(rid))
+        vals += [rid, nm]
+    return RuneRecord(*vals), None
+
+
 def _get(d: Mapping, key: str, kind: type | tuple[type, ...], where: str):
     if not isinstance(d, Mapping) or key not in d:
         raise ParseError(f"{where}: нет поля {key}")
@@ -410,13 +498,15 @@ def _player(p: Mapping, i: int, index: Mapping[str, str] | None) -> PlayerRecord
                          _get(s, "assists", int, ws), _get(s, "creepScore", int, ws),
                          float(_get(s, "wardScore", _NUM, ws)))
     spells, spells_why = parse_spells(p)
+    runes, runes_why = parse_runes(p)
+    pos = p.get("position")
     return PlayerRecord(
         riot_id=_riot_id(p, w), champion=cid, champion_reason=why, champion_raw=raw,
         team=team, level=_get(p, "level", int, w), is_dead=_get(p, "isDead", bool, w),
         respawn_timer=float(_get(p, "respawnTimer", _NUM, w)), items=tuple(items),
-        scores=scores, position=p.get("position") or "",
+        scores=scores, position=pos if isinstance(pos, str) else "",
         is_bot=bool(p.get("isBot", False)), skin_id=int(p.get("skinID", 0)),
-        spells=spells, spells_reason=spells_why)
+        spells=spells, spells_reason=spells_why, runes=runes, runes_reason=runes_why)
 
 
 def _event(e: Mapping, i: int) -> EventRecord:

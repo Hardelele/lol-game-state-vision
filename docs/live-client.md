@@ -13,7 +13,7 @@
 | Поле | Что берём | Запись |
 | --- | --- | --- |
 | `gameData` | время матча (с), режим, номер карты | `GameSnapshot.game_time`, `game_mode`, `map_number` |
-| `allPlayers[]` | чемпион (Id Data Dragon), команда ORDER/CHAOS, riotId, уровень, `isDead`, `respawnTimer`, предметы (id, слот, число), счёт (K/D/A, CS, варды), позиция, бот, скин, заклинания призывателя (`summonerSpells`, #804) | `PlayerRecord`, `SpellRecord` |
+| `allPlayers[]` | чемпион (Id Data Dragon), команда ORDER/CHAOS, riotId, уровень, `isDead`, `respawnTimer`, предметы (id, слот, число), счёт (K/D/A, CS, варды), позиция, бот, скин, заклинания призывателя (`summonerSpells`, #804), роль (`position`) и руны (`runes`, #807) | `PlayerRecord`, `SpellRecord`, `RuneRecord` |
 | `activePlayer` | riotId, уровень, золото, `championStats` как есть | `ActivePlayerRecord`; себя находим среди десяти по riotId → `GameSnapshot.me` |
 | `events.Events[]` | `EventID`, имя, время и прочие поля (KillerName, VictimName, Assisters, DragonType, Stolen, Result…) | `EventRecord` |
 
@@ -48,6 +48,18 @@ Data Dragon); на журнале своей игры все десять све
 и `spells_reason`, остальной снимок разбирается. Все сырые значения журналов
 своей игры и их нормализация — docs/state-api.md, «Заклинания призывателя».
 Перезарядки API не отдаёт.
+
+**Роль и руны (#807).** `position` — роль драфта (`TOP`, `JUNGLE`,
+`MIDDLE`, `BOTTOM`, `UTILITY`); в тренировке `"NONE"`, в режимах без ролей
+`""` → `PlayerRecord.role = None` и `role_reason`. `runes` —
+`{keystone, primaryRuneTree, secondaryRuneTree}`, у каждого числовой `id` и
+`rawDisplayName`; имя ключевой руны — из `perk_displayname_<Имя>`, имя ветки
+— по id (`RUNE_TREES`; её ключ числовой, `perkstyle_displayname_7202`);
+числовое имя ключевой руны (так у малых рун, `perk_displayname_8226`) — по
+`KEYSTONES`. `PlayerRecord.runes` — `RuneRecord`; нет поля — `runes = None` и
+`runes_reason`. Малые руны (`activePlayer.fullRunes`) есть только у своего и
+не разбираются. Паспорт выбора игры (роль, заклинания, руны, предметы) —
+[loadouts.md](loadouts.md).
 
 **Ники в событиях.** `KillerName`/`VictimName` в журнале своей игры — это
 `riotIdGameName` (без тега), а не riotId целиком.

@@ -58,8 +58,8 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from lolstream.live_client import (EventRecord, GameSnapshot, LiveStatus, PlayerRecord, State,
-                                   status_observation)
+from lolstream.live_client import (ROLES, EventRecord, GameSnapshot, LiveStatus, PlayerRecord,
+                                   State, status_observation)
 from lolvision.match_state import NEW_GAME_BACKSTEP, MatchState
 from lolvision.passport import READERS, Passport
 from lolvision.records import ChampCtx, Event, TrackRec, UnitRec
@@ -388,6 +388,20 @@ def player_spells(p: PlayerRecord | None, why: str,
             fact([x.variant for x in p.spells], "api", age))
 
 
+def player_role_runes(p: PlayerRecord | None, why: str,
+                      age: float | None) -> tuple[dict, dict]:
+    """Роль и руны игрока API (#807) → (`role`, `runes`). Роль — `position`
+    allPlayers (TOP / JUNGLE / MIDDLE / BOTTOM / UTILITY); в режиме без ролей —
+    отказ с причиной. Руны — {keystone, primary, secondary} c id и именем."""
+    if p is None:
+        return refuse(why), refuse(why)
+    role = (fact(p.role, "api", age) if p.role is not None
+            else refuse(p.role_reason or "роли нет"))
+    runes = (fact(p.runes.to_dict(), "api", age) if p.runes is not None
+             else refuse(p.runes_reason or "рун нет"))
+    return role, runes
+
+
 def _record(rec: UnitRec | TrackRec, age: float | None) -> dict:
     """Запись records.py в выход: поля как есть, отношение и сторона — фактами."""
     d = {k: v for k, v in rec.to_dict().items() if k not in ("relation_reason", "side_reason")}
@@ -558,13 +572,14 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
 
     # --- свой игрок: статика из API, жив / мёртв — из контекста матча ---
     me_fields = ("riot_id", "champion", "team", "level", "gold", "alive", "respawn_in",
-                 "position", "stats", "spells", "spell_variants")
+                 "position", "stats", "spells", "spell_variants", "role", "runes")
     if me is None:
         me_out = {k: refuse(me_why) for k in me_fields}
     else:
         act = game.active
         mine = next((e for e in entries if e["champion"]["value"] == me.champion), None)
         spells, variants = player_spells(me, me_why, api_age)
+        role, runes = player_role_runes(me, me_why, api_age)
         why_mine = (why_match if mv is None else
                     refused_why if refused_why and not entries else
                     "своего чемпиона нет в контексте матча")
@@ -580,7 +595,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                   "position": mine["position"] if mine else refuse(why_mine),
                   "stats": (fact(dict(act.stats), "api", api_age) if act is not None
                             else refuse("нет activePlayer")),
-                  "spells": spells, "spell_variants": variants}
+                  "spells": spells, "spell_variants": variants, "role": role,
+                  "runes": runes}
 
     # --- враги с давностью места ---
     if champions["value"] is None:
@@ -691,6 +707,7 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
                            "или оно не прочитано")
 
     spells, variants = player_spells(p, why_p, api_age)
+    role, runes = player_role_runes(p, why_p, api_age)
     return {"champion": fact(c.name, roster_src, mlag), "team": fact(c.team, roster_src, mlag),
             "relation": relation,
             "riot_id": refuse(why_p) if p is None else fact(p.riot_id, "api", api_age),
@@ -698,7 +715,7 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
             "items": refuse(why_p) if p is None else
             fact([it.item_id for it in p.items], "api", api_age),
             "scores": refuse(why_p) if p is None else fact(p.scores.to_dict(), "api", api_age),
-            "spells": spells, "spell_variants": variants,
+            "spells": spells, "spell_variants": variants, "role": role, "runes": runes,
             "alive": alive, "respawn_in": respawn, "position": position,
             "map_state": fact(c.state, "inferred", mlag), "on_screen": on_screen, "hp": hp,
             "conflicts": c.conflicts}
@@ -728,6 +745,9 @@ def snapshot_schema() -> dict:
     team = {"enum": list(TEAMS)}
     rel = {"enum": list(RELATIONS)}
     spells = {"type": "array", "items": s, "minItems": 2, "maxItems": 2}
+    role = {"enum": list(ROLES)}
+    rune = _obj({"id": i, "name": ns})
+    runes = _obj({"keystone": rune, "primary": rune, "secondary": rune})
     champ = _obj({"champion": _fact_of(s), "riot_id": _fact_of(s), "team": _fact_of(team),
                   "relation": _fact_of(rel), "level": _fact_of(i), "alive": _fact_of(b),
                   "respawn_in": _fact_of(num), "position": _fact_of(uv),
@@ -735,7 +755,8 @@ def snapshot_schema() -> dict:
                   "on_screen": _fact_of(b), "hp": _fact_of(num),
                   "items": _fact_of({"type": "array", "items": i}),
                   "scores": _fact_of({"type": "object"}), "spells": _fact_of(spells),
-                  "spell_variants": _fact_of(spells), "conflicts": i})
+                  "spell_variants": _fact_of(spells), "role": _fact_of(role),
+                  "runes": _fact_of(runes), "conflicts": i})
     enemy = _obj({k: champ["properties"][k] for k in ("champion", "position", "map_state",
                                                       "alive", "respawn_in", "on_screen")})
     # Юнит и трек — запись records.py как есть (to_dict) плюс факты; поля
@@ -804,7 +825,8 @@ def snapshot_schema() -> dict:
                         "level": _fact_of(i), "gold": _fact_of(num), "alive": _fact_of(b),
                         "respawn_in": _fact_of(num), "position": _fact_of(uv),
                         "stats": _fact_of({"type": "object"}), "spells": _fact_of(spells),
-                        "spell_variants": _fact_of(spells)}),
+                        "spell_variants": _fact_of(spells), "role": _fact_of(role),
+                        "runes": _fact_of(runes)}),
             "champions": _fact_of({"type": "array", "items": champ, "maxItems": 10}),
             "enemies": _fact_of({"type": "array", "items": enemy, "maxItems": 5}),
             "camera": _obj({"center": _fact_of(uv), "spread": _fact_of(num)}),

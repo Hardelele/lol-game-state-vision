@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 
 from lolstream import state_service as ss
-from lolstream.live_client import (EventRecord, LiveStatus, SpellRecord, State, read_journal,
-                                   replay, status_observation)
+from lolstream.live_client import (EventRecord, LiveStatus, RuneRecord, SpellRecord, State,
+                                   read_journal, replay, status_observation)
 from lolstream.state_service import (FrameStatus, StateHub, StateInputs, StateServer,
                                      VisionFrame, build_snapshot, check_snapshot, match_view)
 from lolvision.match_state import API_SLACK, MatchState
@@ -957,3 +957,41 @@ def test_spells_refused_with_parse_reason_and_schema_closes_them():
     bad["me"]["spells"] = {"value": ["SummonerFlash"], "source": "api", "age": 0.0,
                            "reason": None}
     assert any("me.spells" in e for e in check_snapshot(bad))
+
+
+# ---------------------------------------------------------------- роль и руны (#807)
+
+def test_role_and_runes_of_me_and_champions_from_api():
+    inp, now = full_inputs()
+    g = inp.api.game
+    comet = RuneRecord(8229, "ArcaneComet", 8200, "Sorcery", 8300, "Inspiration")
+    players = tuple(replace(p, runes=comet, runes_reason=None) if p.champion == "Zilean" else p
+                    for p in g.players)
+    api = replace(inp.api, game=replace(g, players=players))
+    snap = build_snapshot(replace(inp, api=api), now)
+    assert check_snapshot(snap) == []
+    me = snap["me"]
+    # обезличенный журнал ранкеда: position заполнен у всех
+    assert me["role"] == {"value": "TOP", "source": "api", "age": 0.2, "reason": None}
+    assert me["runes"]["value"] == {"keystone": {"id": 8229, "name": "ArcaneComet"},
+                                    "primary": {"id": 8200, "name": "Sorcery"},
+                                    "secondary": {"id": 8300, "name": "Inspiration"}}
+    ch = by_champ(snap)
+    assert ch["Diana"]["role"]["value"] == "JUNGLE"
+    assert ch["Lux"]["runes"]["value"] is None and "runes" in ch["Lux"]["runes"]["reason"]
+
+
+def test_role_refused_without_position_and_schema_closes_it():
+    inp, now = full_inputs()
+    g = inp.api.game
+    players = tuple(replace(p, position="NONE") for p in g.players)
+    snap = build_snapshot(replace(inp, api=replace(inp.api, game=replace(g, players=players))),
+                          now)
+    assert check_snapshot(snap) == []
+    assert "режим без ролей" in snap["me"]["role"]["reason"]
+    assert all(e["role"]["value"] is None for e in snap["champions"]["value"])
+    bad = json.loads(json.dumps(build_snapshot(inp, now)))
+    bad["me"]["role"]["value"] = "SUPPORT"
+    assert any("me.role" in e for e in check_snapshot(bad))
+    no_api = build_snapshot(StateInputs(), 1.0)
+    assert no_api["me"]["runes"]["reason"] and no_api["me"]["role"]["value"] is None
