@@ -60,7 +60,8 @@ from typing import Any
 
 from lolstream.live_client import (ROLES, EventRecord, GameSnapshot, LiveStatus, PlayerRecord,
                                    State, status_observation)
-from lolvision.match_state import NEW_GAME_BACKSTEP, MatchState
+from lolvision.match_state import (NEW_GAME_BACKSTEP, WHY_NO_ENEMIES_PRACTICE, MatchState,
+                                   partial_roster)
 from lolvision.passport import READERS, Passport
 from lolvision.records import ChampCtx, Event, TrackRec, UnitRec
 
@@ -225,7 +226,8 @@ def relation_to_me(team: str, champion: str, me: PlayerRecord) -> str:
     """Отношение чемпиона к своему игроку по API: сам — его чемпион, свой —
     его команда (activePlayer среди allPlayers), иначе враг. Это факт API,
     а не цвет плашки."""
-    if champion == me.champion:
+    # Команда тоже: в тренировке бот бывает тем же чемпионом (#803).
+    if champion == me.champion and team == me.team:
         return "self"
     return "ally" if team == me.team else "enemy"
 
@@ -540,7 +542,9 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
     api_age = None if st is None or st.game_t is None else now - st.game_t
     me = None if game is None else game.my_player
     me_why = api_why or (f"свой игрок не найден: {game.me_reason}" if me is None else "")
-    players = {} if game is None else {p.champion: p for p in game.players if p.champion}
+    # По (чемпион, команда): в тренировке с ботами чемпион бывает в обеих (#803).
+    players = ({} if game is None else
+               {(p.champion, p.team): p for p in game.players if p.champion})
 
     # --- контекст матча ---
     mv = inp.match
@@ -580,6 +584,10 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
         clock = refuse(f"контекст матча без времени по API: {api_why or 'API пропал'}")
     match = {"time": clock,
              "mode": refuse(api_why) if game is None else fact(game.game_mode, "api", api_age),
+             # Тренировка (#803): API отдаёт не весь состав — `champions` только
+             # из тех, кто есть, `enemies` — отказ. Решает gameMode.
+             "practice": refuse(api_why) if game is None else
+             fact(partial_roster(game.game_mode), "api", api_age),
              "map": refuse(api_why) if game is None else
              maybe(game.map_number, "api", api_age, "API не дал mapNumber"),
              "side": refuse(me_why) if me is None else fact(me.team, "api", api_age),
@@ -617,7 +625,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
         me_out = {k: refuse(me_why) for k in me_fields}
     else:
         act = game.active
-        mine = next((e for e in entries if e["champion"]["value"] == me.champion), None)
+        mine = next((e for e in entries if e["champion"]["value"] == me.champion
+                     and e["team"]["value"] == me.team), None)
         spells, variants = player_spells(me, me_why, api_age)
         role, runes = player_role_runes(me, me_why, api_age)
         sp_ok, sp_why = reader_ok(inp.passport, "hud_spells", miss)
@@ -645,6 +654,9 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
         enemies = refuse(champions["reason"])
     elif me is None:
         enemies = refuse(f"своя сторона неизвестна: {me_why}")
+    elif partial_roster(game.game_mode):
+        # Пустой список соврал бы «врагов нет»: их не знает API.
+        enemies = refuse(WHY_NO_ENEMIES_PRACTICE)
     else:
         enemies = fact([{k: e[k] for k in ("champion", "position", "map_state", "alive",
                                             "respawn_in", "on_screen")}
@@ -700,13 +712,14 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
 
 
 def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float], float],
-              me: PlayerRecord | None, me_why: str, players: Mapping[str, PlayerRecord],
+              me: PlayerRecord | None, me_why: str,
+              players: Mapping[tuple[str, str], PlayerRecord],
               api_age: float | None, api_why: str, vis: VisionFrame | None, why_vis: str,
               lag: float | None, named: Mapping[str, UnitRec], names_ok: bool,
               names_why: str | None, seen_self: SelfSeen) -> dict:
     """Один из десяти: состояние — из записи контекста матча, статика — из API.
     Свой чемпион на кадре — ещё и по полоске self (`seen_self`, #802)."""
-    p = players.get(c.name)
+    p = players.get((c.name, c.team))
     why_p = api_why or "нет в составе API"
     if me is None:
         relation = refuse(f"своя сторона неизвестна: {me_why}")
@@ -731,7 +744,7 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
     hp = (refuse("ХП не наблюдалось") if c.hp is None or c.hp_src is None
           else fact(round(float(c.hp), 2), c.hp_src, mlag + (c.hp_age or 0.0)))
 
-    is_me = me is not None and c.name == me.champion
+    is_me = me is not None and c.name == me.champion and c.team == me.team
     by_bar = (None if vis is None or vis.units is None or not is_me
               else self_on_screen(seen_self, c.alive, lag, names_ok, names_why))
     if vis is None:
@@ -862,7 +875,8 @@ def snapshot_schema() -> dict:
             "sources": _obj({"frames": frames, "vision": vision, "match": match_src,
                              "api": api}),
             "passport": _fact_of(passport),
-            "match": _obj({"time": _fact_of(num), "mode": _fact_of(s), "map": _fact_of(i),
+            "match": _obj({"time": _fact_of(num), "mode": _fact_of(s),
+                           "practice": _fact_of(b), "map": _fact_of(i),
                            "side": _fact_of(team),
                            "state": _fact_of({"enum": ["no_game", "loading", "in_game",
                                                        "ended", "error"]})}),
@@ -1233,9 +1247,13 @@ def api_only_provider(client, clock: Callable[[], float] = time.time) -> Provide
     def provide() -> StateInputs:
         now = clock()
         status = client.status()
-        obs, _why = status_observation(status, now)   # причина видна в sources.api
+        obs, why = status_observation(status, now)
+        # Отказ по содержимому снимка (чемпион не опознан, не 5/5) — в
+        # sources.match.api_refused и причины полей; отказ по состоянию
+        # (no_game, error) виден в sources.api.
+        content = status.game is not None and status.state in (State.LOADING, State.IN_GAME)
         ms.update(now, kind="none", api=obs)
-        return StateInputs(api=status, match=match_view(ms, now))
+        return StateInputs(api=status, match=match_view(ms, now, why if content else None))
     return provide
 
 

@@ -67,7 +67,7 @@ from lolvision import ddragon, hud_panels
 from lolvision.health_bars import W as PLATE_W
 from lolvision.identity import NAME_BOX, crop_pad
 from lolvision.match_state import ApiObs
-from lolvision.minimap_champions import PORTRAIT_MIN, assign
+from lolvision.minimap_champions import PORTRAIT_MIN, assign_slots
 from lolvision.minimap_icons import (CROP, DEFAULT_RUN as MINI_RUN, MM, TEAMS, IconModel,
                                      crops, decode)
 from lolvision.name_reader import NONE, STATUS, WIN_H, WIN_W, NameReader, whiteness
@@ -258,24 +258,29 @@ class Match:
     наблюдателя (и состава по портретам HUD) — ORDER и CHAOS, у вида игрока
     цвета относительны — синие свои (`api=True`, состав из Live Client API).
     У состава из API нет порядка слотов HUD, поэтому панели и портреты не
-    читаются: жив / мёртв даёт сам API."""
+    читаются: жив / мёртв даёт сам API.
+
+    `first` — сколько записей у синих (по умолчанию пять). Меньше десяти —
+    только у состава из API в режиме неполного состава (тренировка, #803):
+    иконки назначаются лишь известным, остальные детекции — лишние."""
 
     def __init__(self, roster: list[str], model: IconModel, icons: dict,
-                 sides: tuple[str, str] = TEAMS, api: bool = False):
+                 sides: tuple[str, str] = TEAMS, api: bool = False, first: int = 5):
         self.roster = roster
-        self.sides, self.api = sides, api
+        self.sides, self.api, self.first = sides, api, first
         idx = {n: i for i, n in enumerate(model.champions)}
         self.ids = [idx[n] for n in roster]
-        self.teams = [self.ids[:5], self.ids[5:]]
+        self.teams = [self.ids[:first], self.ids[first:]]
         self.tm = None if api else hud_panels.portrait_templates({n: icons[n] for n in roster})
-        self.own = np.zeros(10, np.float32)       # видны ли портреты (portrait_own)
+        self.own = np.zeros(len(roster), np.float32)   # видны ли портреты (portrait_own)
         self.scales: list[int] | None = None
         self.me_team: str | None = None           # своя команда по API
 
     def slot(self, s: int) -> tuple[str, str]:
         """Команда и слот (L1…L5 — ORDER, R1…R5 — CHAOS) записи `s`."""
-        team = self.sides[s // 5]
-        return team, f"{'LR'[TEAMS.index(team)]}{s % 5 + 1}"
+        side, k = (0, s) if s < self.first else (1, s - self.first)
+        team = self.sides[side]
+        return team, f"{'LR'[TEAMS.index(team)]}{k + 1}"
 
 
 class LiveChampions:
@@ -379,7 +384,8 @@ class LiveChampions:
         """Состав из Live Client API (match_state.ApiObs) вместо портретов HUD;
         None — API пропал, состав снова по портретам. Возвращает причину
         отказа или None. Иконки миникарты назначаются только среди этих
-        десяти; у вида игрока синие — своя команда."""
+        десяти (в тренировке — среди тех, кого отдал API, #803); у вида
+        игрока синие — своя команда."""
         if obs is None:
             if self.match is not None and self.match.api:
                 self.match = None
@@ -397,9 +403,10 @@ class LiveChampions:
         first = obs.me_team or TEAMS[0]           # синие на миникарте
         sides = (first, TEAMS[1 - TEAMS.index(first)])
         roster = [p.name for side in sides for p in obs.players if p.team == side]
+        first = sum(p.team == first for p in obs.players)
         m = self.match
-        if m is None or not m.api or m.roster != roster or m.sides != sides:
-            m = Match(roster, self.model, self.icons, sides, api=True)
+        if m is None or not m.api or m.roster != roster or m.sides != sides or m.first != first:
+            m = Match(roster, self.model, self.icons, sides, api=True, first=first)
         m.me_team = obs.me_team
         self.match = m
         return None
@@ -489,12 +496,15 @@ class LiveChampions:
             for x0, x1 in PANEL_COLS:
                 self.bgr[y0:y1, x0:x1] = f[y0:y1, x0:x1, ::-1]
             slots = hud_panels.read_panels(self.bgr, self.digits)
-        # Только среди десяти состава: детекция без пары — «лишняя».
-        who = assign(dets, m.teams)
-        seen = {c: d for d, c in zip(dets, who) if c >= 0}
+        # Только среди состава (десяти или, в тренировке, известных): детекция
+        # без пары — «лишняя».
+        # По местам состава, а не по чемпиону: в тренировке с ботами один
+        # чемпион бывает в обеих командах (#803) — их разводит цвет иконки.
+        who = assign_slots(dets, m.teams)
+        seen = {k: d for d, k in zip(dets, who) if k >= 0}
         out = []
-        for s, (name, cid) in enumerate(zip(m.roster, m.ids)):
-            d = seen.get(cid)
+        for s, name in enumerate(m.roster):
+            d = seen.get(s)
             alive = timer = None
             if slots is not None:
                 sl = slots[s]

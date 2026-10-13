@@ -102,6 +102,16 @@ def assign(dets: list[dict], teams: list[list[int]], new_cost: float = NEW_COST)
     командой чемпиона). Детекция, которой ни один чемпион не подходит
     дешевле NEW_COST, остаётся без чемпиона.
     """
+    cand = [c for t in (0, 1) for c in teams[t]]
+    return [cand[j] if j >= 0 else -1 for j in assign_slots(dets, teams, new_cost)]
+
+
+def assign_slots(dets: list[dict], teams: list[list[int]],
+                 new_cost: float = NEW_COST) -> list[int]:
+    """То же, что `assign`, но ответ — номер места в составе (сначала
+    teams[0], затем teams[1]) или −1. Нужен, когда один чемпион в обеих
+    командах (тренировка с ботами, #803): индекс чемпиона их не различает,
+    а место — да; развести их может только цвет иконки (команда детектора)."""
     if not dets:
         return []
     cand = [(c, t) for t in (0, 1) for c in teams[t]]
@@ -117,7 +127,7 @@ def assign(dets: list[dict], teams: list[list[int]], new_cost: float = NEW_COST)
     out = [-1] * n
     for i, j in zip(rows, cols):
         if j < m:
-            out[i] = cand[j][0]
+            out[i] = j
     return out
 
 
