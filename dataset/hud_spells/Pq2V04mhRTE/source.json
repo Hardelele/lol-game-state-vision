@@ -1,0 +1,24 @@
+{
+  "video_id": "Pq2V04mhRTE",
+  "url": "https://www.youtube.com/watch?v=Pq2V04mhRTE",
+  "title": "I was forced to invade | Full game, AP Shaco",
+  "channel": "Zefath",
+  "channel_url": "https://www.youtube.com/channel/UCjNxAAHoiqileUGXXMGx3lQ",
+  "upload_date": "20261005",
+  "duration_sec": 1339,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "license": null,
+  "sampling": {
+    "fps": 1.0,
+    "crop": [
+      0.2,
+      0.74,
+      0.8,
+      1.0
+    ],
+    "tool": "tools/hud_spells.py extract (вырезы низа кадра, видео в data/videos, в Git не идёт)"
+  }
+}

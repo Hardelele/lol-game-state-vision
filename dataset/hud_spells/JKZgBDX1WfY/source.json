@@ -1,0 +1,24 @@
+{
+  "video_id": "JKZgBDX1WfY",
+  "url": "https://www.youtube.com/watch?v=JKZgBDX1WfY",
+  "title": "HOPE MEETS THE GENERAL IN HIGH ELO EUW (DETDERT)",
+  "channel": "hope",
+  "channel_url": "https://www.youtube.com/channel/UCTwR-OLS3WHZRaUKlNRZI8g",
+  "upload_date": "20261010",
+  "duration_sec": 1195,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "399",
+  "license": null,
+  "sampling": {
+    "fps": 1.0,
+    "crop": [
+      0.2,
+      0.74,
+      0.8,
+      1.0
+    ],
+    "tool": "tools/hud_spells.py extract (вырезы низа кадра, видео в data/videos, в Git не идёт)"
+  }
+}

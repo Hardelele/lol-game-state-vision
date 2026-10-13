@@ -1,0 +1,24 @@
+{
+  "video_id": "D37cbVNs0EU",
+  "url": "https://www.youtube.com/watch?v=D37cbVNs0EU",
+  "title": "Siwoo Stream Korean Challenger POV | Pantheon vs Rumble | Top Lane Proview",
+  "channel": "Pro Top Archive",
+  "channel_url": "https://www.youtube.com/channel/UC5rZXmBbWVRTTp4u9rB3y3A",
+  "upload_date": "20261001",
+  "duration_sec": 871,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "format_id": "299",
+  "license": null,
+  "sampling": {
+    "fps": 1.0,
+    "crop": [
+      0.2,
+      0.74,
+      0.8,
+      1.0
+    ],
+    "tool": "tools/hud_spells.py extract (вырезы низа кадра, видео в data/videos, в Git не идёт)"
+  }
+}
