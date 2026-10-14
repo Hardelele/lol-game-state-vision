@@ -42,7 +42,9 @@ START_SLACK_S = 90.0        # начало матча по часам не по�
 EARLY = (100.0, 190.0, 300.0, 430.0)           # с от начала отрезка: роль
 LATE_SHARE = (0.35, 0.55, 0.75, 0.92)          # доли отрезка: остальное
 MAX_FRAMES = 10
-CLOCK_TOL_S = 4.0           # прочтения часов с одним смещением — одна игра без склеек
+CLOCK_TOL_S = 8.0           # расхождение часов и ролика меньше — не вырез (кадр HLS — начало
+                            # сегмента)
+HEAVY_CUT = 0.4             # вырезано больше этой доли матча между кадрами — нарезка
 ROLE_WINDOW = (80.0, 600.0)  # с матча: где камера показывает линию
 ROLE_SHARE = 0.6
 MINIMAP_SHARE = 0.5         # миникарта найдена хотя бы на такой доле игровых кадров
@@ -201,6 +203,49 @@ def clock_games(frames: Sequence[FrameFacts]) -> list[dict]:
     return out
 
 
+def coverage(frames: Sequence[FrameFacts], tol: float = CLOCK_TOL_S) -> dict | None:
+    """Часы кадров одной игры по порядку → начало матча в ролике, сколько
+    секунд матча вырезано (`cut_s`) и в скольких местах. Прочтение, у
+    которого матч отстал от ролика больше чем на `tol` (часы «назад»), —
+    ошибка чтения или пауза: отбрасывается (`dropped`). Меньше двух
+    прочтений — None."""
+    reads = sorted((f.t, f.clock) for f in frames if f.clock is not None)
+    if not reads:
+        return None
+    # Самая длинная согласная цепочка: между соседними прочтениями матч
+    # прошёл не меньше, чем ролик (минус tol). Чужое прочтение — ошибка
+    # чтения часов или пауза игры — в цепочку не входит (`dropped`); при
+    # равной длине — цепочка с меньшим вырезом.
+    n = len(reads)
+    best = [(1, 0.0, -1)] * n                # (длина, вырез, предыдущий)
+    for j in range(n):
+        tj, cj = reads[j]
+        for i in range(j):
+            ti, ci = reads[i]
+            if cj - ci >= (tj - ti) - tol:
+                ln, cut_i, _ = best[i]
+                cand = (ln + 1, cut_i + max(0.0, (cj - ci) - (tj - ti)), i)
+                if (cand[0], -cand[1]) > (best[j][0], -best[j][1]):
+                    best[j] = cand
+    end = max(range(n), key=lambda k: (best[k][0], -best[k][1]))
+    kept, k = [], end
+    while k >= 0:
+        kept.append(reads[k])
+        k = best[k][2]
+    kept.reverse()
+    dropped = n - len(kept)
+    cuts = cut = 0.0
+    for (pt, pc), (t, c) in zip(kept, kept[1:]):
+        gap = (c - pc) - (t - pt)
+        if gap > tol:
+            cuts += 1
+            cut += gap
+    return {"start": round(kept[0][0] - kept[0][1], 1), "first_t": kept[0][0],
+            "first_clock": kept[0][1], "last_t": kept[-1][0], "last_clock": kept[-1][1],
+            "span": kept[-1][1] - kept[0][1], "cut_s": round(cut, 1), "cuts": int(cuts),
+            "reads": len(kept), "dropped": dropped}
+
+
 def decide_role(frames: Sequence[FrameFacts], match_start: float | None,
                 seg_start: float) -> tuple[str | None, str, dict]:
     """Роль по зоне камеры в начале игры: топ / мид / бот — линия, лес и река —
@@ -234,6 +279,8 @@ class Verdict:
     role: str | None
     role_source: str
     full_game: bool
+    cut_s: float | None          # секунд матча нет в ролике (по часам), None — часов нет
+    cuts: int | None
     games: list[dict]
     minimap_share: float | None
     minimap_scale: float | None
@@ -264,38 +311,38 @@ def verdict(segments: Sequence[Segment], frames: Sequence[FrameFacts], claims: d
     if votes:
         notes.append(f"вид: голоса {votes}")
 
-    # Полнота: отрезок не короче FULL_GAME_S, и (если есть часы) матч начинается
-    # в этом отрезке, без склеек.
+    # Полнота: игра видна от начала (часы у первого кадра — не позже
+    # START_SLACK_S от начала отрезка) и до конца (длина матча по часам не
+    # меньше FULL_GAME_S). Вырезы внутри (смерти, ожидание — так режут
+    # архивы стримов) не делают игру неполной: это `cut_s` — сколько секунд
+    # матча нет в ролике; сильно порезанная (> HEAVY_CUT) — нарезка.
     games = clock_games(game_frames)
     main = max(long_segs, key=lambda s: s.length) if long_segs else None
     main_i = segments.index(main) if main is not None else None
     match_start = None
     full = False
+    cov = None
     if main is not None:
-        # Игры по часам среди кадров главного отрезка. Склейка — второе
-        # начало, подтверждённое двумя прочтениями, или три разных начала;
-        # одно чужое прочтение — скорее ошибка чтения часов, это заметка.
-        mine = clock_games([f for f in game_frames if f.segment == main_i])
-        if mine:
-            g = max(mine, key=lambda x: (x["reads"], -x["first_clock"]))
-            match_start = g["start"]
-            others = sorted((x["reads"] for x in mine if x is not g), reverse=True)
-            cuts = len(mine) >= 3 or (bool(others) and others[0] >= 2)
-            if others and not cuts:
-                notes.append(f"одно прочтение часов не сходится с остальными ({len(mine)} начала)")
+        cov = coverage([f for f in game_frames if f.segment == main_i])
+        if cov is not None:
+            match_start = cov["start"]
             notes.append(f"матч начался на {match_start:.0f} с ролика "
-                         f"(игра видна с {main.start:.0f} с)")
-            length = main.end - max(main.start, match_start)
-            full = (match_start >= main.start - START_SLACK_S
-                    and match_start <= main.start + START_SLACK_S
-                    and length >= FULL_GAME_S and not cuts)
-            if cuts:
-                reasons.append(f"склейки внутри игры: часы дают {len(mine)} разных начала")
-            elif match_start > main.start + START_SLACK_S:
-                reasons.append(f"начало игры вырезано: матч начался на {match_start:.0f} с "
-                               f"ролика, игра видна с {main.start:.0f} с")
-            elif length < FULL_GAME_S:
+                         f"(игра видна с {main.start:.0f} с); вырезано {cov['cut_s']:.0f} с "
+                         f"матча в {cov['cuts']} местах")
+            if cov["dropped"]:
+                notes.append(f"прочтений часов не к месту: {cov['dropped']} (ошибка чтения "
+                             "или пауза)")
+            seen_from = cov["first_clock"] - (cov["first_t"] - main.start)
+            length = cov["last_clock"] + (main.end - cov["last_t"])
+            heavy = cov["span"] > 0 and cov["cut_s"] / cov["span"] > HEAVY_CUT
+            full = seen_from <= START_SLACK_S and length >= FULL_GAME_S and not heavy
+            if seen_from > START_SLACK_S:
+                reasons.append(f"начало игры вырезано: игра видна с {seen_from / 60:.1f} мин матча")
+            if length < FULL_GAME_S:
                 reasons.append(f"игра короче {FULL_GAME_S / 60:.0f} мин ({length / 60:.1f} мин)")
+            if heavy:
+                reasons.append(f"нарезка: вырезано {cov['cut_s']:.0f} с из {cov['span']:.0f} с "
+                               "матча между кадрами")
         else:
             full = main.length >= FULL_GAME_S
             notes.append("часы HUD не прочитаны — полнота только по раскадровке")
@@ -363,7 +410,7 @@ def verdict(segments: Sequence[Segment], frames: Sequence[FrameFacts], claims: d
         reasons.append("вид (игрока / наблюдателя) не решён")
     if claims.get("not_full"):
         reasons.append("название: нарезка / гайд / шорт")
-    if not full and main is not None and not any(r.startswith(("склейки", "начало", "игра короче",
+    if not full and main is not None and not any(r.startswith(("нарезка", "начало", "игра короче",
                                                                "самый длинный")) for r in reasons):
         reasons.append("полная игра не подтверждена")
 
@@ -380,9 +427,14 @@ def verdict(segments: Sequence[Segment], frames: Sequence[FrameFacts], claims: d
         parts.append(0.4)
     else:
         parts.append(0.0)
-    parts.append(1.0 if (full and match_start is not None) else 0.7 if full else 0.3)
+    if full and cov is not None:
+        parts.append(1.0 - min(0.5, cov["cut_s"] / max(1.0, cov["span"])))
+    else:
+        parts.append(0.7 if full else 0.3)
     conf = float(sum(parts) / len(parts))
     return Verdict(usable=usable, reasons=reasons, confidence=conf, view=view,
                    view_share=view_share, champion=champion, champion_source=csrc, role=role,
-                   role_source=rsrc, full_game=full, games=games, minimap_share=mm_share,
+                   role_source=rsrc, full_game=full,
+                   cut_s=None if cov is None else cov["cut_s"],
+                   cuts=None if cov is None else cov["cuts"], games=games, minimap_share=mm_share,
                    minimap_scale=mm_scale, hud_share=hud_share, notes=notes)

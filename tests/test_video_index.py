@@ -140,12 +140,27 @@ def test_verdict_player_full_game_webcam_over_minimap():
     assert v.games and abs(v.games[0]["start"] + 50.7) < 1
 
 
-def test_verdict_edited_video_is_not_full():
+def test_verdict_cut_video_counts_cut_seconds():
+    # Nemesis: вся игра от начала до конца, но с вырезами (~300 с матча).
     d, segs, facts = _fixture("MDS-ZGLCG5k")
     v = vv.verdict(segs, facts, d["claims"], d["champion"], 0.98)
-    assert not v.usable and not v.full_game
-    assert any(r.startswith("склейки") for r in v.reasons)
+    assert v.full_game and v.cuts >= 2 and 250 < v.cut_s < 350
     assert v.champion == "Lucian" and v.role == "mid" and v.role_source == "camera"
+    assert v.confidence < 0.95
+
+
+def test_coverage_heavy_cut_is_not_full():
+    segs = [vv.Segment(0, 1000, 100, 1.0)]
+    facts = [vv.FrameFacts(t=t, segment=0, scene="game", view_read="player", clock=c)
+             for t, c in ((100, 90), (300, 600), (500, 1100), (900, 1700))]
+    v = vv.verdict(segs, facts, {"champion": "Jax"}, None, 1.0)
+    assert not v.full_game and any(r.startswith("нарезка") for r in v.reasons)
+
+
+def test_coverage_real_time_has_no_cuts():
+    facts = [vv.FrameFacts(t=t, segment=0, clock=int(t) + 50) for t in (100, 400, 900)]
+    c = vv.coverage(facts)
+    assert c["cuts"] == 0 and c["cut_s"] == 0 and c["start"] == -50
 
 
 def test_verdict_spectator_by_storyboard_and_camera():
@@ -160,7 +175,7 @@ def test_verdict_hud_champion_without_claim():
     d, segs, facts = _fixture("ztO6wuNkO8c")
     v = vv.verdict(segs, facts, d["claims"], d["champion"], 1.0)
     assert v.champion == "Hwei" and v.champion_source == "hud"
-    assert not v.usable                                          # склейки
+    assert v.cuts >= 2                                           # монтаж с комментарием
 
 
 def test_single_clock_misread_is_not_a_cut():
@@ -168,8 +183,8 @@ def test_single_clock_misread_is_not_a_cut():
     facts = [vv.FrameFacts(t=t, segment=0, scene="game", view_read="player", clock=c)
              for t, c in ((130, 100), (230, 200), (330, 300), (530, 700), (930, 900))]
     v = vv.verdict(segs, facts, {"champion": "Jax"}, None, 1.0)
-    assert v.full_game and v.usable
-    assert any("одно прочтение часов" in n for n in v.notes)
+    assert v.full_game and v.usable and v.cut_s == 0
+    assert any("не к месту: 1" in n for n in v.notes)
 
 
 def test_verdict_not_lol():

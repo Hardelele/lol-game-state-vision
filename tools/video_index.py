@@ -86,7 +86,8 @@ COLUMNS = {
     "patch": "TEXT", "patch_source": "TEXT", "status": "TEXT",
     "view": "TEXT", "view_share": "REAL", "champion": "TEXT", "champion_source": "TEXT",
     "role": "TEXT", "role_source": "TEXT", "rank_claim": "TEXT", "champion_claim": "TEXT",
-    "role_claim": "TEXT", "full_game": "INTEGER", "usable": "INTEGER", "confidence": "REAL",
+    "role_claim": "TEXT", "full_game": "INTEGER", "cut_s": "REAL", "cuts": "INTEGER",
+    "usable": "INTEGER", "confidence": "REAL",
     "reasons": "TEXT", "notes": "TEXT", "segments": "TEXT", "games": "TEXT",
     "minimap_share": "REAL", "minimap_scale": "REAL", "hud_share": "REAL",
     "frames": "TEXT", "timing": "TEXT", "traffic_bytes": "INTEGER", "preview_s": "REAL",
@@ -401,6 +402,7 @@ def preview(rd: Readers, vid: str, since: dt.date | None, source: str,
            "champion": ver["champion"], "champion_source": ver["champion_source"],
            "role": ver["role"], "role_source": ver["role_source"],
            "full_game": int(ver["full_game"]), "usable": int(ver["usable"]),
+           "cut_s": ver["cut_s"], "cuts": ver["cuts"],
            "confidence": ver["confidence"], "reasons": ver["reasons"], "notes": ver["notes"],
            "segments": [s.to_dict() for s in segs], "games": ver["games"],
            "minimap_share": ver["minimap_share"], "minimap_scale": ver["minimap_scale"],
@@ -543,6 +545,7 @@ def reverdict(idx: Index) -> None:
                "champion": v["champion"], "champion_source": v["champion_source"],
                "role": v["role"], "role_source": v["role_source"],
                "full_game": int(v["full_game"]), "usable": int(v["usable"]),
+               "cut_s": v["cut_s"], "cuts": v["cuts"],
                "confidence": v["confidence"], "reasons": v["reasons"], "notes": v["notes"],
                "games": v["games"], "minimap_share": v["minimap_share"],
                "minimap_scale": v["minimap_scale"], "hud_share": v["hud_share"]}
@@ -569,6 +572,8 @@ def show(idx: Index, a) -> None:
         rows = [r for r in rows if a.channel.lower() in (r.get("channel") or "").lower()]
     if a.patch:
         rows = [r for r in rows if r.get("patch") == patch_calendar.norm(a.patch)]
+    if a.max_cut is not None:
+        rows = [r for r in rows if r.get("cut_s") is not None and r["cut_s"] <= a.max_cut]
     if a.minimap:
         rows = [r for r in rows if (r.get("minimap_share") or 0) >= vv.MINIMAP_SHARE]
     rows.sort(key=lambda r: (r.get("upload_date") or "", r["id"]), reverse=True)
@@ -583,7 +588,8 @@ def show(idx: Index, a) -> None:
               f"{(r.get('champion') or '-'):12} {(r.get('role') or '-'):7} "
               f"{'Y' if r.get('usable') else 'n'} {r.get('confidence') or 0:.2f} "
               f"mm={r.get('minimap_share') if r.get('minimap_share') is not None else '-'} "
-              f"{(r.get('duration') or 0) / 60:.0f}мин {start} | {r.get('channel')} | "
+              f"{(r.get('duration') or 0) / 60:.0f}мин {start} "
+              f"cut={'-' if r.get('cut_s') is None else int(r['cut_s'])} | {r.get('channel')} | "
               f"{(r.get('title') or '')[:70]}")
     print(f"всего {len(rows)}")
 
@@ -637,6 +643,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--view", choices=("player", "spectator", "unknown"))
     p.add_argument("--usable", action="store_true")
     p.add_argument("--minimap", action="store_true", help="только с видимой миникартой")
+    p.add_argument("--max-cut", type=float, default=None,
+                   help="вырезано не больше стольких секунд матча (по часам HUD)")
     p.add_argument("--channel")
     p.add_argument("--patch")
     p.add_argument("--json", action="store_true")
