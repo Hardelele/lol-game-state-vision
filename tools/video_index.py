@@ -75,6 +75,10 @@ MAIN_RUNS = Path(r"C:\develop\games\lol\lol-game-state-vision\runs")
 SCENE_NET = Path("scene_kind") / "net" / "model.pt"
 SCHEMA = 1                      # версия разбора: строки старее — повод разобрать заново
 MIN_LIST_S = 8 * 60             # короче по списку — не полная игра, кадры не тянем
+# Длиннее — стрим целиком (до 24 ч): раскадровка такого ролика — тысячи
+# кадров и ~80 МБ (lRYirSHfwcg, 23.7 ч: 8531 кадр, 11 мин на одну раскадровку).
+# Такие ролики помечаются `long` и не разбираются; `--max-hours` — поднять.
+MAX_HOURS = 3.0
 APPROX_SLACK_D = 10             # грубая дата списка: запас на округление «N weeks ago»
 CAMERA_Q = 0.35                 # качество рамки камеры не ниже — камере верим
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
@@ -323,7 +327,8 @@ def contact_sheet(path: Path, shots: list, facts: list[vv.FrameFacts], title: st
 
 
 def preview(rd: Readers, vid: str, since: dt.date | None, source: str,
-            max_frames: int = vv.MAX_FRAMES, list_entry: dict | None = None) -> dict:
+            max_frames: int = vv.MAX_FRAMES, list_entry: dict | None = None,
+            max_hours: float = MAX_HOURS) -> dict:
     """Предпросмотр и итог по одному ролику → строка индекса."""
     t0 = time.time()
     timing: dict[str, float] = {}
@@ -341,6 +346,11 @@ def preview(rd: Readers, vid: str, since: dt.date | None, source: str,
            "analyzed_at": dt.datetime.now().isoformat(timespec="seconds"), "schema": SCHEMA}
     if since is not None and upload is not None and upload < since:
         return {**row, "status": "old", "usable": 0, "reasons": [f"опубликован {upload} < {since}"],
+                "preview_s": round(time.time() - t0, 2), "traffic_bytes": traffic.bytes}
+    if info.duration > max_hours * 3600:
+        return {**row, "status": "long", "usable": 0,
+                "reasons": [f"длиннее {max_hours:g} ч ({info.duration / 3600:.1f} ч): стрим "
+                            "целиком, не разбирается"],
                 "preview_s": round(time.time() - t0, 2), "traffic_bytes": traffic.bytes}
     if info.live_status in ("is_live", "is_upcoming"):
         return {**row, "status": "live", "usable": 0, "reasons": ["трансляция идёт или будет"],
@@ -424,13 +434,15 @@ def preview(rd: Readers, vid: str, since: dt.date | None, source: str,
 # ---------------------------------------------------------------- проход
 
 
-def _keep(e: dict, since: dt.date | None) -> str | None:
+def _keep(e: dict, since: dt.date | None, max_hours: float = MAX_HOURS) -> str | None:
     """Почему запись списка не берётся (None — брать)."""
     if (e.get("url") or "").find("/shorts/") >= 0:
         return "шорт"
     dur = e.get("duration")
     if dur is not None and dur < MIN_LIST_S:
         return f"короче {MIN_LIST_S // 60} мин ({dur:.0f} с)"
+    if dur is not None and dur > max_hours * 3600:
+        return f"длиннее {max_hours:g} ч ({dur / 3600:.1f} ч)"
     if e.get("live_status") in ("is_live", "is_upcoming"):
         return "трансляция идёт или будет"
     ad = patch_calendar.parse_date(e.get("approx_date"))
@@ -440,11 +452,12 @@ def _keep(e: dict, since: dt.date | None) -> str | None:
 
 
 def run_listing(rd: Readers, idx: Index, listing: dict, source: str, since: dt.date | None,
-                force: bool, workers: int, max_videos: int | None, max_frames: int) -> dict:
+                force: bool, workers: int, max_videos: int | None, max_frames: int,
+                max_hours: float = MAX_HOURS) -> dict:
     entries = listing["entries"]
     todo, skipped, known, old_run = [], {}, 0, 0
     for e in entries:
-        why = _keep(e, since)
+        why = _keep(e, since, max_hours)
         if why is not None:
             skipped[why.split(" (")[0]] = skipped.get(why.split(" (")[0], 0) + 1
             if why.startswith("старый"):
@@ -466,14 +479,14 @@ def run_listing(rd: Readers, idx: Index, listing: dict, source: str, since: dt.d
     def one(e: dict) -> dict:
         time.sleep(VIDEO_PAUSE_S)
         try:
-            return preview(rd, e["id"], since, source, max_frames, e)
+            return preview(rd, e["id"], since, source, max_frames, e, max_hours)
         except yp.ExpiredError:
-            return preview(rd, e["id"], since, source, max_frames, e)
+            return preview(rd, e["id"], since, source, max_frames, e, max_hours)
         except yp.BotCheckError:
             # YouTube просит войти: пауза на весь поток и одна попытка ещё.
             print(f"  бот-проверка на {e['id']}: пауза {BOT_PAUSE_S:.0f} с", flush=True)
             time.sleep(BOT_PAUSE_S)
-            return preview(rd, e["id"], since, source, max_frames, e)
+            return preview(rd, e["id"], since, source, max_frames, e, max_hours)
 
     with ThreadPoolExecutor(workers) as ex:
         futs = {ex.submit(one, e): e for e in todo}
@@ -632,6 +645,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--max", type=int, default=None, help="не больше стольких роликов")
         p.add_argument("--frames", type=int, default=vv.MAX_FRAMES)
         p.add_argument("--force", action="store_true")
+        p.add_argument("--max-hours", type=float, default=MAX_HOURS,
+                       help="ролики длиннее — стрим целиком, не разбираются")
 
     p = sub.add_parser("channel")
     p.add_argument("url")
@@ -680,14 +695,15 @@ def main(argv: list[str] | None = None) -> int:
         url = channel_url(a.url, a.tab)
         listing = yp.list_playlist(url, a.limit)
         run_listing(rd, idx, listing, f"channel:{url}", since, a.force, a.workers, a.max,
-                    a.frames)
+                    a.frames, a.max_hours)
     elif a.cmd == "search":
         listing = yp.search(a.query, a.n)
         run_listing(rd, idx, listing, f"search:{a.query}", since, a.force, a.workers, a.max,
-                    a.frames)
+                    a.frames, a.max_hours)
     elif a.cmd == "video":
         listing = {"entries": [{"id": v} for v in a.ids]}
-        run_listing(rd, idx, listing, "video", since, a.force, a.workers, a.max, a.frames)
+        run_listing(rd, idx, listing, "video", since, a.force, a.workers, a.max, a.frames,
+                    a.max_hours)
     return 0
 
 
