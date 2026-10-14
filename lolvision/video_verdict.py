@@ -77,23 +77,22 @@ def timeline(tiles: Sequence[tuple[float, str]], duration: float,
     step = (tiles[-1][0] - tiles[0][0]) / max(1, len(tiles) - 1) if len(tiles) > 1 else 10.0
     out: list[Segment] = []
     start = last = None
-    n = g = 0
+    n = g = gap = 0                 # gap — не-игра после последнего игрового кадра
     for t, cls in tiles:
-        game = cls in IN_GAME
-        if game:
+        if cls in IN_GAME:
+            if start is not None and t - last > break_s + step:
+                out.append(Segment(start, min(duration, last + step), n, g / max(1, n)))
+                start = None
             if start is None:
                 start, n, g = t, 0, 0
-            elif t - last > break_s + step:
-                out.append(Segment(start, min(duration, last + step), n, g / max(1, n)))
-                start, n, g = t, 0, 0
+            n, g, gap = n + gap + 1, g + 1, 0
             last = t
-            n, g = n + 1, g + 1
         elif start is not None:
             if t - last > break_s:
                 out.append(Segment(start, min(duration, last + step), n, g / max(1, n)))
-                start = None
+                start, gap = None, 0
             else:
-                n += 1
+                gap += 1
     if start is not None:
         out.append(Segment(start, min(duration, last + step), n, g / max(1, n)))
     return out

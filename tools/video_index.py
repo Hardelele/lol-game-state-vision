@@ -28,12 +28,23 @@
     python tools/video_index.py show --champion Volibear --role top --usable
 """
 
+# ruff: noqa: E402 — потоки BLAS задаются до импорта numpy
 from __future__ import annotations
+
+import os
+
+# Скромно по ЦП (машина — рабочая, на ней же игра, coach и сервис): потоки
+# BLAS/OpenMP — до импорта numpy, приоритет процесса — ниже обычного (его
+# наследуют yt-dlp и ffmpeg). Замер 2026-10-15: два прохода по 2–4 ролика без
+# этого заняли ~98% ЦП.
+CPU_THREADS = os.environ.get("VIDEO_INDEX_THREADS", "2")
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, CPU_THREADS)
 
 import argparse
 import datetime as dt
 import json
-import os
 import sqlite3
 import sys
 import threading
@@ -67,6 +78,7 @@ MIN_LIST_S = 8 * 60             # короче по списку — не пол
 APPROX_SLACK_D = 10             # грубая дата списка: запас на округление «N weeks ago»
 CAMERA_Q = 0.35                 # качество рамки камеры не ниже — камере верим
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
+BOT_PAUSE_S = 300.0             # пауза после «Sign in to confirm you're not a bot»
 
 COLUMNS = {
     "id": "TEXT PRIMARY KEY", "channel": "TEXT", "channel_id": "TEXT", "sources": "TEXT",
@@ -80,6 +92,29 @@ COLUMNS = {
     "frames": "TEXT", "timing": "TEXT", "traffic_bytes": "INTEGER", "preview_s": "REAL",
     "analyzed_at": "TEXT", "schema": "INTEGER", "error": "TEXT", "eye": "TEXT",
 }
+
+
+def be_nice() -> str:
+    """Приоритет процесса «ниже обычного» (Windows) или nice 10; потоки
+    OpenCV и torch — CPU_THREADS. Возвращает, что сделано."""
+    n = int(CPU_THREADS)
+    cv2.setNumThreads(n)
+    try:
+        import torch
+        torch.set_num_threads(n)
+    except ImportError:
+        pass
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k32.SetPriorityClass.restype = wintypes.BOOL
+        ok = k32.SetPriorityClass(k32.GetCurrentProcess(), 0x4000)   # BELOW_NORMAL
+        return f"приоритет BelowNormal {'задан' if ok else 'НЕ задан'}, потоков {n}"
+    os.nice(10)
+    return f"nice 10, потоков {n}"
 
 
 # ---------------------------------------------------------------- индекс
@@ -241,6 +276,17 @@ def analyze_frame(rd: Readers, rgb: np.ndarray, t: float, seg: int) -> tuple[vv.
 # ---------------------------------------------------------------- ролик
 
 
+def _rle(tile_cls: list[tuple[float, str]]) -> list:
+    """Лента раскадровки сжато: [[t начала, класс, число кадров], ...]."""
+    out: list = []
+    for t, c in tile_cls:
+        if out and out[-1][1] == c:
+            out[-1][2] += 1
+        else:
+            out.append([round(t, 1), c, 1])
+    return out
+
+
 def _jpeg(path: Path, rgb: np.ndarray, width: int = 1280) -> None:
     h, w = rgb.shape[:2]
     img = cv2.resize(rgb, (width, round(h * width / w)), interpolation=cv2.INTER_AREA)
@@ -359,7 +405,9 @@ def preview(rd: Readers, vid: str, since: dt.date | None, source: str,
            "segments": [s.to_dict() for s in segs], "games": ver["games"],
            "minimap_share": ver["minimap_share"], "minimap_scale": ver["minimap_scale"],
            "hud_share": ver["hud_share"],
-           "frames": {"facts": [f.to_dict() for f in facts], "champion": champ},
+           "frames": {"facts": [f.to_dict() for f in facts], "champion": champ,
+                      "tiles_game_share": round(share, 4), "tiles": _rle(tile_cls),
+                      "description": info.description[:2000]},
            "timing": timing, "traffic_bytes": traffic.bytes,
            "preview_s": round(time.time() - t0, 2), "error": None}
     (d / "facts.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -413,6 +461,11 @@ def run_listing(rd: Readers, idx: Index, listing: dict, source: str, since: dt.d
             return preview(rd, e["id"], since, source, max_frames, e)
         except yp.ExpiredError:
             return preview(rd, e["id"], since, source, max_frames, e)
+        except yp.BotCheckError:
+            # YouTube просит войти: пауза на весь поток и одна попытка ещё.
+            print(f"  бот-проверка на {e['id']}: пауза {BOT_PAUSE_S:.0f} с", flush=True)
+            time.sleep(BOT_PAUSE_S)
+            return preview(rd, e["id"], since, source, max_frames, e)
 
     with ThreadPoolExecutor(workers) as ex:
         futs = {ex.submit(one, e): e for e in todo}
@@ -454,6 +507,50 @@ def channel_url(url: str, tab: str) -> str:
 
 
 # ---------------------------------------------------------------- show
+
+
+def reverdict(idx: Index) -> None:
+    """Итог заново по сохранённым отрезкам и фактам кадров — без сети и
+    моделей: после правки правил lolvision/video_verdict.py."""
+    dd = DDragon(DD_VERSION, root=DDRAGON)
+    champs = dd.champions()
+    names = video_meta.ChampionNames({c: v["name"] for c, v in champs.items()})
+
+    def support_like(cid):
+        tags = (champs.get(cid) or {}).get("tags")
+        return None if tags is None else ("Support" in tags and "Marksman" not in tags)
+
+    n = changed = 0
+    for r in idx.rows():
+        if r.get("status") != "done" or not r.get("frames"):
+            continue
+        fr = json.loads(r["frames"])
+        segs = [vv.Segment(x["start"], x["end"], x["tiles"], x["game_share"])
+                for x in json.loads(r.get("segments") or "[]")]
+        facts = [vv.FrameFacts.from_dict(f) for f in fr["facts"]]
+        claims = video_meta.claims(r.get("title") or "", fr.get("description") or "", names)
+        if r.get("champion_claim"):
+            claims["champion"] = r["champion_claim"]
+        claims["role"] = claims["role"] or r.get("role_claim")
+        champ = fr.get("champion")
+        tiles_share = fr.get("tiles_game_share")
+        if tiles_share is None:
+            tiles_share = (sum(s.tiles * s.game_share for s in segs)
+                           / max(1, sum(s.tiles for s in segs))) if segs else 0.0
+        cid = (champ or {}).get("champion") or claims["champion"]
+        v = vv.verdict(segs, facts, claims, champ, tiles_share, support_like(cid)).to_dict()
+        new = {"id": r["id"], "view": v["view"], "view_share": v["view_share"],
+               "champion": v["champion"], "champion_source": v["champion_source"],
+               "role": v["role"], "role_source": v["role_source"],
+               "full_game": int(v["full_game"]), "usable": int(v["usable"]),
+               "confidence": v["confidence"], "reasons": v["reasons"], "notes": v["notes"],
+               "games": v["games"], "minimap_share": v["minimap_share"],
+               "minimap_scale": v["minimap_scale"], "hud_share": v["hud_share"]}
+        n += 1
+        changed += int(bool(r.get("usable")) != bool(new["usable"])
+                       or r.get("champion") != new["champion"] or r.get("role") != new["role"])
+        idx.put(new)
+    print(f"итог пересчитан у {n} роликов, изменился у {changed}")
 
 
 def show(idx: Index, a) -> None:
@@ -516,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
     def common(p):
         p.add_argument("--since", default="season",
                        help="patch | season | 26.18 | 2026-09-01 | all")
-        p.add_argument("--workers", type=int, default=3)
+        p.add_argument("--workers", type=int, default=1)
         p.add_argument("--max", type=int, default=None, help="не больше стольких роликов")
         p.add_argument("--frames", type=int, default=vv.MAX_FRAMES)
         p.add_argument("--force", action="store_true")
@@ -544,6 +641,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--patch")
     p.add_argument("--json", action="store_true")
     sub.add_parser("assets")
+    sub.add_parser("reverdict")
     a = ap.parse_args(argv)
 
     if a.cmd == "assets":
@@ -553,7 +651,11 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "show":
         show(idx, a)
         return 0
+    if a.cmd == "reverdict":
+        reverdict(idx)
+        return 0
     since = None if a.since == "all" else patch_calendar.since(a.since)
+    print(be_nice(), flush=True)
     rd = Readers(runs_dir(a.runs), a.device)
     if a.cmd == "channel":
         url = channel_url(a.url, a.tab)

@@ -56,20 +56,53 @@ HEAD_STEP = 300_000
 HEAD_MAX = 4_000_000
 TIMEOUT = 30.0
 EXPIRE_SLACK = 300.0       # с: адрес, которому жить меньше, считается истёкшим
-WORKERS = 8
+WORKERS = 4                # параллельных загрузок кадров одного ролика
 
 
 class ExpiredError(RuntimeError):
     """Адрес потока истёк — взять сведения о ролике заново."""
 
 
+# Запросы к YouTube через yt-dlp — по одному и не чаще MIN_GAP: при 4
+# параллельных `-J` на втором десятке роликов YouTube ответил «Sign in to
+# confirm you're not a bot» (замер 2026-10-15, 3 из 24). Временные сбои
+# (бот-проверка, обрыв прокси, сброс соединения) повторяются с паузой RETRY_S.
+MIN_GAP = 2.0
+RETRIES = 3
+RETRY_S = (20.0, 60.0, 180.0)
+TRANSIENT = ("not a bot", "Unable to connect to proxy", "10054", "10061", "timed out",
+             "HTTP Error 429", "HTTP Error 5", "Connection reset", "Read timed out")
+_gate = threading.Lock()
+_last = [0.0]
+
+
+class BotCheckError(RuntimeError):
+    """YouTube просит войти («not a bot») и после повторов."""
+
+
 def _run(args: list[str], timeout: float = 120.0) -> str:
-    p = subprocess.run(YTDLP + args, capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=timeout)
-    if p.returncode != 0:
-        tail = " | ".join(p.stderr.strip().splitlines()[-2:])
-        raise RuntimeError(f"yt-dlp {' '.join(args[-1:])}: {tail[:400]}")
-    return p.stdout
+    err = ""
+    for i in range(RETRIES + 1):
+        with _gate:
+            wait = _last[0] + MIN_GAP - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            _last[0] = time.time()
+        try:
+            p = subprocess.run(YTDLP + args, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired:
+            err = f"timed out ({timeout:.0f} с)"
+        else:
+            if p.returncode == 0:
+                return p.stdout
+            err = " | ".join(p.stderr.strip().splitlines()[-2:])[:400]
+        if i < RETRIES and any(k in err for k in TRANSIENT):
+            time.sleep(RETRY_S[min(i, len(RETRY_S) - 1)])
+            continue
+        break
+    cls = BotCheckError if "not a bot" in err else RuntimeError
+    raise cls(f"yt-dlp {' '.join(args[-1:])}: {err}")
 
 
 # ---------------------------------------------------------------- списки
@@ -195,11 +228,18 @@ class Traffic:
             self.requests += 1
 
 
-def _get(url: str, traffic: Traffic, limit: int | None = None) -> bytes:
-    with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
-        data = r.read() if limit is None else r.read(limit)
-    traffic.add(len(data))
-    return data
+def _get(url: str, traffic: Traffic, limit: int | None = None, tries: int = 3) -> bytes:
+    for i in range(tries):
+        try:
+            with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
+                data = r.read() if limit is None else r.read(limit)
+            traffic.add(len(data))
+            return data
+        except OSError:
+            if i == tries - 1:
+                raise
+            time.sleep(2.0 * (i + 1))
+    raise RuntimeError("недостижимо")
 
 
 # ---------------------------------------------------------------- раскадровка
@@ -270,7 +310,7 @@ def parse_playlist(text: str) -> list[Segment]:
 def decode_first(data: bytes) -> tuple[np.ndarray | None, bool]:
     """Первый кадр из начала сегмента MPEG-TS через ffmpeg: (RGB, чисто ли).
     Нечисто — ffmpeg ругался на обрыв, кадр мог выйти с серыми полосами."""
-    p = subprocess.run(["ffmpeg", "-v", "error", "-i", "pipe:0", "-frames:v", "1",
+    p = subprocess.run(["ffmpeg", "-v", "error", "-threads", "1", "-i", "pipe:0", "-frames:v", "1",
                         "-f", "image2pipe", "-vcodec", "bmp", "-"],
                        input=data, capture_output=True, timeout=60)
     if not p.stdout:
@@ -312,9 +352,18 @@ class HlsStream:
             self._segs = parse_playlist(_get(self.url, self.traffic).decode("utf-8", "replace"))
         return self._segs
 
-    def shot(self, t: float) -> Shot:
+    def shot(self, t: float, tries: int = 3) -> Shot:
         """Кадр не позже `t`: первый (ключевой) кадр сегмента, в который попала
-        секунда `t`. Ошибка сети или распаковки — Shot без картинки с причиной."""
+        секунда `t`. Ошибка сети или распаковки — Shot без картинки с причиной
+        (после `tries` попыток)."""
+        for i in range(tries):
+            s = self._shot(t)
+            if s.image is not None or i == tries - 1:
+                return s
+            time.sleep(2.0 * (i + 1))
+        return s
+
+    def _shot(self, t: float) -> Shot:
         t0 = time.time()
         try:
             segs = self.segments()

@@ -1,0 +1,990 @@
+{
+ "6k5-vQ_GQ_M": {
+  "title": "Kiin Stream Korean Challenger POV | Volibear vs Corki | Top Lane Proview",
+  "duration": 1482.0,
+  "segments": [
+   {
+    "start": 9.9,
+    "end": 1462.2,
+    "tiles": 149,
+    "game_share": 0.987
+   }
+  ],
+  "facts": [
+   {
+    "t": 107.2,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.998,
+    "view_read": "player",
+    "panel_score": 0.614,
+    "clock": 158,
+    "minimap_found": false,
+    "minimap_score": 0.14,
+    "minimap_scale": 0.695,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Volibear",
+      0.729
+     ],
+     [
+      "Aurora",
+      0.294
+     ],
+     [
+      "Yorick",
+      0.268
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 197.2,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.614,
+    "clock": 248,
+    "minimap_found": false,
+    "minimap_score": 0.148,
+    "minimap_scale": 0.69,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Volibear",
+      0.709
+     ],
+     [
+      "Aurora",
+      0.308
+     ],
+     [
+      "Zilean",
+      0.276
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 304.233,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.614,
+    "clock": null,
+    "minimap_found": false,
+    "minimap_score": 0.141,
+    "minimap_scale": 0.745,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Braum",
+      0.43
+     ],
+     [
+      "Ashe",
+      0.425
+     ],
+     [
+      "Nami",
+      0.415
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 435.3,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.998,
+    "view_read": "player",
+    "panel_score": 0.587,
+    "clock": 486,
+    "minimap_found": false,
+    "minimap_score": 0.142,
+    "minimap_scale": 0.81,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Volibear",
+      0.615
+     ],
+     [
+      "Nunu",
+      0.272
+     ],
+     [
+      "Ashe",
+      0.264
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 517.333,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.999,
+    "view_read": "player",
+    "panel_score": 0.579,
+    "clock": 568,
+    "minimap_found": false,
+    "minimap_score": 0.143,
+    "minimap_scale": 0.815,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Volibear",
+      0.635
+     ],
+     [
+      "Yorick",
+      0.274
+     ],
+     [
+      "Ashe",
+      0.26
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 804.333,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.634,
+    "clock": 855,
+    "minimap_found": false,
+    "minimap_score": 0.122,
+    "minimap_scale": 0.68,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Volibear",
+      0.855
+     ],
+     [
+      "Aurora",
+      0.351
+     ],
+     [
+      "Ashe",
+      0.332
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1097.6,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.57,
+    "clock": 1148,
+    "minimap_found": false,
+    "minimap_score": 0.14,
+    "minimap_scale": 0.68,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Volibear",
+      0.664
+     ],
+     [
+      "Aurora",
+      0.338
+     ],
+     [
+      "Braum",
+      0.329
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1344.433,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.614,
+    "clock": null,
+    "minimap_found": false,
+    "minimap_score": 0.143,
+    "minimap_scale": 0.74,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Nami",
+      0.353
+     ],
+     [
+      "Braum",
+      0.337
+     ],
+     [
+      "Jinx",
+      0.334
+     ]
+    ],
+    "error": null
+   }
+  ],
+  "champion": {
+   "champion": "Volibear",
+   "score": 0.61,
+   "second": "Ashe",
+   "margin": 0.31,
+   "frames": 8,
+   "reason": null
+  },
+  "claims": {
+   "champion": "Volibear",
+   "role": "top",
+   "rank": "challenger",
+   "not_full": false
+  }
+ },
+ "AQjeX5bL644": {
+  "title": "Volibear Top vs Ambessa - KR Master Patch 26.20",
+  "duration": 1955.0,
+  "segments": [
+   {
+    "start": 9.9,
+    "end": 1955.0,
+    "tiles": 196,
+    "game_share": 1.0
+   }
+  ],
+  "facts": [
+   {
+    "t": 107.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.289,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.619,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.1426,
+     0.2598
+    ],
+    "zone": "top",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 197.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.325,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.622,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.1934,
+     0.2129
+    ],
+    "zone": "top",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 305.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.234,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.6,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.1973,
+     0.2598
+    ],
+    "zone": "top",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 437.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.263,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.639,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.1387,
+     0.3926
+    ],
+    "zone": "top",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 689.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.275,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.565,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.127,
+     0.2871
+    ],
+    "zone": "top",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 1073.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.275,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.652,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.8105,
+     0.877
+    ],
+    "zone": "bot",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 1463.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.281,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.572,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.6816,
+     0.6465
+    ],
+    "zone": "river",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 1793.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "spectator",
+    "panel_score": 0.28,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.618,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.4629,
+     0.459
+    ],
+    "zone": "river",
+    "champion_top": [],
+    "error": null
+   }
+  ],
+  "champion": null,
+  "claims": {
+   "champion": "Volibear",
+   "role": "top",
+   "rank": "master",
+   "not_full": false
+  }
+ },
+ "MDS-ZGLCG5k": {
+  "title": "THEY WANTED TO FF... SO I WENT CRAZY ON LUCIAN MID",
+  "duration": 1432.0,
+  "segments": [
+   {
+    "start": 59.3,
+    "end": 1392.5,
+    "tiles": 138,
+    "game_share": 0.978
+   }
+  ],
+  "facts": [
+   {
+    "t": 156.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.598,
+    "clock": 151,
+    "minimap_found": true,
+    "minimap_score": 0.57,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.5059,
+     0.498
+    ],
+    "zone": "mid",
+    "champion_top": [
+     [
+      "Lucian",
+      0.448
+     ],
+     [
+      "Kalista",
+      0.386
+     ],
+     [
+      "Ashe",
+      0.373
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 246.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": null,
+    "panel_score": 0.51,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.554,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.502,
+     0.541
+    ],
+    "zone": "mid",
+    "champion_top": [],
+    "error": null
+   },
+   {
+    "t": 354.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.538,
+    "clock": 397,
+    "minimap_found": true,
+    "minimap_score": 0.521,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.4473,
+     0.584
+    ],
+    "zone": "mid",
+    "champion_top": [
+     [
+      "Lucian",
+      0.629
+     ],
+     [
+      "Anivia",
+      0.44
+     ],
+     [
+      "Kalista",
+      0.376
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 486.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.515,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.544,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.5488,
+     0.4746
+    ],
+    "zone": "mid",
+    "champion_top": [
+     [
+      "Lucian",
+      0.8
+     ],
+     [
+      "Talon",
+      0.35
+     ],
+     [
+      "Anivia",
+      0.347
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 522.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.575,
+    "clock": 565,
+    "minimap_found": true,
+    "minimap_score": 0.549,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.5605,
+     0.4941
+    ],
+    "zone": "mid",
+    "champion_top": [
+     [
+      "Lucian",
+      0.515
+     ],
+     [
+      "Kalista",
+      0.385
+     ],
+     [
+      "Ashe",
+      0.365
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 792.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.549,
+    "clock": 986,
+    "minimap_found": true,
+    "minimap_score": 0.566,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.9121,
+     0.8027
+    ],
+    "zone": "bot",
+    "champion_top": [
+     [
+      "Lucian",
+      0.659
+     ],
+     [
+      "Anivia",
+      0.407
+     ],
+     [
+      "Talon",
+      0.404
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1056.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.555,
+    "clock": 1351,
+    "minimap_found": true,
+    "minimap_score": 0.544,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.4238,
+     0.1348
+    ],
+    "zone": "top",
+    "champion_top": [
+     [
+      "Lucian",
+      0.575
+     ],
+     [
+      "Maokai",
+      0.312
+     ],
+     [
+      "Orianna",
+      0.299
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1284.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.452,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.583,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.8926,
+     0.7988
+    ],
+    "zone": "bot",
+    "champion_top": [
+     [
+      "Lucian",
+      0.716
+     ],
+     [
+      "XinZhao",
+      0.301
+     ],
+     [
+      "Kalista",
+      0.286
+     ]
+    ],
+    "error": null
+   }
+  ],
+  "champion": {
+   "champion": "Lucian",
+   "score": 0.62,
+   "second": "Kalista",
+   "margin": 0.272,
+   "frames": 7,
+   "reason": null
+  },
+  "claims": {
+   "champion": "Lucian",
+   "role": "mid",
+   "rank": "challenger",
+   "not_full": false
+  }
+ },
+ "ztO6wuNkO8c": {
+  "title": "THE FAIREST MAGE IN THE GAME?",
+  "duration": 1718.0,
+  "segments": [
+   {
+    "start": 89.4,
+    "end": 1698.1,
+    "tiles": 162,
+    "game_share": 1.0
+   }
+  ],
+  "facts": [
+   {
+    "t": 183.5,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.568,
+    "clock": 147,
+    "minimap_found": true,
+    "minimap_score": 0.543,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.4199,
+     0.6074
+    ],
+    "zone": "mid",
+    "champion_top": [
+     [
+      "Hwei",
+      0.591
+     ],
+     [
+      "Velkoz",
+      0.313
+     ],
+     [
+      "Vex",
+      0.265
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 277.933,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.528,
+    "clock": 253,
+    "minimap_found": true,
+    "minimap_score": 0.502,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.4707,
+     0.5918
+    ],
+    "zone": "mid",
+    "champion_top": [
+     [
+      "Hwei",
+      0.304
+     ],
+     [
+      "Locke",
+      0.291
+     ],
+     [
+      "Ashe",
+      0.277
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 386.333,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.445,
+    "clock": 373,
+    "minimap_found": true,
+    "minimap_score": 0.546,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.5879,
+     0.5957
+    ],
+    "zone": "river",
+    "champion_top": [
+     [
+      "Hwei",
+      0.417
+     ],
+     [
+      "Locke",
+      0.333
+     ],
+     [
+      "Nunu",
+      0.318
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 514.433,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.591,
+    "clock": 530,
+    "minimap_found": true,
+    "minimap_score": 0.557,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.5137,
+     0.4434
+    ],
+    "zone": "jungle",
+    "champion_top": [
+     [
+      "Hwei",
+      0.385
+     ],
+     [
+      "Veigar",
+      0.376
+     ],
+     [
+      "Braum",
+      0.369
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 649.567,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.538,
+    "clock": 731,
+    "minimap_found": true,
+    "minimap_score": 0.534,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.5254,
+     0.5215
+    ],
+    "zone": "mid",
+    "champion_top": [
+     [
+      "Hwei",
+      0.662
+     ],
+     [
+      "Velkoz",
+      0.348
+     ],
+     [
+      "Vex",
+      0.288
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 970.3,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.557,
+    "clock": null,
+    "minimap_found": true,
+    "minimap_score": 0.502,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.4199,
+     0.4395
+    ],
+    "zone": "river",
+    "champion_top": [
+     [
+      "Braum",
+      0.381
+     ],
+     [
+      "Veigar",
+      0.376
+     ],
+     [
+      "Nunu",
+      0.366
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1294.967,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.604,
+    "clock": 1606,
+    "minimap_found": true,
+    "minimap_score": 0.536,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.498,
+     0.4551
+    ],
+    "zone": "river",
+    "champion_top": [
+     [
+      "Braum",
+      0.368
+     ],
+     [
+      "Nunu",
+      0.311
+     ],
+     [
+      "Nami",
+      0.298
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1563.967,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.579,
+    "clock": 1878,
+    "minimap_found": true,
+    "minimap_score": 0.481,
+    "minimap_scale": 1.0,
+    "camera": [
+     0.8223,
+     0.6816
+    ],
+    "zone": "jungle",
+    "champion_top": [
+     [
+      "Hwei",
+      0.643
+     ],
+     [
+      "Velkoz",
+      0.358
+     ],
+     [
+      "Vex",
+      0.312
+     ]
+    ],
+    "error": null
+   }
+  ],
+  "champion": {
+   "champion": "Hwei",
+   "score": 0.427,
+   "second": "Veigar",
+   "margin": 0.138,
+   "frames": 8,
+   "reason": null
+  },
+  "claims": {
+   "champion": null,
+   "role": null,
+   "rank": "challenger",
+   "not_full": false
+  }
+ }
+}
