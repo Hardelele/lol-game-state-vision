@@ -149,6 +149,17 @@ class DDragon:
         return self._get(f"img/champion/splash/{cid}_{num}.jpg",
                          f"{BASE}/cdn/img/champion/splash/{cid}_{num}.jpg")
 
+    def spell_icon(self, file: str) -> Path:
+        """Иконка умения чемпиона по имени файла из `champion_full(...)["spells"]
+        [i]["image"]["full"]` (64×64) — от облика не зависит (#843)."""
+        v = self.version
+        return self._get(f"{v}/img/spell/{file}", f"{BASE}/cdn/{v}/img/spell/{file}")
+
+    def summoners(self) -> dict[str, dict]:
+        """Id заклинания призывателя («SummonerSmite») → запись summoner.json."""
+        v = self.version
+        return self._json(f"{v}/summoner.json", f"{BASE}/cdn/{v}/data/en_US/summoner.json")["data"]
+
     def all_icons(self) -> dict[str, Path]:
         return {cid: self.icon(cid) for cid in sorted(self.champions())}
 
