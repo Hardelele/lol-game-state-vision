@@ -72,7 +72,7 @@ def test_turret_places_are_their_lanes_and_nexus_turrets_are_not_mid():
     ("Turret_TOrder_L1_P5_3625540808_0", ("ORDER", "nexus", 5)),
     ("Turret_TOrder_L2_P3_1509986696_0", ("ORDER", "top", 3)),
     ("Turret_TChaos_L0_P1_478290356_0", ("CHAOS", "bot", 1)),
-    ("Turret_T2_C_05_A", ("CHAOS", "nexus", 5)),
+    ("Turret_T2_C_05_A", ("CHAOS", "mid", 3)), ("Turret_T1_C_01_A", ("ORDER", "nexus", 4)),
     ("Turret_T1_R_03_A", ("ORDER", "bot", 3)),
     ("SRU_Baron", None), (None, None)])
 def test_turret_names_of_the_api(name, key):

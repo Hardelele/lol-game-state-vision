@@ -116,6 +116,7 @@ _NEW_NAME = re.compile(r"_T(Order|Chaos)_L([012])_P([1-5])", re.IGNORECASE)
 _OLD_NAME = re.compile(r"_T([12])_([LCR])_0?([1-5])_", re.IGNORECASE)
 _LANE_NEW = {"0": "bot", "1": "mid", "2": "top"}
 _LANE_OLD = {"L": "top", "C": "mid", "R": "bot"}
+_OLD_MID = {5: 3, 4: 2, 3: 1, 2: 5, 1: 4}
 
 
 # ---------------------------------------------------------------- координаты
@@ -156,7 +157,8 @@ FOUNTAIN_CROP = {t: tuple(round(c, 4) for c in world_to_crop(*FOUNTAIN_WORLD[t])
 # ---------------------------------------------------------------- башни
 
 def turret_key(name: str) -> tuple[str, str, int] | None:
-    """Имя башни API (Turret_TChaos_L1_P4_…, старое Turret_T2_C_05_A) →
+    """Имя башни API (Turret_TChaos_L1_P4_…; старое Turret_T2_C_05_A: на миде
+    C_05 — внешняя, C_01 / C_02 — нексуса, на L / R 03 … 01 — как P) →
     (команда, линия, номер P); башни нексуса — линия `nexus`. Не башня — None."""
     if not isinstance(name, str):
         return None
@@ -169,6 +171,8 @@ def turret_key(name: str) -> tuple[str, str, int] | None:
             return None
         team, lane, pos = ("ORDER" if m.group(1) == "1" else "CHAOS"), \
             _LANE_OLD[m.group(2).upper()], int(m.group(3))
+        if lane == "mid":           # C_05 внешняя … C_03 у ингибитора, C_01 / C_02 нексуса
+            pos = _OLD_MID[pos]
     return team, ("nexus" if pos in (4, 5) else lane), pos
 
 
