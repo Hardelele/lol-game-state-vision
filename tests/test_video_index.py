@@ -384,11 +384,11 @@ def test_title_guide_word_does_not_veto_clock_confirmed_game():
     assert not v.usable and any(r.startswith("название") for r in v.reasons)
 
 
-def test_role_claim_beats_camera_and_ganks_mean_jungle():
+def test_role_claim_beats_camera():
     segs = [vv.Segment(0, 1500, 150, 1.0)]
     zones = ("mid", "top", "top", "top", "river")             # xZE9zQ2SVrc
     facts = [vv.FrameFacts(t=t, segment=0, scene="game", view_read="spectator", zone=z)
              for t, z in zip((108, 196, 308, 437, 558), zones)]
-    assert vv.decide_role(facts, None, 0.0)[0] == "jungle"
-    v = vv.verdict(segs, facts, {"champion": "Volibear", "role": "top"}, None, 1.0)
-    assert (v.role, v.role_source) == ("top", "claim≠camera")
+    assert vv.decide_role(facts, None, 0.0)[0] == "top"        # ганки лесника на топ
+    v = vv.verdict(segs, facts, {"champion": "Volibear", "role": "jungle"}, None, 1.0)
+    assert (v.role, v.role_source) == ("jungle", "claim≠camera")

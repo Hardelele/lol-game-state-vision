@@ -313,10 +313,9 @@ def decide_role(frames: Sequence[FrameFacts], match_start: float | None,
     best = max(lanes, key=lanes.get)
     if wild / total >= ROLE_SHARE:
         return "jungle", f"камера в лесу/реке {wild} из {total}", dict(zones)
-    # Лесник ходит по линиям: xZE9zQ2SVrc (Volibear Jungle) — mid, top ×3,
-    # river; линейный игрок в первые 10 мин на одной линии.
-    if sum(v > 0 for v in lanes.values()) >= 2 and wild >= 1:
-        return "jungle", f"камера на разных линиях и в лесу: {dict(zones)}", dict(zones)
+    # Правило «разные линии плюс лес — лесник» (xZE9zQ2SVrc: Volibear Jungle с
+    # ганками на топ) проверено против заявок 341 ролика: верных 275 и
+    # неверных 14 против 264 и 6 без него — точность ниже, правило не взято.
     if lanes[best] / total >= ROLE_SHARE:
         return best, f"камера на линии {best} {lanes[best]} из {total}", dict(zones)
     return None, f"зоны камеры спорные: {dict(zones)}", dict(zones)
