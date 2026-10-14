@@ -404,7 +404,10 @@ def preview(rd: Readers, vid: str, since: dt.date | None, source: str,
         if s.image is not None:
             _jpeg(d / f"t{int(s.t):05d}.jpg", s.image)
     if tiles:
-        strip = np.concatenate([tl.image for tl in tiles[::max(1, len(tiles) // 24)][:24]], 1)
+        # Клетки последнего листа бывают ниже (120 вместо 180 px) — к одному размеру.
+        th, tw = tiles[0].image.shape[:2]
+        strip = np.concatenate([cv2.resize(tl.image, (tw, th)) for tl in
+                                tiles[::max(1, len(tiles) // 24)][:24]], 1)
         _jpeg(d / "storyboard.jpg", strip, width=min(3840, strip.shape[1]))
     contact_sheet(d / "sheet.jpg", shots, facts, info.title, ver)
     shot_s = [s.seconds for s in shots]
