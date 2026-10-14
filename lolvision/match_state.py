@@ -74,12 +74,16 @@ import numpy as np
 from lolvision.geometry import Projection
 from lolvision.records import (ChampCtx, DeathEvent, Event, MinimapChamp, RespawnEvent,
                                RosterEvent, UnitRec)
+from lolvision.rift import FOUNTAIN_CROP
 
 TEAMS = ("ORDER", "CHAOS")
 # Карты по mapNumber Live Client API.
 RIFT, ABYSS = 11, 12                   # Ущелье призывателей, Воющая бездна (ARAM)
-# Фонтаны в долях миникарты (u вправо, v вниз), как у рамки камеры.
-FOUNTAIN = {"ORDER": (0.035, 0.965), "CHAOS": (0.965, 0.035)}
+# Фонтаны в долях рамки миникарты (u вправо, v вниз), как у рамки камеры и
+# иконок: мировые места возрождения lolvision/rift.FOUNTAIN_WORLD, переведённые
+# с учётом окантовки (#823). CHAOS — наблюдаемое место после шести
+# возрождений (0.9775, 0.0903); прежнее (0.965, 0.035) ошибалось на 0.055 по v.
+FOUNTAIN = dict(FOUNTAIN_CROP)
 # Воющая бездна (#803): миникарта — диагональ от ORDER слева снизу к CHAOS
 # справа сверху. CHAOS — замер по кадрам своего экрана (×1.2): возродившийся
 # Sylas стоит в (0.941, 0.147) четыре кадра подряд (6 с), камера своего

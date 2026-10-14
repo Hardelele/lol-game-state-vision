@@ -32,12 +32,10 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from lolvision.minimap_icons import MM, TEAMS
+# Поле карты на экране 1920×1080 (пиксели, поле 0…MAP_UNITS) — замер Replay
+# API; хранится в одном месте, lolvision/rift.py (#823).
+from lolvision.rift import MAP_UNITS, MAP_X0, MAP_X1, MAP_Y_BOTTOM, MAP_Y_TOP, REF_H, REF_W
 
-MAP_UNITS = 14800.0
-# Миникарта на экране 1920×1080 (пиксели), поле 0…MAP_UNITS.
-MAP_X0, MAP_X1 = 1653.96, 1908.42
-MAP_Y_TOP, MAP_Y_BOTTOM = 812.06, 1065.97
-REF_W, REF_H = 1920, 1080
 MIN_SCORE_VOTE = 0.6      # детекции для голосования за состав
 NEW_COST = 4.0            # цена «детекция не из состава», в единицах −log p
 

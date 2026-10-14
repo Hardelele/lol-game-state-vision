@@ -214,6 +214,7 @@ Command-line scripts in `tools/`, run as `python tools/<script>.py`:
 | `patch_infer.py` | Patch model on one frame for the live mode: frame preparation on the GPU, camera, vote spread and heatmap, share of "scene" patches |
 | `checkpoints.py` | The one place checkpoints are read; the model type comes from the checkpoint |
 | `geometry.py` | Map units, the screen → ground homography and `Projection`, the one frame ↔ map conversion (unit tracker, match context) |
+| `rift.py` | Summoner's Rift places (#823): minimap crop fractions (with the frame border) ↔ world units ↔ map field fractions in one place, fountains, the 22 turrets, pits, and the meaning of a place — lane / jungle / river / base, own or enemy half, nearest standing turret and distance, "at the turret", error and confidence (`place` in [docs/state-api.md](docs/state-api.md)) |
 | `mask_frames.py` | HUD/minimap mask and the crop of the unmasked area by layout |
 | `records.py` | Typed records of a live frame row (unit, track, minimap champion, match-context champion, events) with `to_dict`; the row carries `schema` |
 | `passport.py` | Stream passport: what the session expects (source, resolution, game rect, minimap found/scale/score, view spectator / player / unknown, Live Client API state) and which readers may answer; a reader whose requirements fail outputs `null` with a reason; items are rechecked on signals, not per frame ([docs/passport.md](docs/passport.md)) |
