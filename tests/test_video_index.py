@@ -335,3 +335,29 @@ def test_index_put_merge_and_skip(tmp_path):
     assert vi._keep({"duration": 1500, "approx_date": "2026-08-01"}, since).startswith("старый")
     assert vi._keep({"duration": 1500, "approx_date": "2026-10-01"}, since) is None
     assert vi.channel_url("@X/videos", "streams") == "https://www.youtube.com/@X/streams"
+
+
+def test_three_games_in_one_segment_split_by_clock():
+    # BA7OqRG-QVE: «Varus · Renekton · Jayce», игры подряд без загрузки между ними.
+    d, segs, facts = _fixture("BA7OqRG-QVE")
+    claims = dict(d["claims"], champions=["Varus", "Renekton", "Jayce"])
+    v = vv.verdict(segs, facts, claims, d["champion"], 1.0)
+    assert len(v.games) == 3 and v.usable and v.champion == "Varus"
+    assert [g["champion_claim"] for g in v.games] == ["Varus", "Renekton", "Jayce"]
+    assert v.games[0]["champion"] == "Varus" and v.games[0]["full"]
+    assert any("3 игр подряд" in n for n in v.notes)
+
+
+def test_split_ignores_single_backward_misread():
+    fs = [vv.FrameFacts(t=t, segment=0, clock=c)
+          for t, c in ((100, 60), (300, 260), (500, 20), (700, 660), (900, 860))]
+    assert len(vv.split_games(fs)) == 1
+    fs[3:] = [vv.FrameFacts(t=700, segment=0, clock=220), vv.FrameFacts(t=900, segment=0,
+                                                                         clock=420)]
+    assert [len(p) for p in vv.split_games(fs)] == [2, 3]
+
+
+def test_cut_archive_is_full_with_cut_seconds():
+    d, segs, facts = _fixture("_508S98our4")
+    v = vv.verdict(segs, facts, d["claims"], d["champion"], 1.0)
+    assert v.usable and v.full_game and v.cuts == 6 and 250 < v.cut_s < 300

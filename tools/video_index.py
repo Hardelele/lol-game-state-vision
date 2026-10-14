@@ -269,7 +269,7 @@ def analyze_frame(rd: Readers, rgb: np.ndarray, t: float, seg: int) -> tuple[vv.
     scores = None
     if f.view_read == "player" and panel is not None and panel.score >= hud_spells.PRESENT_MIN:
         scores = rd.abilities.scores(img, panel)
-        top = np.argsort(-scores)[:3]
+        top = np.argsort(-scores)[:5]
         f.champion_top = [(rd.abilities.ids[i], float(scores[i])) for i in top]
     return f, scores
 
@@ -366,6 +366,10 @@ def preview(rd: Readers, vid: str, since: dt.date | None, source: str,
         hls = yp.HlsStream(info, traffic)
         shots = hls.shots([t for _, t in picks])
     timing["shots"] = time.time() - t1
+    bad = [s for s in shots if s.image is None]
+    if shots and len(bad) > len(shots) // 2:
+        # Сеть, а не ролик: строка — ошибка, следующий проход разберёт заново.
+        raise RuntimeError(f"кадры не получены: {len(bad)} из {len(shots)} ({bad[0].error})")
     t1 = time.time()
     facts, per_frame = [], []
     for (seg, _), s in zip(picks, shots):

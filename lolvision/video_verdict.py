@@ -34,6 +34,8 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 
+from lolvision import hud_champion as hc
+
 IN_GAME = ("game", "tab", "shop")
 BREAK_S = 45.0              # не-игра дольше — отрезок игры кончился
 MIN_SEGMENT_S = 240.0       # короче — не игра, а заставка/клип: кадры не берутся
@@ -246,6 +248,55 @@ def coverage(frames: Sequence[FrameFacts], tol: float = CLOCK_TOL_S) -> dict | N
             "reads": len(kept), "dropped": dropped}
 
 
+GAME_RESET_S = 60.0         # часы назад больше чем на столько — следующая игра
+
+
+def split_games(frames: Sequence[FrameFacts], reset: float = GAME_RESET_S
+                ) -> list[list[FrameFacts]]:
+    """Кадры одного отрезка → игры по сбросу часов. Кадр без часов идёт в
+    игру предыдущего кадра с часами (до первого — в первую). Одиночное
+    прочтение «назад» (ошибка чтения), за которым часы снова прежние, игру
+    не начинает."""
+    fs = sorted(frames, key=lambda f: f.t)
+    clocked = [f for f in fs if f.clock is not None]
+    cut_at: list[float] = []
+    for i in range(1, len(clocked)):
+        prev, cur = clocked[i - 1], clocked[i]
+        if cur.clock < prev.clock - reset:
+            nxt = clocked[i + 1] if i + 1 < len(clocked) else None
+            # Следующее прочтение согласно с новым (матч прошёл не меньше
+            # ролика) и не согласно с прежним — новая игра; согласно с
+            # прежним — это прочтение было ошибкой.
+            with_prev = nxt is not None and \
+                nxt.clock - prev.clock >= (nxt.t - prev.t) - CLOCK_TOL_S
+            if not with_prev:
+                cut_at.append(cur.t)
+    out: list[list[FrameFacts]] = [[]]
+    for f in fs:
+        if cut_at and f.t >= cut_at[0]:
+            cut_at.pop(0)
+            if out[-1]:
+                out.append([])
+        out[-1].append(f)
+    return [p for p in out if p]
+
+
+def champion_from_tops(frames: Sequence[FrameFacts], min_score: float = hc.MIN_SCORE,
+                       margin: float = hc.MARGIN) -> dict:
+    """Свой чемпион по лучшим оценкам кадров (`champion_top`): у чемпиона,
+    которого среди лучших кадра нет, оценка — худшая из лучших этого кадра."""
+    tops = [dict(f.champion_top) for f in frames if f.champion_top]
+    if not tops:
+        return {"champion": None, "score": None, "margin": None}
+    names = sorted({c for t in tops for c in t})
+    m = {c: sum(t.get(c, min(t.values())) for t in tops) / len(tops) for c in names}
+    order = sorted(m, key=m.get, reverse=True)
+    a = order[0]
+    gap = m[a] - (m[order[1]] if len(order) > 1 else 0.0)
+    ok = m[a] >= min_score and gap >= margin
+    return {"champion": a if ok else None, "score": round(m[a], 3), "margin": round(gap, 3)}
+
+
 def decide_role(frames: Sequence[FrameFacts], match_start: float | None,
                 seg_start: float) -> tuple[str | None, str, dict]:
     """Роль по зоне камеры в начале игры: топ / мид / бот — линия, лес и река —
@@ -311,44 +362,82 @@ def verdict(segments: Sequence[Segment], frames: Sequence[FrameFacts], claims: d
     if votes:
         notes.append(f"вид: голоса {votes}")
 
-    # Полнота: игра видна от начала (часы у первого кадра — не позже
-    # START_SLACK_S от начала отрезка) и до конца (длина матча по часам не
-    # меньше FULL_GAME_S). Вырезы внутри (смерти, ожидание — так режут
-    # архивы стримов) не делают игру неполной: это `cut_s` — сколько секунд
-    # матча нет в ролике; сильно порезанная (> HEAVY_CUT) — нарезка.
-    games = clock_games(game_frames)
+    # Игры главного отрезка. Архивы клеят 2–3 игры подряд без загрузки между
+    # ними — раскадровка видит один отрезок, а часы HUD сбрасываются
+    # (BA7OqRG-QVE: 1546 с на 1497 с ролика, 756 с на 2346 с). Каждая игра:
+    # видна от начала (матч начался не раньше чем за START_SLACK_S до начала
+    # её участка ролика) и до конца (длина матча не меньше FULL_GAME_S).
+    # Вырезы внутри (смерти, ожидание — так режут архивы стримов) игру не
+    # портят: это `cut_s`; сильно порезанная (> HEAVY_CUT) — нарезка.
+    games_clock = clock_games(game_frames)
     main = max(long_segs, key=lambda s: s.length) if long_segs else None
     main_i = segments.index(main) if main is not None else None
     match_start = None
     full = False
     cov = None
-    if main is not None:
-        cov = coverage([f for f in game_frames if f.segment == main_i])
-        if cov is not None:
-            match_start = cov["start"]
-            notes.append(f"матч начался на {match_start:.0f} с ролика "
-                         f"(игра видна с {main.start:.0f} с); вырезано {cov['cut_s']:.0f} с "
-                         f"матча в {cov['cuts']} местах")
-            if cov["dropped"]:
-                notes.append(f"прочтений часов не к месту: {cov['dropped']} (ошибка чтения "
-                             "или пауза)")
-            seen_from = cov["first_clock"] - (cov["first_t"] - main.start)
-            length = cov["last_clock"] + (main.end - cov["last_t"])
-            heavy = cov["span"] > 0 and cov["cut_s"] / cov["span"] > HEAVY_CUT
-            full = seen_from <= START_SLACK_S and length >= FULL_GAME_S and not heavy
-            if seen_from > START_SLACK_S:
-                reasons.append(f"начало игры вырезано: игра видна с {seen_from / 60:.1f} мин матча")
-            if length < FULL_GAME_S:
-                reasons.append(f"игра короче {FULL_GAME_S / 60:.0f} мин ({length / 60:.1f} мин)")
-            if heavy:
-                reasons.append(f"нарезка: вырезано {cov['cut_s']:.0f} с из {cov['span']:.0f} с "
-                               "матча между кадрами")
-        else:
-            full = main.length >= FULL_GAME_S
-            notes.append("часы HUD не прочитаны — полнота только по раскадровке")
-            if not full:
-                reasons.append(f"самый длинный отрезок игры {main.length / 60:.1f} мин "
-                               f"< {FULL_GAME_S / 60:.0f}")
+    game_rows: list[dict] = []
+    main_frames = [f for f in game_frames if f.segment == main_i]
+    parts = split_games(main_frames) if main is not None else []
+    covs = [coverage(p) for p in parts]
+    for k, (part, c) in enumerate(zip(parts, covs)):
+        if c is None:
+            continue
+        lower = main.start if k == 0 else max(f.t for f in parts[k - 1])
+        nxt = next((x for x in covs[k + 1:] if x is not None), None)
+        end = main.end if nxt is None else nxt["start"]
+        length = c["last_clock"] + (end - c["last_t"])
+        heavy = c["span"] > 0 and c["cut_s"] / c["span"] > HEAVY_CUT
+        why = []
+        if c["start"] < lower - START_SLACK_S:
+            why.append(f"начало игры вырезано: игра видна с "
+                       f"{(lower - c['start']) / 60:.1f} мин матча")
+        if length < FULL_GAME_S:
+            why.append(f"игра короче {FULL_GAME_S / 60:.0f} мин ({length / 60:.1f} мин)")
+        if heavy:
+            why.append(f"нарезка: вырезано {c['cut_s']:.0f} с из {c['span']:.0f} с "
+                       "матча между кадрами")
+        cd = champion_from_tops(part)
+        game_rows.append({"start": c["start"], "end": round(end, 1),
+                          "length": round(length, 1), "first_clock": c["first_clock"],
+                          "last_clock": c["last_clock"], "reads": c["reads"],
+                          "dropped": c["dropped"], "cut_s": c["cut_s"], "cuts": c["cuts"],
+                          "full": not why, "why": why, "champion": cd["champion"],
+                          "champion_score": cd["score"], "champion_margin": cd["margin"],
+                          "frames": len(part), "_cov": c, "_part": part})
+    if game_rows:
+        g = max(game_rows, key=lambda x: (x["full"], x["frames"], x["length"]))
+        cov, full, match_start = g["_cov"], g["full"], g["start"]
+        reasons.extend(g["why"])
+        notes.append(f"матч начался на {match_start:.0f} с ролика "
+                     f"(игра видна с {main.start:.0f} с); вырезано {cov['cut_s']:.0f} с "
+                     f"матча в {cov['cuts']} местах")
+        if cov["dropped"]:
+            notes.append(f"прочтений часов не к месту: {cov['dropped']} (ошибка чтения или пауза)")
+        if len(game_rows) > 1:
+            notes.append(f"в ролике {len(game_rows)} игр подряд (по сбросу часов); "
+                         f"полных {sum(x['full'] for x in game_rows)}; разобрана "
+                         f"{game_rows.index(g) + 1}-я")
+        role_frames = g["_part"]
+        if len(game_rows) > 1 or champ is None:
+            champ = {"champion": g["champion"], "margin": g["champion_margin"],
+                     "score": g["champion_score"],
+                     "reason": None if g["champion"] else "по кадрам этой игры не решён"}
+    elif main is not None:
+        role_frames = main_frames
+        full = main.length >= FULL_GAME_S
+        notes.append("часы HUD не прочитаны — полнота только по раскадровке")
+        if not full:
+            reasons.append(f"самый длинный отрезок игры {main.length / 60:.1f} мин "
+                           f"< {FULL_GAME_S / 60:.0f}")
+    else:
+        role_frames = []
+    # «Varus · Renekton · Jayce» в названии ролика из трёх игр — по порядку.
+    named = claims.get("champions") or []
+    if len(game_rows) > 1 and len(named) == len(game_rows):
+        for x, c in zip(game_rows, named):
+            x["champion_claim"] = c
+    games = [{k: v for k, v in x.items() if not k.startswith("_")} for x in game_rows]
+    games = games or games_clock
     if tiles_game_share < 0.05 or main is None:
         reasons.append(f"игры почти нет: {tiles_game_share:.0%} кадров раскадровки"
                        if tiles_game_share < 0.05 else
@@ -375,7 +464,7 @@ def verdict(segments: Sequence[Segment], frames: Sequence[FrameFacts], claims: d
         reasons.append("свой чемпион неизвестен")
 
     # Роль.
-    role, rnote, _ = decide_role(game_frames, match_start, main.start if main else 0.0)
+    role, rnote, _ = decide_role(role_frames, match_start, main.start if main else 0.0)
     rsrc = "camera" if role else "unknown"
     rclaim = claims.get("role")
     if role is None and rclaim:

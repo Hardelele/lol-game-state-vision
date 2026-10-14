@@ -986,5 +986,525 @@
    "rank": "challenger",
    "not_full": false
   }
+ },
+ "BA7OqRG-QVE": {
+  "title": "Kingen Stream Korean Challenger POV | Varus · Renekton · Jayce  | Top Lane Proview",
+  "duration": 4286.0,
+  "segments": [
+   {
+    "start": 10.0,
+    "end": 4266.1,
+    "tiles": 427,
+    "game_share": 1.0
+   }
+  ],
+  "facts": [
+   {
+    "t": 108.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.996,
+    "view_read": "player",
+    "panel_score": 0.64,
+    "clock": 156,
+    "minimap_found": false,
+    "minimap_score": 0.181,
+    "minimap_scale": 0.745,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Varus",
+      0.688
+     ],
+     [
+      "Lillia",
+      0.288
+     ],
+     [
+      "Vladimir",
+      0.26
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 195.033,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.998,
+    "view_read": "player",
+    "panel_score": 0.578,
+    "clock": null,
+    "minimap_found": false,
+    "minimap_score": 0.174,
+    "minimap_scale": 0.8,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Varus",
+      0.501
+     ],
+     [
+      "Lillia",
+      0.28
+     ],
+     [
+      "Senna",
+      0.275
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 304.433,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.996,
+    "view_read": "player",
+    "panel_score": 0.647,
+    "clock": 353,
+    "minimap_found": false,
+    "minimap_score": 0.18,
+    "minimap_scale": 0.745,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Braum",
+      0.427
+     ],
+     [
+      "Xerath",
+      0.386
+     ],
+     [
+      "Ashe",
+      0.381
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 439.433,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.997,
+    "view_read": "player",
+    "panel_score": 0.589,
+    "clock": 488,
+    "minimap_found": false,
+    "minimap_score": 0.178,
+    "minimap_scale": 0.81,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Varus",
+      0.74
+     ],
+     [
+      "Vladimir",
+      0.364
+     ],
+     [
+      "Hwei",
+      0.308
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1497.267,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.573,
+    "clock": 1546,
+    "minimap_found": false,
+    "minimap_score": null,
+    "minimap_scale": null,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Varus",
+      0.878
+     ],
+     [
+      "Vladimir",
+      0.422
+     ],
+     [
+      "Swain",
+      0.353
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 2346.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.991,
+    "view_read": "player",
+    "panel_score": 0.5,
+    "clock": 756,
+    "minimap_found": false,
+    "minimap_score": 0.174,
+    "minimap_scale": 0.745,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ashe",
+      0.421
+     ],
+     [
+      "Nami",
+      0.418
+     ],
+     [
+      "Viktor",
+      0.393
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 3200.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.969,
+    "view_read": "player",
+    "panel_score": 0.609,
+    "clock": 541,
+    "minimap_found": false,
+    "minimap_score": 0.18,
+    "minimap_scale": 0.81,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Karma",
+      0.272
+     ],
+     [
+      "Orianna",
+      0.261
+     ],
+     [
+      "Nunu",
+      0.253
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 3924.1,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.982,
+    "view_read": "player",
+    "panel_score": 0.668,
+    "clock": 1265,
+    "minimap_found": false,
+    "minimap_score": null,
+    "minimap_scale": null,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ryze",
+      0.357
+     ],
+     [
+      "Vayne",
+      0.35
+     ],
+     [
+      "Xerath",
+      0.342
+     ]
+    ],
+    "error": null
+   }
+  ],
+  "champion": {
+   "champion": null,
+   "score": 0.39,
+   "second": "Locke",
+   "margin": 0.141,
+   "frames": 8,
+   "reason": "лучший Varus 0.39 ниже 0.4"
+  },
+  "claims": {
+   "champion": "Varus",
+   "role": "top",
+   "rank": "challenger",
+   "not_full": false
+  }
+ },
+ "_508S98our4": {
+  "title": "Kingen Stream Korean Challenger POV | Ambessa vs Fiora | Top Lane Proview",
+  "duration": 1148.0,
+  "segments": [
+   {
+    "start": 9.9,
+    "end": 1138.1,
+    "tiles": 114,
+    "game_share": 1.0
+   }
+  ],
+  "facts": [
+   {
+    "t": 108.0,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.983,
+    "view_read": "player",
+    "panel_score": 0.547,
+    "clock": 179,
+    "minimap_found": false,
+    "minimap_score": 0.175,
+    "minimap_scale": 0.73,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ambessa",
+      0.876
+     ],
+     [
+      "Galio",
+      0.409
+     ],
+     [
+      "Mel",
+      0.38
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 196.833,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.997,
+    "view_read": "player",
+    "panel_score": 0.48,
+    "clock": null,
+    "minimap_found": false,
+    "minimap_score": null,
+    "minimap_scale": null,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ambessa",
+      0.467
+     ],
+     [
+      "Sylas",
+      0.263
+     ],
+     [
+      "Shen",
+      0.243
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 304.667,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.974,
+    "view_read": "player",
+    "panel_score": 0.613,
+    "clock": 406,
+    "minimap_found": false,
+    "minimap_score": null,
+    "minimap_scale": null,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ambessa",
+      0.741
+     ],
+     [
+      "Galio",
+      0.352
+     ],
+     [
+      "Jayce",
+      0.338
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 403.267,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.998,
+    "view_read": "player",
+    "panel_score": 0.58,
+    "clock": 531,
+    "minimap_found": false,
+    "minimap_score": null,
+    "minimap_scale": null,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ambessa",
+      0.892
+     ],
+     [
+      "Galio",
+      0.423
+     ],
+     [
+      "Mel",
+      0.398
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 439.267,
+    "segment": 0,
+    "scene": "tab",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.545,
+    "clock": 589,
+    "minimap_found": false,
+    "minimap_score": null,
+    "minimap_scale": null,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ambessa",
+      0.606
+     ],
+     [
+      "Kayn",
+      0.308
+     ],
+     [
+      "Jayce",
+      0.267
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 625.8,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 0.993,
+    "view_read": "player",
+    "panel_score": 0.599,
+    "clock": 828,
+    "minimap_found": false,
+    "minimap_score": null,
+    "minimap_scale": null,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ambessa",
+      0.73
+     ],
+     [
+      "Mel",
+      0.334
+     ],
+     [
+      "Graves",
+      0.329
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 854.1,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.519,
+    "clock": 1148,
+    "minimap_found": false,
+    "minimap_score": 0.15,
+    "minimap_scale": 0.68,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Kayn",
+      0.346
+     ],
+     [
+      "Volibear",
+      0.317
+     ],
+     [
+      "Zilean",
+      0.304
+     ]
+    ],
+    "error": null
+   },
+   {
+    "t": 1042.8,
+    "segment": 0,
+    "scene": "game",
+    "scene_p": 1.0,
+    "view_read": "player",
+    "panel_score": 0.603,
+    "clock": 1391,
+    "minimap_found": false,
+    "minimap_score": 0.175,
+    "minimap_scale": 0.73,
+    "camera": null,
+    "zone": null,
+    "champion_top": [
+     [
+      "Ambessa",
+      0.782
+     ],
+     [
+      "Galio",
+      0.378
+     ],
+     [
+      "Mel",
+      0.36
+     ]
+    ],
+    "error": null
+   }
+  ],
+  "champion": {
+   "champion": "Ambessa",
+   "score": 0.665,
+   "second": "Galio",
+   "margin": 0.387,
+   "frames": 8,
+   "reason": null
+  },
+  "claims": {
+   "champion": "Ambessa",
+   "role": "top",
+   "rank": "challenger",
+   "not_full": false
+  }
  }
 }
