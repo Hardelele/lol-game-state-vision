@@ -497,14 +497,19 @@ def verdict(segments: Sequence[Segment], frames: Sequence[FrameFacts], claims: d
 
     if view == "unknown":
         reasons.append("вид (игрока / наблюдателя) не решён")
-    if claims.get("not_full"):
+    # «Guide», «highlights» в названии — отказ, только если часы не подтвердили
+    # полную игру: «… Gameplay Guide» у jl2jxc2ukcc — целая игра с комментарием.
+    title_veto = bool(claims.get("not_full")) and not (full and cov is not None)
+    if title_veto:
         reasons.append("название: нарезка / гайд / шорт")
+    elif claims.get("not_full"):
+        notes.append("в названии «гайд / нарезка», но часы показывают целую игру")
     if not full and main is not None and not any(r.startswith(("нарезка", "начало", "игра короче",
                                                                "самый длинный")) for r in reasons):
         reasons.append("полная игра не подтверждена")
 
     usable = full and view in ("player", "spectator") and champion is not None \
-        and not claims.get("not_full")
+        and not title_veto
 
     # Уверенность: согласие признаков.
     parts = [view_share if view != "unknown" else 0.0]

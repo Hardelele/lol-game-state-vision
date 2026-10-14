@@ -372,3 +372,13 @@ def test_rate_bucket_limits_speed():
     assert 0.2 < dt_s < 1.0
     b.set(0)
     b.take(10**9)                            # без предела — сразу
+
+
+def test_title_guide_word_does_not_veto_clock_confirmed_game():
+    d, segs, facts = _fixture("6k5-vQ_GQ_M")
+    claims = dict(d["claims"], not_full=True)          # «... Gameplay Guide»
+    v = vv.verdict(segs, facts, claims, d["champion"], 0.99)
+    assert v.usable and any("гайд" in n for n in v.notes)
+    d, segs, facts = _fixture("AQjeX5bL644")           # наблюдатель: часов нет
+    v = vv.verdict(segs, facts, dict(d["claims"], not_full=True), None, 1.0)
+    assert not v.usable and any(r.startswith("название") for r in v.reasons)
