@@ -61,9 +61,10 @@ from typing import Any
 from lolstream.live_client import (ROLES, EventRecord, GameSnapshot, LiveStatus, PlayerRecord,
                                    State, status_observation)
 from lolvision.match_state import (NEW_GAME_BACKSTEP, WHY_NO_ENEMIES_PRACTICE, MatchState,
-                                   partial_roster)
+                                   partial_roster, rift)
 from lolvision.passport import READERS, Passport
 from lolvision.records import ChampCtx, Event, TrackRec, UnitRec
+from lolvision.rift import describe_crop, fallen_turrets
 
 SCHEMA = 1
 HOST = "127.0.0.1"
@@ -233,6 +234,38 @@ def maybe(value: Any, source: str, age: float | None, reason: str) -> dict:
 
 def _uv(u: float, v: float) -> dict:
     return {"u": round(float(u), 4), "v": round(float(v), 4)}
+
+
+@dataclass(frozen=True)
+class MapCtx:
+    """Что нужно для смысла места (#823): своя команда (None — не знаем),
+    павшие башни по событиям API (None — API нет, павшие неизвестны) и почему
+    смысла нет вовсе (не Ущелье) или None."""
+    own_team: str | None
+    fallen: frozenset | None
+    why_not: str | None
+
+
+def map_ctx(game: GameSnapshot | None, me: PlayerRecord | None) -> MapCtx:
+    """Своя команда, павшие башни (TurretKilled за матч) и годится ли карта."""
+    if game is not None and not rift(game.map_number):
+        why = f"смысл места есть только для Ущелья (mapNumber {game.map_number})"
+    else:
+        why = None
+    fallen = None if game is None else fallen_turrets(
+        e.data.get("TurretKilled") for e in game.events if e.name == "TurretKilled")
+    return MapCtx(None if me is None else me.team, fallen, why)
+
+
+def place_fact(c: ChampCtx, mc: MapCtx, age: float, with_turrets: bool = False) -> dict:
+    """Место чемпиона со смыслом (#823): мировые и доли поля, зона, половина,
+    башня, ямы — lolvision.rift по месту контекста матча (доли рамки)."""
+    if c.u is None or c.v is None or c.src is None:
+        return refuse("место не наблюдалось")
+    if mc.why_not:
+        return refuse(mc.why_not)
+    return fact(describe_crop(c.u, c.v, c.src, mc.own_team, mc.fallen, with_turrets),
+                c.src, age)
 
 
 # ---------------------------------------------------------------- правила
@@ -675,6 +708,7 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
 
     # --- десять чемпионов ---
     entries: list[dict] = []
+    mc = map_ctx(game, me)
     if mv is None:
         champions = refuse(why_match)
     elif not mv.champs:
@@ -684,12 +718,12 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
         for c in mv.champs:
             entries.append(_champion(c, mv.roster_src, mlag, mage, me, me_why, players, api_age,
                                      api_why, vis, why_vis, lag, named, names_ok, names_why,
-                                     seen_self))
+                                     seen_self, mc))
         champions = fact(entries, mv.roster_src, mlag)
 
     # --- свой игрок: статика из API, жив / мёртв — из контекста матча ---
     me_fields = ("riot_id", "champion", "team", "level", "gold", "alive", "respawn_in",
-                 "position", "stats", "spells", "spell_variants", "role", "runes",
+                 "position", "place", "stats", "spells", "spell_variants", "role", "runes",
                  "spells_ready", "spells_hud")
     if me is None:
         me_out = {k: refuse(me_why) for k in me_fields}
@@ -714,6 +748,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
                   "respawn_in": mine["respawn_in"] if mine else refuse(why_mine),
                   # место своего — то же, что у его записи в champions (#802)
                   "position": mine["position"] if mine else refuse(why_mine),
+                  # смысл места своего — со списком всех живых башен (#823)
+                  "place": mine["place"] if mine else refuse(why_mine),
                   "stats": (fact(dict(act.stats), "api", api_age) if act is not None
                             else refuse("нет activePlayer")),
                   "spells": spells, "spell_variants": variants, "role": role,
@@ -750,8 +786,8 @@ def build_snapshot(inp: StateInputs, now: float, seq: int = 0) -> dict:
         # нет» — их не знает API. С ботами (они в allPlayers) враги — как обычно.
         enemies = refuse(WHY_NO_ENEMIES_PRACTICE)
     else:
-        enemies = fact([{k: e[k] for k in ("champion", "position", "map_state", "alive",
-                                            "respawn_in", "on_screen")}
+        enemies = fact([{k: e[k] for k in ("champion", "position", "place", "map_state",
+                                            "alive", "respawn_in", "on_screen")}
                         for e in entries if e["relation"]["value"] == "enemy"], "api", api_age)
 
     # --- камера, сцена, юниты, треки ---
@@ -808,7 +844,7 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
               players: Mapping[tuple[str, str], PlayerRecord],
               api_age: float | None, api_why: str, vis: VisionFrame | None, why_vis: str,
               lag: float | None, named: Mapping[str, UnitRec], names_ok: bool,
-              names_why: str | None, seen_self: SelfSeen) -> dict:
+              names_why: str | None, seen_self: SelfSeen, mc: MapCtx | None = None) -> dict:
     """Один из десяти: состояние — из записи контекста матча, статика — из API.
     Свой чемпион на кадре — ещё и по полоске self (`seen_self`, #802)."""
     p = players.get((c.name, c.team))
@@ -833,10 +869,12 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
 
     position = (refuse("место не наблюдалось") if c.u is None or c.v is None or c.src is None
                 else fact(_uv(c.u, c.v), c.src, mlag + (c.age or 0.0)))
+    is_me = me is not None and c.name == me.champion and c.team == me.team
+    place = place_fact(c, mc or MapCtx(None if me is None else me.team, None, None),
+                       mlag + (c.age or 0.0), with_turrets=is_me)
     hp = (refuse("ХП не наблюдалось") if c.hp is None or c.hp_src is None
           else fact(round(float(c.hp), 2), c.hp_src, mlag + (c.hp_age or 0.0)))
 
-    is_me = me is not None and c.name == me.champion and c.team == me.team
     by_bar = (None if vis is None or vis.units is None or not is_me
               else self_on_screen(seen_self, c.alive, lag, names_ok, names_why))
     if vis is None:
@@ -863,7 +901,7 @@ def _champion(c: ChampCtx, roster_src: str, mlag: float, mage: Callable[[float],
             fact([it.item_id for it in p.items], "api", api_age),
             "scores": refuse(why_p) if p is None else fact(p.scores.to_dict(), "api", api_age),
             "spells": spells, "spell_variants": variants, "role": role, "runes": runes,
-            "alive": alive, "respawn_in": respawn, "position": position,
+            "alive": alive, "respawn_in": respawn, "position": position, "place": place,
             "map_state": fact(c.state, "inferred", mlag), "on_screen": on_screen, "hp": hp,
             "conflicts": c.conflicts}
 
@@ -896,6 +934,21 @@ def snapshot_schema() -> dict:
         {"type": ["integer", "null"]}, {"type": ["boolean", "null"]}
     uv = _obj({"u": num, "v": num})
     team = {"enum": list(TEAMS)}
+    # Смысл места (#823): lolvision.rift.describe.
+    turret = _obj({"team": team, "lane": {"enum": ["top", "mid", "bot", "nexus"]},
+                   "tier": {"enum": [1, 2, 3, 4, 5]}, "relation": {"enum": ["ally", "enemy", None]},
+                   "dist": i, "near": b, "standing": nb})
+    place_props = {"x": i, "y": i, "u": num, "v": num,
+                   "zone": {"enum": ["base", "top", "mid", "bot", "river", "jungle"]},
+                   "side": {"enum": ["top", "mid", "bot"]}, "team_half": team,
+                   "half": {"enum": ["ally", "enemy", "river", None]},
+                   "base": {"enum": [*TEAMS, None]}, "deep": nb,
+                   "turret": {"anyOf": [turret, {"type": "null"}]},
+                   "pit": {"enum": ["dragon", "baron", None]},
+                   "pits": _obj({"dragon": i, "baron": i}), "err": i, "sure": b}
+    place = _obj(place_props)
+    me_place = _obj({**place_props, "turrets": {"type": "array", "items": turret,
+                                                "maxItems": 22}})
     rel = {"enum": list(RELATIONS)}
     spells = {"type": "array", "items": s, "minItems": 2, "maxItems": 2}
     role = {"enum": list(ROLES)}
@@ -912,14 +965,17 @@ def snapshot_schema() -> dict:
     champ = _obj({"champion": _fact_of(s), "riot_id": _fact_of(s), "team": _fact_of(team),
                   "relation": _fact_of(rel), "level": _fact_of(i), "alive": _fact_of(b),
                   "respawn_in": _fact_of(num), "position": _fact_of(uv),
+                  # у своего в champions — тот же факт, что me.place, со списком башен
+                  "place": _fact_of({"anyOf": [place, me_place]}),
                   "map_state": _fact_of({"enum": ["visible", "remembered", "dead", "unknown"]}),
                   "on_screen": _fact_of(b), "hp": _fact_of(num),
                   "items": _fact_of({"type": "array", "items": i}),
                   "scores": _fact_of({"type": "object"}), "spells": _fact_of(spells),
                   "spell_variants": _fact_of(spells), "role": _fact_of(role),
                   "runes": _fact_of(runes), "conflicts": i})
-    enemy = _obj({k: champ["properties"][k] for k in ("champion", "position", "map_state",
-                                                      "alive", "respawn_in", "on_screen")})
+    enemy = _obj({k: champ["properties"][k] for k in ("champion", "position", "place",
+                                                      "map_state", "alive", "respawn_in",
+                                                      "on_screen")})
     # Юнит и трек — запись records.py как есть (to_dict) плюс факты; поля
     # записи не закрываются схемой сервиса: их версия — records.SCHEMA.
     unit = {"type": "object", "required": ["kind", "x", "y", "name", "relation", "side"],
@@ -986,6 +1042,7 @@ def snapshot_schema() -> dict:
             "me": _obj({"riot_id": _fact_of(s), "champion": _fact_of(s), "team": _fact_of(team),
                         "level": _fact_of(i), "gold": _fact_of(num), "alive": _fact_of(b),
                         "respawn_in": _fact_of(num), "position": _fact_of(uv),
+                        "place": _fact_of(me_place),
                         "stats": _fact_of({"type": "object"}), "spells": _fact_of(spells),
                         "spell_variants": _fact_of(spells), "role": _fact_of(role),
                         "runes": _fact_of(runes),

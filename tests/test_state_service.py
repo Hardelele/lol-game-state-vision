@@ -361,6 +361,44 @@ def test_me_position_is_the_own_champion_record():
     assert snap["me"]["position"]["reason"] == ss.WHY_NO_MATCH == snap["me"]["alive"]["reason"]
 
 
+def test_place_has_world_field_zone_and_turret_once_for_all_readers():
+    """#823: место со смыслом считает сервис — мировые, доли поля, зона,
+    половина от своей команды, ближайшая живая башня; у своего — все башни."""
+    from lolvision.rift import crop_to_world
+    inp, now = self_inputs([ME_BAR, ALLY_BAR])
+    snap = build_snapshot(inp, now)
+    assert check_snapshot(snap) == []
+    ch = by_champ(snap)
+    lux = ch["Lux"]["place"]
+    assert lux["source"] == "minimap" and lux["age"] == ch["Lux"]["position"]["age"]
+    x, y = crop_to_world(0.7, 0.5)
+    v = lux["value"]
+    assert (v["x"], v["y"]) == (round(x), round(y))
+    assert v["u"] == pytest.approx(x / 14800, abs=1e-4) and v["v"] == pytest.approx(1 - y / 14800,
+                                                                                    abs=1e-4)
+    assert v["half"] in ("ally", "enemy", "river") and v["turret"]["standing"] is True
+    assert "turrets" not in v
+    me = snap["me"]["place"]
+    assert me == ch["Zilean"]["place"] and len(me["value"]["turrets"]) == 22
+    assert {e["champion"]["value"]: e["place"] for e in snap["enemies"]["value"]}["Lux"] == lux
+
+
+def test_place_skips_turrets_fallen_by_api_and_refuses_off_rift():
+    inp, now = self_inputs([ME_BAR, ALLY_BAR])
+    g = inp.api.game
+    fell = ev(900, "TurretKilled", 300.0, TurretKilled="Turret_TChaos_L1_P3_2254202041_0",
+              KillerName="Minion_T100L1S29N0180", Assisters=[])
+    api = replace(inp.api, game=replace(g, events=(*g.events, fell)))
+    snap = build_snapshot(replace(inp, api=api), now)
+    left = {(t["team"], t["lane"], t["tier"]) for t in snap["me"]["place"]["value"]["turrets"]}
+    assert len(left) == 21 and ("CHAOS", "mid", 3) not in left
+    aram = replace(inp.api, game=replace(g, map_number=12))
+    snap = build_snapshot(replace(inp, api=aram), now)
+    assert snap["me"]["place"]["value"] is None
+    assert "Ущелья" in snap["me"]["place"]["reason"]
+    assert snap["me"]["position"]["value"] is not None       # старое поле — как было
+
+
 def test_own_champion_on_screen_by_self_bar_on_player_view():
     """#802: на виде игрока имена не читаются, но своя полоска (relation
     self) видна — свой на экране; остальным по-прежнему отказ читателя names."""
