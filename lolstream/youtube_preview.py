@@ -48,7 +48,8 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-YTDLP = [sys.executable, "-m", "yt_dlp"]
+# --limit-rate действует на загрузку медиа; страницы `-J` (~1 МБ) идут по одной с паузой MIN_GAP.
+YTDLP = [sys.executable, "-m", "yt_dlp", "--limit-rate", "2M"]
 # Сколько байт начала сегмента читать за раз, пока ffmpeg не распакует кадр
 # без ошибок (ключевой кадр 1080p — 0.2–0.45 МБ).
 HEAD_BYTES = 450_000
@@ -56,7 +57,64 @@ HEAD_STEP = 300_000
 HEAD_MAX = 4_000_000
 TIMEOUT = 30.0
 EXPIRE_SLACK = 300.0       # с: адрес, которому жить меньше, считается истёкшим
-WORKERS = 4                # параллельных загрузок кадров одного ролика
+# Сеть общая с игрой владельца: 4 параллельные загрузки кадров и 8 листов
+# раскадровки разом — всплески, после которых его выкинуло из онлайн-игры
+# (2026-10-15). Поэтому по умолчанию одна загрузка за раз и общий для всех
+# потоков процесса предел скорости (`set_max_rate`, МБ/с).
+WORKERS = 1
+MAX_RATE = 2.0             # МБ/с на весь процесс; 0 — без предела
+CHUNK = 64 * 1024
+
+
+class _Bucket:
+    """Ведро токенов на весь процесс: чтение ждёт, пока скорость не упадёт
+    ниже предела. Без всплесков: ёмкость ведра — четверть секунды."""
+
+    def __init__(self, rate_mb: float):
+        self.lock = threading.Lock()
+        self.set(rate_mb)
+
+    def set(self, rate_mb: float) -> None:
+        self.rate = max(0.0, rate_mb) * 1e6
+        self.cap = self.rate / 4
+        self.tokens = self.cap
+        self.t = time.monotonic()
+
+    def take(self, n: int) -> None:
+        if self.rate <= 0:
+            return
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                self.tokens = min(self.cap, self.tokens + (now - self.t) * self.rate)
+                self.t = now
+                if self.tokens >= n or self.tokens >= self.cap:
+                    self.tokens -= n
+                    return
+                wait = (n - self.tokens) / self.rate
+            time.sleep(min(wait, 0.25))
+
+
+_bucket = _Bucket(MAX_RATE)
+
+
+def set_max_rate(rate_mb: float) -> None:
+    """Предел скорости загрузки на весь процесс, МБ/с (0 — без предела)."""
+    _bucket.set(rate_mb)
+
+
+def _read(r, n: int | None) -> bytes:
+    """Чтение ответа кусками CHUNK под пределом скорости; n — не больше
+    стольких байт (None — до конца)."""
+    out = bytearray()
+    while n is None or len(out) < n:
+        k = CHUNK if n is None else min(CHUNK, n - len(out))
+        _bucket.take(k)
+        part = r.read(k)
+        if not part:
+            break
+        out += part
+    return bytes(out)
 
 
 class ExpiredError(RuntimeError):
@@ -232,7 +290,7 @@ def _get(url: str, traffic: Traffic, limit: int | None = None, tries: int = 3) -
     for i in range(tries):
         try:
             with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
-                data = r.read() if limit is None else r.read(limit)
+                data = _read(r, limit)
             traffic.add(len(data))
             return data
         except OSError:
@@ -375,7 +433,7 @@ class HlsStream:
             got, n, img = b"", HEAD_BYTES, None
             with urllib.request.urlopen(seg.url, timeout=TIMEOUT) as r:
                 while True:
-                    part = r.read(n - len(got))
+                    part = _read(r, n - len(got))
                     got += part
                     img, clean = decode_first(got)
                     if (img is not None and clean) or not part or len(got) >= HEAD_MAX:

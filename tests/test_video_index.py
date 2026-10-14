@@ -361,3 +361,14 @@ def test_cut_archive_is_full_with_cut_seconds():
     d, segs, facts = _fixture("_508S98our4")
     v = vv.verdict(segs, facts, d["claims"], d["champion"], 1.0)
     assert v.usable and v.full_game and v.cuts == 6 and 250 < v.cut_s < 300
+
+
+def test_rate_bucket_limits_speed():
+    b = yp._Bucket(1.0)                      # 1 МБ/с
+    t0 = __import__("time").monotonic()
+    for _ in range(8):
+        b.take(64 * 1024)                    # 0.5 МБ, из них 0.25 МБ — ёмкость ведра
+    dt_s = __import__("time").monotonic() - t0
+    assert 0.2 < dt_s < 1.0
+    b.set(0)
+    b.take(10**9)                            # без предела — сразу

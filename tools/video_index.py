@@ -78,6 +78,7 @@ MIN_LIST_S = 8 * 60             # короче по списку — не пол
 APPROX_SLACK_D = 10             # грубая дата списка: запас на округление «N weeks ago»
 CAMERA_Q = 0.35                 # качество рамки камеры не ниже — камере верим
 BOX0 = (int(BOX_W * MM), int(BOX_H * MM))
+VIDEO_PAUSE_S = 2.0             # пауза между роликами (сеть общая с игрой владельца)
 BOT_PAUSE_S = 300.0             # пауза после «Sign in to confirm you're not a bot»
 
 COLUMNS = {
@@ -463,6 +464,7 @@ def run_listing(rd: Readers, idx: Index, listing: dict, source: str, since: dt.d
     done = usable = errors = 0
 
     def one(e: dict) -> dict:
+        time.sleep(VIDEO_PAUSE_S)
         try:
             return preview(rd, e["id"], since, source, max_frames, e)
         except yp.ExpiredError:
@@ -623,7 +625,10 @@ def main(argv: list[str] | None = None) -> int:
     def common(p):
         p.add_argument("--since", default="season",
                        help="patch | season | 26.18 | 2026-09-01 | all")
-        p.add_argument("--workers", type=int, default=1)
+        p.add_argument("--workers", type=int, default=1, choices=(1, 2),
+                       help="роликов одновременно (не больше 2: машина и сеть общие)")
+        p.add_argument("--max-rate", type=float, default=yp.MAX_RATE,
+                       help="предел загрузки на весь процесс, МБ/с (0 — без предела)")
         p.add_argument("--max", type=int, default=None, help="не больше стольких роликов")
         p.add_argument("--frames", type=int, default=vv.MAX_FRAMES)
         p.add_argument("--force", action="store_true")
@@ -668,6 +673,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     since = None if a.since == "all" else patch_calendar.since(a.since)
     print(be_nice(), flush=True)
+    yp.set_max_rate(a.max_rate)
+    print(f"предел загрузки {a.max_rate} МБ/с, роликов сразу {a.workers}", flush=True)
     rd = Readers(runs_dir(a.runs), a.device)
     if a.cmd == "channel":
         url = channel_url(a.url, a.tab)
