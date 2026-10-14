@@ -138,9 +138,10 @@ class VideoSource:
     """
 
     def __init__(self, src: str | Path, fps: float, start: float = 0.0,
-                 from_url: bool = True, decode: str = "auto"):
+                 from_url: bool = True, decode: str = "auto", align: str = "near",
+                 rate: str | None = None):
         self.src, self.fps, self.start = src, float(fps), float(start)
-        self.from_url, self.decode = from_url, decode
+        self.from_url, self.decode, self.align, self.rate = from_url, decode, align, rate
         self.kind = "youtube" if from_url else "file"
         self.backend: str | None = "ffmpeg"
         self.backend_note: str | None = None
@@ -175,7 +176,8 @@ class VideoSource:
         w, h = self._size
         if self._stream is None:
             self._stream = video_stream.frames(self.src, w, h, self.fps, self.from_url,
-                                               decode=self.decode, skip=self.start)
+                                               decode=self.decode, skip=self.start,
+                                               **self._extra())
         t = self.start + self._n / self.fps
         fr = next(self._stream, None)
         if fr is None:
@@ -186,6 +188,15 @@ class VideoSource:
             return self._ended
         self._n += 1
         return Frame(Status.OK, t, fr)
+
+    def _extra(self) -> dict:
+        """Выравнивание кадра и потолок полосы — только если заданы (#843)."""
+        out = {}
+        if self.align != "near":
+            out["align"] = self.align
+        if self.rate:
+            out["rate"] = self.rate
+        return out
 
     def close(self) -> None:
         """Погасить ffmpeg и yt-dlp: генератор закрывается — они завершаются."""

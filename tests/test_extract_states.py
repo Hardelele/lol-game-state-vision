@@ -302,3 +302,51 @@ def test_hud_pool_reads_like_reader():
     rng = np.random.default_rng(3)
     for st in (np.zeros((36, 420, 3), np.uint8), rng.integers(0, 255, (36, 420, 3), np.uint8)):
         assert hud_pool.read(st) == hud_stats.StatsReader().read_strip(st)
+
+
+# ---------- источник: выравнивание кадра и полоса ----------
+
+def _cmds(monkeypatch, **kw) -> list[list[str]]:
+    """Команды, которыми video_stream.frames запустил бы yt-dlp и ffmpeg (без запуска)."""
+    from lolstream import video_stream
+    seen: list[list[str]] = []
+
+    class P:
+        def __init__(self, cmd, **_):
+            seen.append(list(cmd))
+            self.stdout = type("S", (), {"read": lambda s, n: b"", "close": lambda s: None})()
+
+        def poll(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def wait(self):
+            return 0
+    monkeypatch.setattr(video_stream.subprocess, "Popen", P)
+    monkeypatch.setattr(video_stream, "have_nvdec", lambda: True)
+    list(video_stream.frames("x.mp4", 4, 4, 1.0, **kw))
+    return seen
+
+
+def test_align_exact_takes_frame_at_its_time(monkeypatch):
+    near = _cmds(monkeypatch)[-1]
+    exact = _cmds(monkeypatch, align="exact")[-1]
+    vf = lambda c: c[c.index("-vf") + 1]
+    assert vf(near) == "fps=1.0,hwdownload,format=nv12"
+    assert vf(exact) == "fps=1.0:round=up,hwdownload,format=nv12"
+
+
+def test_url_rate_limited_by_default(monkeypatch):
+    cmds = _cmds(monkeypatch, from_url=True, rate="2M")
+    pull = cmds[0]
+    assert "yt_dlp" in pull and pull[pull.index("--limit-rate") + 1] == "2M"
+    assert "--limit-rate" not in _cmds(monkeypatch, from_url=True)[0]
+
+
+def test_open_source_rate_only_for_urls():
+    assert ex.open_source("https://www.youtube.com/watch?v=abc", 1.0).rate == ex.URL_RATE
+    assert ex.open_source("https://youtu.be/abc", 1.0, rate="0").rate is None
+    f = ex.open_source("D:/v.mp4", 1.0)
+    assert f.rate is None and f.align == "exact" and not f.from_url

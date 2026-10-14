@@ -40,6 +40,11 @@ def parse(argv=None) -> argparse.Namespace:
     ap.add_argument("--duration", type=float, help="сколько секунд ролика (по умолчанию — до конца)")
     ap.add_argument("--decode", choices=("auto", "gpu", "cpu"), default="auto",
                     help="распаковка: NVDEC, если ffmpeg его умеет (auto)")
+    ap.add_argument("--align", choices=("exact", "near"), default="exact",
+                    help="кадр ровно в момент метки (exact) или как в live (near: +0.5/fps)")
+    ap.add_argument("--limit-rate", default="2M",
+                    help="потолок полосы yt-dlp для ссылки, байт/с (2M; 0 — без потолка): "
+                         "всплеск трафика выбивает из онлайн-игры")
     ap.add_argument("--threads", type=int, default=limits.DEFAULT_THREADS,
                     help=f"потоков у torch, numpy, OpenCV ({limits.DEFAULT_THREADS})")
     ap.add_argument("--hud-procs", type=int, default=2,
@@ -71,7 +76,8 @@ def main(argv=None) -> int:
     roster = ex.Roster.load(a.roster) if a.roster else None
     out = Path(a.out)
     w = ex.Writer(out)
-    src = ex.open_source(a.src, a.fps, a.start, decode=a.decode)
+    src = ex.open_source(a.src, a.fps, a.start, decode=a.decode, align=a.align,
+                         rate=a.limit_rate)
     s = ex.OfflineSession(src, run=a.run or live.DEFAULT_RUN, stages=stages, batch=a.batch,
                           roster=roster, on_record=w, keep_row=a.keep_row,
                           hud_procs=a.hud_procs)
@@ -94,7 +100,7 @@ def main(argv=None) -> int:
     el = time.time() - t0
     d = src.describe()
     meta = {"schema": 1, "src": a.src, "title": s.title, "duration": s.duration,
-            "fps": a.fps, "start": a.start, "end": end, "batch": a.batch, "stages": list(stages),
+            "fps": a.fps, "align": a.align, "start": a.start, "end": end, "batch": a.batch, "stages": list(stages),
             "roster": roster.to_dict() if roster else None, "decode": d.get("backend"),
             "frames": w.n, "wall_s": round(el, 1),
             "s_per_game_min": round(el / max(1e-9, w.n / a.fps / 60), 2) if w.n else None,

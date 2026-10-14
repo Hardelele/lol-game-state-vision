@@ -899,10 +899,18 @@ def chunks(it: Iterable, n: int) -> Iterator[list]:
         yield buf
 
 
-def open_source(src: str, fps: float, start: float = 0.0, decode: str = "auto") -> VideoSource:
-    """Файл или ссылка (http/https — поток YouTube через yt-dlp, как frame_source)."""
+URL_RATE = "2M"       # потолок полосы yt-dlp для ссылки по умолчанию, байт/с
+
+
+def open_source(src: str, fps: float, start: float = 0.0, decode: str = "auto",
+                align: str = "exact", rate: str | None = URL_RATE) -> VideoSource:
+    """Файл или ссылка (http/https — поток YouTube через yt-dlp, как frame_source).
+    `align` — какой кадр берёт прореживание (video_stream.ALIGN): по умолчанию
+    кадр ровно в момент своей метки; «near» — как у live. `rate` — потолок
+    полосы yt-dlp у ссылки (None или «0» — без потолка)."""
     url = src.startswith(("http://", "https://"))
-    return VideoSource(src, fps, start, from_url=url, decode=decode)
+    rate = None if not url or rate in (None, "", "0") else rate
+    return VideoSource(src, fps, start, from_url=url, decode=decode, align=align, rate=rate)
 
 
 class Writer:

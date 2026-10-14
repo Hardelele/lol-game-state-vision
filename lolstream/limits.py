@@ -33,7 +33,13 @@ def lower_priority(idle: bool = False) -> str:
     """Приоритет своего процесса ниже обычного (дети его наследуют)."""
     if sys.platform == "win32":
         import ctypes
-        k32 = ctypes.windll.kernel32
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # Без типов дескриптор (-1, «свой процесс») уходит 32-битным int и
+        # на 64-битной системе не узнаётся: приоритет молча не менялся.
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        k32.SetPriorityClass.restype = wintypes.BOOL
         ok = k32.SetPriorityClass(k32.GetCurrentProcess(), IDLE if idle else BELOW_NORMAL)
         return ("Idle" if idle else "BelowNormal") if ok else "не изменён"
     try:
