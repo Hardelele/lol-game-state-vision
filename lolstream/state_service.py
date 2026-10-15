@@ -959,8 +959,8 @@ def snapshot_schema() -> dict:
                                          "unsure"]},
                       "ready": nb, "reason": ns})
     ability_hud = _obj({"slot": {"enum": ["Q", "W", "E", "R"]},
-                        "state": {"enum": ["ready", "cooldown", "blocked", "dead", "hidden",
-                                           "unsure"]},
+                        "state": {"enum": ["ready", "cooldown", "active", "blocked", "dead",
+                                           "hidden", "unsure"]},
                         "ready": nb, "reason": ns})
     champ = _obj({"champion": _fact_of(s), "riot_id": _fact_of(s), "team": _fact_of(team),
                   "relation": _fact_of(rel), "level": _fact_of(i), "alive": _fact_of(b),

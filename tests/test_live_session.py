@@ -954,3 +954,23 @@ def test_ability_slots_read_with_the_spell_panel(cpu_models):
     # Своя панель эталона — все умения изучены и готовы (иконки яркие).
     ready = snap["me"]["abilities_ready"]["value"]
     assert ready is not None and set(ready) == {"Q", "W", "E", "R"}
+
+
+def test_ability_icons_from_newest_cached_version(tmp_path, monkeypatch):
+    """Иконки умений своего чемпиона (#849): только из кэша Data Dragon; в
+    новой версии картинок нет — берётся старая; нет нигде — None (эталон
+    набирается, как раньше)."""
+    import json as _json
+    fix = Path(__file__).parent / "fixtures" / "hud_q" / "VolibearQ.png"
+    for v in ("16.9.1", "16.20.1"):
+        (tmp_path / v / "champion").mkdir(parents=True)
+        (tmp_path / v / "img" / "spell").mkdir(parents=True)
+        names = [f"{v}_{k}.png" for k in "QWER"]
+        (tmp_path / v / "champion" / "Volibear.json").write_text(_json.dumps(
+            {"data": {"Volibear": {"spells": [{"image": {"full": n}} for n in names]}}}))
+        for n in names if v == "16.9.1" else ():
+            (tmp_path / v / "img" / "spell" / n).write_bytes(fix.read_bytes())
+    monkeypatch.setattr(live, "_ability_icons_cache", {})
+    icons = live.ability_icons("Volibear", roots=(tmp_path / "nowhere", tmp_path))
+    assert set(icons) == {"Q", "W", "E", "R"}
+    assert live.ability_icons("Ashe", roots=(tmp_path,)) is None

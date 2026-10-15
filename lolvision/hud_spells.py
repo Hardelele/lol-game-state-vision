@@ -30,11 +30,25 @@
    похож на эталон (NCC, яркость, насыщенность), без синей заливки и цифр
    сверх эталона. Абсолютный порог «белые цифры» врёт на готовом Призраке
    (#804), а относительное сравнение — нет: белая фигура есть и в эталоне.
-5. Решение по слоту (`decide`, `SlotRead.state`): `cooldown` → False
+5. Умения Q/W/E/R (#849): если свой чемпион известен (API, `--roster`),
+   эталон «готова» — иконка умения из Data Dragon (`SpellHud.set_champion`,
+   `ability_icons`), а не набранный по ходу вырез: у части иконок сама
+   картинка синяя или тёмная (Q Волибира — синих 0.44 при яркости 113, Q
+   Ашки — 0.29 и 124; так 137 из 692 иконок), и набранный эталон у них не
+   набирается никогда, а без эталона готовая Q Волибира читалась как
+   перезарядка. С иконкой DD правила перезарядки сравнивают признаки с
+   признаками иконки, готовность — NCC с иконкой (готовые 0.79–0.89,
+   активная Q и перезарядка ≤ 0.56), плюс состояние `active`: умение
+   действует — вокруг иконки жёлтая рамка (`slot_ring`), сама иконка тёмная.
+   Тёмная иконка без рамки (все умения разом гаснут под контролем) — не
+   `active`, а `unsure`: по вырезу они неотличимы, по рамке — да.
+   Крестик, смерть и «панели нет» — те же правила, что у D/F.
+6. Решение по слоту (`decide`, `SlotRead.state`): `cooldown` → False
    (ровная синяя заливка; или тёмная иконка с цифрами — конец перезарядки;
    заливка видна и у мёртвого); `ready` → True; `blocked` (красный
    крестик), `dead` (полоса ХП пуста), `hidden` (панели нет), `unsure`
-   (нет эталона, вырез не похож ни на что) → None с причиной. Ошибка
+   (нет эталона, вырез не похож ни на что) → None с причиной; `active`
+   (только умения с иконкой DD) → False. Ошибка
    «готово, когда не готово» хуже обратной: при сомнении — None.
 
 Пример:
@@ -42,6 +56,8 @@
     hud.offer(frame)                  # пока панель не найдена — ищет её
     reads = hud.read(frame, t)        # {"D": SlotRead, "F": SlotRead}
     reads["D"].value                  # True / False / None
+    hud.set_champion("Volibear", ability_icons(dd, "Volibear"))   # dd — ddragon.DDragon
+    hud.read(frame, t, ABILITY_SLOTS)
 """
 
 from __future__ import annotations
@@ -212,6 +228,24 @@ def slot_crop(frame: np.ndarray, panel: Panel, key: str, size: int = CROP) -> np
     return cv2.resize(np.ascontiguousarray(c), (size, size), interpolation=cv2.INTER_AREA)
 
 
+def slot_ring(frame: np.ndarray, panel: Panel, key: str) -> float:
+    """Доля ярко-жёлтых пикселей в кольце по краю слота: рамка «умение
+    действует» (активная Q Волибира). Обычная рамка слота — тусклая бронза."""
+    x0, y0, x1, y1 = panel.box(key)
+    o, i = RING_OUT * panel.scale, RING_IN * panel.scale
+    xa, ya, xb, yb = round(x0 - o), round(y0 - o), round(x1 + o), round(y1 + o)
+    h, w = frame.shape[:2]
+    if xa < 0 or ya < 0 or xb > w or yb > h:
+        return 0.0
+    c = np.ascontiguousarray(frame[ya:yb, xa:xb])
+    hsv = cv2.cvtColor(c, cv2.COLOR_RGB2HSV_FULL).astype(np.float32)
+    hue, sat, val = hsv[..., 0] * (360 / 256), hsv[..., 1] / 255, hsv[..., 2]
+    yel = (hue > 35) & (hue < 65) & (sat > 0.5) & (val > 170)
+    m = np.ones(yel.shape, bool)
+    m[round(o + i):round(yb - ya - o - i), round(o + i):round(xb - xa - o - i)] = False
+    return float(yel[m].mean()) if m.any() else 0.0
+
+
 def hp_fill(frame: np.ndarray, panel: Panel) -> float:
     """Доля зелёных пикселей полосы ХП (0 — пустая: мёртв или панель закрыта)."""
     x0, y0, x1, y1 = HP_BAR
@@ -317,6 +351,19 @@ BLOCK_CROSS = 0.20
 # Мёртв: полоса ХП пуста (у живого с 3% ХП зелёного ещё ≈ 0.01).
 DEAD_HP = 0.005
 
+# Эталон из Data Dragon (#849, умения Q/W/E/R): готова — NCC с иконкой не
+# ниже DD_READY (готовые Q/W/E/R Волибира 0.79/0.79/0.89/0.86, активная Q
+# 0.56, перезарядка 0.10–0.37), яркость и насыщенность — не ниже долей
+# признаков иконки (серая иконка неизученного умения — не готова).
+DD_READY = 0.70
+DD_READY_V = 0.75
+DD_READY_S = 0.60
+# Активна: вокруг иконки жёлтая рамка. Доля жёлтых пикселей кольца у
+# активной Q Волибира 0.21–0.26, у готовых, на перезарядке и погасших — 0.00.
+ACTIVE_RING = 0.10
+RING_OUT = 3.0       # кольцо: от края слота наружу на столько px (масштаб 1.0)…
+RING_IN = 1.0        # …и внутрь на столько
+
 REASONS = {
     "hidden": "панели умений на кадре нет (закрыта или кадр не игровой)",
     "dead": "свой мёртв: полоса ХП пуста, иконка серая",
@@ -329,11 +376,11 @@ REASONS = {
 @dataclass(frozen=True)
 class SlotRead:
     slot: str
-    state: str                  # ready / cooldown / blocked / dead / hidden / unsure
+    state: str                  # ready / cooldown / active / blocked / dead / hidden / unsure
     value: bool | None
     reason: str | None
     feat: SlotFeat | None = None
-    sim: float | None = None    # NCC с эталоном
+    sim: float | None = None    # NCC с эталоном (у умений с иконкой DD — с ней)
     vrel: float | None = None   # яркость относительно эталона
 
     def to_dict(self) -> dict:
@@ -343,13 +390,44 @@ class SlotRead:
                 "vrel": None if self.vrel is None else round(self.vrel, 3)}
 
 
+def icon_crop(icon: np.ndarray, size: int = CROP) -> np.ndarray:
+    """Иконка умения Data Dragon (RGB, квадрат) → вырез как у слота HUD: без
+    края с тем же отступом INSET, size×size."""
+    n = icon.shape[0]
+    m = int(round(n * INSET))
+    return cv2.resize(np.ascontiguousarray(icon[m:n - m, m:n - m, :3]), (size, size),
+                      interpolation=cv2.INTER_AREA)
+
+
+def ability_icons(dd, cid: str) -> dict[str, np.ndarray]:
+    """Иконки умений Q/W/E/R чемпиона `cid` (RGB) из lolvision.ddragon.DDragon:
+    полная запись чемпиона и `spell_icon` (кэш или `fetch` у DDragon).
+    Нет в кэше — FileNotFoundError."""
+    out = {}
+    for k, s in zip(ABILITY_SLOTS, dd.champion_full(cid)["spells"]):
+        path = dd.spell_icon(s["image"]["full"])
+        img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if img is None:
+            raise FileNotFoundError(path)
+        out[k] = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return out
+
+
 @dataclass
 class SlotRef:
-    """Эталон готовой иконки слота: медиана последних кандидатов."""
+    """Эталон готовой иконки слота: медиана последних кандидатов — или иконка
+    умения Data Dragon (`set_icon`, #849): тогда набор не нужен."""
     crops: deque = field(default_factory=lambda: deque(maxlen=REF_KEEP))
     last_t: float | None = None
     _ref: np.ndarray | None = None
     _feat: SlotFeat | None = None
+    icon: np.ndarray | None = None          # вырез иконки DD (CROP×CROP RGB)
+    icon_feat: SlotFeat | None = None
+
+    def set_icon(self, icon: np.ndarray | None) -> None:
+        """Иконка умения DD (как есть, RGB) или None — назад к набору эталона."""
+        self.icon = None if icon is None else icon_crop(icon)
+        self.icon_feat = None if icon is None else slot_features(self.icon)
 
     def add(self, crop: np.ndarray, t: float) -> None:
         if self.last_t is not None and 0 <= t - self.last_t < REF_EVERY:
@@ -375,19 +453,22 @@ class SlotRef:
 
 
 def decide(slot: str, crop: np.ndarray, ref: SlotRef, present: bool, dead: bool,
-           t: float, learn: bool = True) -> SlotRead:
+           t: float, learn: bool = True, ring: float = 0.0) -> SlotRead:
     """Состояние слота по вырезу, эталону и признакам панели.
 
     Порядок: панели нет → hidden; крестик → blocked; перезарядка (синяя
     заливка или тёмная иконка с цифрами — видна и у мёртвого) → cooldown;
     мёртв → dead; похоже на эталон → ready; иначе unsure. «Готово» — только
-    при эталоне и по всем признакам сразу."""
+    при эталоне и по всем признакам сразу. `ring` — жёлтая рамка слота
+    (`slot_ring`), нужна только умениям с иконкой DD (`active`)."""
     if not present:
         return SlotRead(slot, "hidden", None, REASONS["hidden"])
     f = slot_features(crop)
     rf = ref.ref()[1] if ref.ready else None
     if f.cross >= BLOCK_CROSS:
         return SlotRead(slot, "blocked", None, REASONS["blocked"], f)
+    if ref.icon is not None:
+        return _decide_icon(slot, crop, f, ref, dead, ring)
     if f.navy - (rf.navy if rf is not None else 0.0) >= CD_NAVY and f.v < CD_NAVY_V:
         return SlotRead(slot, "cooldown", False, None, f)
     dark = (f.v < CD_DARK * rf.v) if rf is not None else (f.v < CD_DARK_ABS)
@@ -417,6 +498,80 @@ def decide(slot: str, crop: np.ndarray, ref: SlotRef, present: bool, dead: bool,
                     f, sim, vrel)
 
 
+def _decide_icon(slot: str, crop: np.ndarray, f: SlotFeat, ref: SlotRef, dead: bool,
+                 ring: float) -> SlotRead:
+    """Решение по слоту с эталоном — иконкой умения DD (#849). Правила
+    перезарядки те же, что у набранного эталона, но относительно признаков
+    иконки: синяя сама картинка (Q Волибира) — не заливка."""
+    fi = ref.icon_feat
+    nav = f.navy - fi.navy
+    if nav >= CD_NAVY and f.v < CD_NAVY_V:
+        return SlotRead(slot, "cooldown", False, None, f)
+    dark = f.v < CD_DARK * fi.v or (nav >= CD_NAVY_DIG and f.v < CD_DIG_V)
+    if dark and f.digits >= CD_DIGITS and not dead:
+        return SlotRead(slot, "cooldown", False, None, f)
+    if dead:
+        return SlotRead(slot, "dead", None, REASONS["dead"], f)
+    sim = ncc(crop, ref.icon)
+    vrel = f.v / max(fi.v, 1.0)
+    srel = f.s / max(fi.s, 1e-3)
+    if (sim >= DD_READY and vrel >= DD_READY_V and srel >= DD_READY_S
+            and nav < CD_NAVY / 2 and f.digits <= fi.digits + READY_DIGITS):
+        return SlotRead(slot, "ready", True, None, f, sim, vrel)
+    # Активна — жёлтая рамка: тёмная иконка без рамки (контроль гасит все
+    # умения разом, неизученное умение) по вырезу от активной не отличить.
+    if ring >= ACTIVE_RING:
+        return SlotRead(slot, "active", False, None, f, sim, vrel)
+    return SlotRead(slot, "unsure", None,
+                    f"{REASONS['unsure']} (сходство с иконкой умения {sim:.2f}, "
+                    f"яркость {vrel:.2f})", f, sim, vrel)
+
+
+PRESS_GAP = 3.5      # с: от последнего «готова» до перезарядки/активности
+PRESS_ACTIVE_GAP = 2.0   # с: «активна» после разрыва больше этого — новое включение…
+PRESS_ACTIVE_MIN = 0.35  # …если длится не меньше: на конце действия рамка мигает на 1–2 кадра
+
+
+def presses(seq, gap: float = PRESS_GAP) -> list[float]:
+    """Моменты нажатий слота по ряду решений [(t, state), …] по времени.
+
+    Нажатие — первый кадр после последнего `ready`, если не позже `gap` с
+    за ним `cooldown` или `active` (между ними — что угодно, кроме `ready`).
+    Ещё одно нажатие — начало `active` без `ready` перед ним: умение нажато
+    в первый же кадр готовности (Q Волибира сразу по концу перезарядки или
+    крестика), и `ready` на кадрах 10 к/с не видно. Такое начало считается,
+    если `active` идёт подряд не меньше PRESS_ACTIVE_MIN с; «активна»
+    продолжается через `unsure`/`hidden` до PRESS_ACTIVE_GAP с — это не
+    новое нажатие."""
+    out: list[float] = []
+    last_ready = None          # индекс последнего ready
+    last_active_t = None       # время последнего active
+    for i, (t, st) in enumerate(seq):
+        if st == "ready":
+            last_ready = i
+            continue
+        if st in ("cooldown", "active") and last_ready is not None:
+            if t - seq[last_ready][0] <= gap:
+                out.append(seq[last_ready + 1][0])
+                if st == "active":
+                    last_active_t = t
+                last_ready = None
+                continue
+            last_ready = None
+        if st == "active":
+            if last_active_t is None or t - last_active_t > PRESS_ACTIVE_GAP:
+                j = i
+                while j + 1 < len(seq) and seq[j + 1][1] == "active":
+                    j += 1
+                if seq[j][0] - t >= PRESS_ACTIVE_MIN - 1e-6 and (
+                        not out or t - out[-1] > PRESS_ACTIVE_GAP):
+                    out.append(t)
+            last_active_t = t
+        elif st in ("cooldown", "blocked", "dead"):
+            last_active_t = None
+    return out
+
+
 class SpellHud:
     """Чтение слотов D/F в сеансе: поиск панели, эталоны готовых иконок.
 
@@ -432,6 +587,7 @@ class SpellHud:
         self._cand: list[Panel] = []
         self._miss = 0
         self.spells: tuple | None = None
+        self.champion: str | None = None
         self.tried = 0
 
     def offer(self, frame: np.ndarray) -> Panel | None:
@@ -469,6 +625,15 @@ class SpellHud:
         if spells is not None:
             self.spells = spells
 
+    def set_champion(self, champion: str | None,
+                     icons: dict[str, np.ndarray] | None) -> None:
+        """Свой чемпион и иконки его умений Q/W/E/R из Data Dragon (`ability_icons`)
+        — эталон «готова» умений (#849). Иконок нет (None) — умения читаются
+        по набранному эталону, как D/F."""
+        self.champion = champion
+        for k in ABILITY_SLOTS:
+            self.refs[k].set_icon(None if icons is None else icons.get(k))
+
     def read(self, frame: np.ndarray, t: float,
              slots: tuple[str, ...] = SPELL_SLOTS) -> dict[str, SlotRead]:
         """Состояния слотов `slots` (по умолчанию D/F; умения — ABILITY_SLOTS)."""
@@ -477,5 +642,7 @@ class SpellHud:
         score = panel_score(frame, self.panel)
         present = score >= PRESENT_MIN
         dead = present and hp_fill(frame, self.panel) < DEAD_HP
-        return {k: decide(k, slot_crop(frame, self.panel, k), self.refs[k], present, dead, t)
+        return {k: decide(k, slot_crop(frame, self.panel, k), self.refs[k], present, dead, t,
+                          ring=(slot_ring(frame, self.panel, k)
+                                if present and self.refs[k].icon is not None else 0.0))
                 for k in slots}
