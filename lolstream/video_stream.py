@@ -80,8 +80,18 @@ def have_nvdec() -> bool:
     return "cuda" in out.split()
 
 
+# Какой кадр ролика берёт прореживание: near — как было всегда (фильтр fps
+# по умолчанию оставляет последний кадр перед серединой интервала, то есть
+# кадр с номером n показывает момент (n + 0.5) / fps без одного кадра ролика;
+# замер на ролике 60 к/с: 1 к/с — t + 0.48 с, 2 к/с — t + 0.23 с), exact —
+# кадр ровно в момент n / fps (round=up): у разных fps общие моменты — один и
+# тот же кадр, а метка времени кадра не опаздывает (#843).
+ALIGN = {"near": "", "exact": ":round=up"}
+
+
 def frames(video, w: int, h: int, fps: float, from_url: bool = False,
-           decode: str = "auto", skip: float = 0.0):
+           decode: str = "auto", skip: float = 0.0, align: str = "near",
+           rate: str | None = None):
     """Последовательный поток кадров через ffmpeg; память не растёт.
 
     Из YouTube читаем через трубу от yt-dlp, а не отдаём ffmpeg прямой
@@ -103,7 +113,10 @@ def frames(video, w: int, h: int, fps: float, from_url: bool = False,
     if from_url:
         puller = subprocess.Popen(
             [sys.executable, "-m", "yt_dlp", "-f", "bv*[height<=1080]", "-o", "-",
-             "--quiet", "--no-warnings", str(video)],
+             "--quiet", "--no-warnings",
+             # `rate` — потолок полосы yt-dlp («2M» — 2 МБ/с): офлайн-прогон
+             # не должен выбивать владельца из онлайн-игры всплеском трафика.
+             *(["--limit-rate", rate] if rate else []), str(video)],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=1 << 22)
         src, stdin = "pipe:0", puller.stdout
     else:
@@ -113,7 +126,8 @@ def frames(video, w: int, h: int, fps: float, from_url: bool = False,
     # и есть та разница в четыре раза.
     head = (["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] if gpu
             else ["-threads", str(threads)])
-    vf = f"fps={fps},hwdownload,format=nv12" if gpu else f"fps={fps}"
+    rnd = ALIGN[align]
+    vf = f"fps={fps}{rnd},hwdownload,format=nv12" if gpu else f"fps={fps}{rnd}"
     # Перемотка только «пропуском»: по трубе назад не прыгнуть, а прямой
     # медиа-адрес YouTube душит (проверено: ffmpeg с -ss по нему за 100 с не
     # получил ни байта). Пропуск стоит распаковки, то есть около 25 секунд
