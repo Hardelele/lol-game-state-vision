@@ -613,6 +613,10 @@ class OfflineSession(live.Session):
             return
         super()._roster_step(champs, t)
 
+    def _my_champion(self) -> str | None:
+        """API у ролика нет — свой чемпион из состава снаружи (`--roster`)."""
+        return self.roster_in.me if self.roster_in is not None else None
+
     def _spells_step(self, pl, fr, t, game, view):
         return super()._spells_step(pl, fr, t, game, view) if "hud" in self.stages else None
 

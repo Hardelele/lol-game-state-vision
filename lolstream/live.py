@@ -57,6 +57,7 @@ import copy
 import enum
 import io
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -102,6 +103,7 @@ from lolvision.minimap_locate import (AGREE_PX, LOCATE_MAX, Locator, corner_px, 
 from lolstream.live_champions import LiveChampions
 from lolvision.hud_spells import SpellHud
 from lolvision import hud_spells as hud_spells_mod
+from lolvision import ddragon
 from lolvision import hud_stats
 from lolvision import last_hits as lh
 from lolvision.lane_watch import LaneWatch
@@ -155,6 +157,41 @@ PASSPORT_NOTE = 3
 # кадр 1080p, пока не найдена, не чаще раза в SPELL_LOCATE_EVERY с потока;
 # после SPELL_LOCATE_SAY попыток без находки паспорт узнаёт причину.
 SPELL_LOCATE_EVERY = 2.0
+# Иконки умений своего чемпиона — эталон «готова» Q/W/E/R (#849): Data Dragon
+# только из кэша, без сети — свой (data/ddragon) и индексатора роликов
+# (BC_INDEX/ddragon, tools/video_index.py assets), от новых версий к старым.
+SPELL_ICON_ROOTS = (ddragon.CACHE,
+                    Path(os.environ.get("BC_INDEX", r"D:\bc-data\index")) / "ddragon")
+_ability_icons_cache: dict[str, dict | None] = {}
+
+
+def _version_key(v: str) -> tuple:
+    return tuple(int(x) if x.isdigit() else -1 for x in v.split("."))
+
+
+def ability_icons(cid: str, roots=SPELL_ICON_ROOTS) -> dict | None:
+    """Иконки Q/W/E/R чемпиона `cid` из кэшей Data Dragon (RGB) или None —
+    тогда умения читаются по набранному эталону, как раньше."""
+    if cid in _ability_icons_cache:
+        return _ability_icons_cache[cid]
+    out = None
+    for root in roots:
+        root = Path(root)
+        if not root.is_dir():
+            continue
+        versions = sorted((d.name for d in root.iterdir()
+                           if d.is_dir() and d.name[:1].isdigit()), key=_version_key,
+                          reverse=True)
+        for v in versions:
+            try:
+                out = hud_spells_mod.ability_icons(ddragon.DDragon(v, root), cid)
+                break
+            except (FileNotFoundError, KeyError, OSError, ValueError):
+                continue
+        if out is not None:
+            break
+    _ability_icons_cache[cid] = out
+    return out
 SPELL_LOCATE_SAY = 10
 LAST_HITS_RECENT = 20        # последних событий добиваний в /state (#816)
 PASSPORT_STATUS = 50
@@ -1003,10 +1040,22 @@ class Session:
             me = None if g is None else g.my_player
             if me is not None and me.spells is not None:
                 hud.set_spells(tuple(x.variant for x in me.spells))
+        cid = self._my_champion()
+        if cid != hud.champion:
+            # Эталон «готова» умений — иконки Data Dragon своего чемпиона (#849).
+            hud.set_champion(cid, ability_icons(cid) if cid else None)
         reads = hud.read(fr, t, hud_spells_mod.SPELL_SLOTS + hud_spells_mod.ABILITY_SLOTS)
         # Одно чтение панели: D/F — заклинания, Q/W/E/R — умения (тот же читатель).
         return ([reads[k].to_dict() for k in hud_spells_mod.SPELL_SLOTS],
                 [reads[k].to_dict() for k in hud_spells_mod.ABILITY_SLOTS])
+
+    def _my_champion(self) -> str | None:
+        """Свой чемпион (Id Data Dragon) по API или None."""
+        if self.api is None:
+            return None
+        g = self.api.status().game
+        me = None if g is None else g.my_player
+        return None if me is None else me.champion
 
     def _stats_step(self, pl: Pipeline, fr: np.ndarray, game: bool, view: str,
                     off: dict) -> dict | None:

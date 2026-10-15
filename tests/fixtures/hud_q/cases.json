@@ -1,0 +1,108 @@
+{
+ "source": {
+  "Volibear": "2026-10-14_22-28-58_Volibear_classic.mkv",
+  "Ashe": "2026-10-14_23-18-24_Ashe_kiwi.mp4"
+ },
+ "icons": {
+  "Volibear": "VolibearQ.png",
+  "Ashe": "AsheQ.png"
+ },
+ "crops": [
+  {
+   "file": "volibear_q_active.png",
+   "champion": "Volibear",
+   "t": 18.6,
+   "ring": 0.252,
+   "dead": false,
+   "expect": "active"
+  },
+  {
+   "file": "volibear_q_blocked.png",
+   "champion": "Volibear",
+   "t": 34.2,
+   "ring": 0.0,
+   "dead": false,
+   "expect": "blocked"
+  },
+  {
+   "file": "volibear_q_cooldown.png",
+   "champion": "Volibear",
+   "t": 4.9,
+   "ring": 0.002,
+   "dead": false,
+   "expect": "cooldown"
+  },
+  {
+   "file": "volibear_q_dead.png",
+   "champion": "Volibear",
+   "t": 479.9,
+   "ring": 0.0,
+   "dead": true,
+   "expect": "dead"
+  },
+  {
+   "file": "volibear_q_dim.png",
+   "champion": "Volibear",
+   "t": 147.2,
+   "ring": 0.0,
+   "dead": false,
+   "expect": "unsure"
+  },
+  {
+   "file": "volibear_q_ready.png",
+   "champion": "Volibear",
+   "t": 842.7,
+   "ring": 0.0,
+   "dead": false,
+   "expect": "ready"
+  },
+  {
+   "file": "ashe_q_active.png",
+   "champion": "Ashe",
+   "t": 55.5,
+   "ring": 0.258,
+   "dead": false,
+   "expect": "active"
+  },
+  {
+   "file": "ashe_q_blocked.png",
+   "champion": "Ashe",
+   "t": 156.2,
+   "ring": 0.0,
+   "dead": false,
+   "expect": "blocked"
+  },
+  {
+   "file": "ashe_q_cooldown.png",
+   "champion": "Ashe",
+   "t": 384.2,
+   "ring": 0.0,
+   "dead": false,
+   "expect": "cooldown"
+  },
+  {
+   "file": "ashe_q_dead.png",
+   "champion": "Ashe",
+   "t": 300.0,
+   "ring": 0.0,
+   "dead": true,
+   "expect": "dead"
+  },
+  {
+   "file": "ashe_q_ready.png",
+   "champion": "Ashe",
+   "t": 130.2,
+   "ring": 0.269,
+   "dead": false,
+   "expect": "ready"
+  },
+  {
+   "file": "ashe_q_unsure.png",
+   "champion": "Ashe",
+   "t": 54.1,
+   "ring": 0.0,
+   "dead": false,
+   "expect": "unsure"
+  }
+ ]
+}
